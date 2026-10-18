@@ -40,7 +40,7 @@ import { makeTestNvr } from "../nvr/testing.helpers.ts";
 // compares deferred conditional types, and the only relation strong enough to catch a shift that mere assignability would let through. Each inner signature deliberately
 // uses its type parameter exactly once: that single occurrence IS the mechanism, because it leaves the checked type as the only thing the comparison can differ on. A
 // formulation that used the parameter twice would measure something weaker, so the unnecessary-type-parameter rule is reporting the construction rather than a defect.
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- Each signature uses its type parameter once, which is how the identity comparison works.
 type Equals<X, Y> = (<T>() => T extends X ? 1 : 2) extends (<T>() => T extends Y ? 1 : 2) ? true : false;
 
 // Mutual assignability: the weaker relation, reported alongside identity so a break says which of the two was lost.

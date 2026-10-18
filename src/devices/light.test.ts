@@ -8,31 +8,33 @@
  * assertion drives the REAL production class and, for the motion routing, the REAL ProtectEventDispatch contract through a recording subclass - never a modeled
  * stand-in for the leaf.
  *
- * The light's lastMotion observer routes to nvr.events.motionEventHandler, which in production arms a motionDuration-second reset setTimeout on the dispatch's own
- * eventTimers map - a handle light.cleanup() cannot clear. A real-dispatch motion test would therefore leak a dangling timer. The established suite idiom (see
- * event-dispatch.test.ts) is a recording subclass that overrides the delivery method to record into an array and arm no timer; injecting it through the harness's
- * dispatch-injection point is the clean, reusable way to assert the observer's routing (called on truthy, suppressed on falsy) with no leaked handle.
+ * The light's lastMotion observer routes to nvr.events.motionEventHandler, which in production arms a motionDuration-second reset in the dispatcher's own timer
+ * registry - a timer the dispatcher owns and light.cleanup() cannot clear. The established suite idiom (see event-dispatch.test.ts) is a recording subclass that
+ * overrides the delivery method to record into an array and arm no timer; injecting it through the harness's dispatch-injection point is the clean, reusable way to
+ * assert the observer's routing (called on truthy, suppressed on falsy) with no reset left pending.
  *
  * The isolation model is per-test-fresh, not a single shared before(): a beforeEach builds a fresh light so recording.calls, the characteristic state, the observer
  * baselines, and store.observerCount are clean every test with no cross-test ordering coupling. The wake log is windowed per push via a captured baseline, so a wake
  * assertion is robust regardless of isolation. This buildLight-plus-beforeEach skeleton is the copyable reference; only makeLightConfig, TestLightProjection, the
  * slice keys, the light's per-slice observer count, and the leaf-specific reactions are light-particular.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { Light, ProtectLightConfig } from "unifi-protect";
+import type { TestClock, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { TestLightProjection, makeLightConfig } from "./testing.helpers.ts";
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
-import { after, afterEach, before, beforeEach, describe, mock, test } from "node:test";
+import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
+import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import { ProtectLight } from "./light.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
-import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { settle } from "homebridge-plugin-utils/testing";
 
 // The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
 // which is the tail rather than the child topic the registration lands on.
@@ -48,13 +50,13 @@ const controllers: AbortController[] = [];
 // rather than captured from the factory closure - reading it back avoids both the assignment-expression smell and a TS2454 definite-assignment error on a
 // factory-captured binding.
 function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; userOptions?: string[] } = {}): {
-  accessory: TestAccessory; light: ProtectLight; lightConfig: ProtectLightConfig; lightProjection: TestLightProjection; mqtt: TestMqttClient;
+  accessory: TestAccessory; clock: TestClock; light: ProtectLight; lightConfig: ProtectLightConfig; lightProjection: TestLightProjection; mqtt: TestMqttClient;
   recording: TestRecordingDispatch; store: TestStateStore;
 } {
 
   const lightConfig = makeLightConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ lights: [lightConfig] }));
-  const { controller, mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), mqtt: true, store,
+  const { clock, controller, mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), mqtt: true, store,
     userOptions: harnessOptions.userOptions });
 
   controllers.push(controller);
@@ -74,7 +76,7 @@ function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {}, h
     throw new Error("The MQTT recording double was not installed despite mqtt: true.");
   }
 
-  return { accessory, light, lightConfig, lightProjection: projection, mqtt, recording, store };
+  return { accessory, clock, light, lightConfig, lightProjection: projection, mqtt, recording, store };
 }
 
 describe("real ProtectLight construction and observer behavior", () => {
@@ -86,6 +88,7 @@ describe("real ProtectLight construction and observer behavior", () => {
 
   // The per-test-fresh handles, rebuilt in beforeEach so every test starts from a clean light, clean recording, and clean wake baseline.
   let accessory: TestAccessory;
+  let clock: TestClock;
   let constructionWakes = 0;
   let light: ProtectLight;
   let lightConfig: ProtectLightConfig;
@@ -116,7 +119,7 @@ describe("real ProtectLight construction and observer behavior", () => {
 
   beforeEach(async () => {
 
-    ({ accessory, light, lightConfig, lightProjection, mqtt, recording, store } = buildLight({ isLightOn: true, ledLevel: 4 }));
+    ({ accessory, clock, light, lightConfig, lightProjection, mqtt, recording, store } = buildLight({ isLightOn: true, ledLevel: 4 }));
 
     // Settle the observe loops' lazy registration before any test asserts, then snapshot the construction-wake count and reset the window so each test measures only
     // its own pushes.
@@ -229,7 +232,7 @@ describe("real ProtectLight construction and observer behavior", () => {
 
     const baseline = wakeLog.length;
 
-    // A fixed truthy timestamp literal rather than Date.now(), so the push is deterministic.
+    // A fixed truthy timestamp literal, so the push is deterministic.
     store.pushLightPatch(lightConfig.id, { lastMotion: 1700000000000 });
 
     await settle();
@@ -346,35 +349,27 @@ describe("real ProtectLight construction and observer behavior", () => {
 
     test("a valid /light/brightness SET maps the percentage to an LED level, publishes the round-tripped brightness, and reflects it after 50ms", async () => {
 
-      // The 50ms reflect uses the GLOBAL setTimeout; settle is one setImmediate and does NOT advance it, so the reflect needs mock.timers + tick(50).
-      mock.timers.enable({ apis: ["setTimeout"] });
+      // The reflect is armed on the platform's clock, which settle does not move, so the row advances the harness clock through the reflect delay.
+      const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/brightness/set"));
 
-      try {
+      assert.ok(set, "the light registered a /light/brightness SET subscription");
 
-        const set = mqtt.subscriptions.find((subscription) => (subscription.kind === "set") && (subscription.topic === lightConfig.mac + "/light/brightness/set"));
+      // The body parses "55", passes the gate, and setCharacteristic(Brightness, 55) -> the Brightness onSet -> brightnessToLedLevel(55) = Math.round(55/20 + 1) = 4 ->
+      // device.update({ lightDeviceSettings: { ledLevel: 4 } }), then schedules the deferred reflect and publishes ledLevelToBrightness(4) = 60. The 55 -> 60 round-trip
+      // is the granularity contract.
+      await mqtt.invokeSet(lightConfig.mac + "/light/brightness/set", "55");
+      await settle();
 
-        assert.ok(set, "the light registered a /light/brightness SET subscription");
+      assert.deepEqual(lightProjection.updateCalls, [{ payload: { lightDeviceSettings: { ledLevel: 4 } } }],
+        "the /light/brightness SET of \"55\" mapped to LED level 4 and wrote it through device.update");
+      assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light/brightness"),
+        [{ payload: "60", retain: false, topic: lightConfig.mac + "/light/brightness" }], "the write published the round-tripped brightness (55 in, 60 published)");
 
-        // The body parses "55", passes the gate, and setCharacteristic(Brightness, 55) -> the Brightness onSet -> brightnessToLedLevel(55) = Math.round(55/20 + 1) = 4 ->
-        // device.update({ lightDeviceSettings: { ledLevel: 4 } }), then schedules the 50ms reflect and publishes ledLevelToBrightness(4) = 60. The 55 -> 60 round-trip is
-        // the granularity contract.
-        await mqtt.invokeSet(lightConfig.mac + "/light/brightness/set", "55");
-        await settle();
+      // The deferred reflect snaps the Lightbulb Brightness to the LED-level-mapped value, reconciling HomeKit's finer granularity with Protect's 1-6 levels.
+      clock.advance(PROTECT_HOMEKIT_REFLECT_DELAY);
 
-        assert.deepEqual(lightProjection.updateCalls, [{ payload: { lightDeviceSettings: { ledLevel: 4 } } }],
-          "the /light/brightness SET of \"55\" mapped to LED level 4 and wrote it through device.update");
-        assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light/brightness"),
-          [{ payload: "60", retain: false, topic: lightConfig.mac + "/light/brightness" }], "the write published the round-tripped brightness (55 in, 60 published)");
-
-        // The 50ms reflect snaps the Lightbulb Brightness to the LED-level-mapped value, reconciling HomeKit's finer granularity with Protect's 1-6 levels.
-        mock.timers.tick(50);
-
-        assert.equal(accessory.getService(Service.Lightbulb)?.getCharacteristic(Characteristic.Brightness).value, 60,
-          "the 50ms reflect snapped the Lightbulb Brightness to the LED-level-mapped 60 percent");
-      } finally {
-
-        mock.timers.reset();
-      }
+      assert.equal(accessory.getService(Service.Lightbulb)?.getCharacteristic(Characteristic.Brightness).value, 60,
+        "the 50ms reflect snapped the Lightbulb Brightness to the LED-level-mapped 60 percent");
     });
 
     test("a non-numeric /light/brightness SET is gated out: no write, no publish", async () => {

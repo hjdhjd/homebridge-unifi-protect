@@ -6,7 +6,7 @@
  * projection. They earn the same coverage rigor as production: each builder's populated read set, each projection's read-through behavior and recorded writes, the
  * per-slice push helpers' targeting, and the TestBaseDevice vehicle the shared base-device concerns ride.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { ProtectLightConfig, Sensor } from "unifi-protect";
 import { TestBaseDevice, TestCameraProjection, TestChimeProjection, TestLightProjection, TestSensorProjection, TestViewerProjection, makeCameraConfig, makeChimeConfig,
   makeLightConfig, makeLiveviewConfig, makeRingtoneConfig, makeSensorConfig, makeViewerConfig } from "./testing.helpers.ts";
@@ -16,6 +16,7 @@ import type { ProtectAccessory } from "../types.ts";
 import { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import assert from "node:assert/strict";
+import { settle } from "homebridge-plugin-utils/testing";
 
 describe("harness growth: chime state", () => {
 
@@ -105,7 +106,7 @@ describe("A2 light family: config builder, push helpers, and projection double",
     const record = store.snapshot().lights.get("light-c");
 
     assert.equal(record?.lightDeviceSettings.ledLevel, 6, "the targeted nested field moved");
-    assert.equal(record?.lightDeviceSettings.isIndicatorEnabled, true, "the untouched nested field persists through the compose");
+    assert.equal(record.lightDeviceSettings.isIndicatorEnabled, true, "the untouched nested field persists through the compose");
 
     assert.throws(() => store.pushLightDeviceSettings("light-missing", { ledLevel: 2 }), /not present in the store double: light-missing/,
       "composing against an absent id throws the store-double guard");
@@ -602,8 +603,8 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     assert.equal(overridden.mountType, "door", "the mountType override lands");
     assert.equal(overridden.motionDetectedAt, 1700000000000, "the motionDetectedAt override lands");
     assert.deepEqual(overridden.stats?.humidity, { status: "", value: 55 }, "the humidity stat is a { status, value } air-quality metric");
-    assert.deepEqual(overridden.stats?.light, { status: "", value: 42 }, "the ambient-light stat is a { status, value } air-quality metric");
-    assert.deepEqual(overridden.stats?.temperature, { status: "", value: 21 }, "the temperature stat is a { status, value } air-quality metric");
+    assert.deepEqual(overridden.stats.light, { status: "", value: 42 }, "the ambient-light stat is a { status, value } air-quality metric");
+    assert.deepEqual(overridden.stats.temperature, { status: "", value: 21 }, "the temperature stat is a { status, value } air-quality metric");
   });
 
   test("makeSensorConfig leaves hardwareRevision absent by default and lands an opted-in value (mirroring the makeNvrConfig opt-in contract)", () => {
@@ -628,12 +629,12 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     const defaults = makeSensorConfig();
 
     assert.deepEqual(defaults.featureFlags.waterLeak?.channelNames, [], "the default makeSensorConfig advertises no water-leak channels");
-    assert.equal(defaults.featureFlags.waterLeak?.channelCount, 0, "the default channelCount mirrors the empty channelNames length");
+    assert.equal(defaults.featureFlags.waterLeak.channelCount, 0, "the default channelCount mirrors the empty channelNames length");
 
     const single = makeSensorConfig({ leakChannelNames: ["internal"] });
 
     assert.deepEqual(single.featureFlags.waterLeak?.channelNames, ["internal"], "an opted-in single channel lands on featureFlags.waterLeak.channelNames");
-    assert.equal(single.featureFlags.waterLeak?.channelCount, 1, "the channelCount mirrors the single-channel length");
+    assert.equal(single.featureFlags.waterLeak.channelCount, 1, "the channelCount mirrors the single-channel length");
 
     const dual = makeSensorConfig({ leakChannelNames: [ "internal", "external" ] });
 
@@ -814,7 +815,7 @@ describe("A2 controller owners, commit 2: the new liveview builder option", () =
 
     assert.equal(withCameras.slots.length, 1, "a cameras option populates exactly one slot");
     assert.deepEqual(withCameras.slots[0]?.cameras, [ "camera-1", "camera-2" ], "the slot carries the supplied member camera ids");
-    assert.equal(withCameras.slots[0]?.cycleMode, "motion", "the slot carries the typed cycleMode / cycleInterval shape");
+    assert.equal(withCameras.slots[0].cycleMode, "motion", "the slot carries the typed cycleMode / cycleInterval shape");
 
     const withoutCameras = makeLiveviewConfig({ id: "live-b", name: "Protect-Scene" }) as unknown as { slots: unknown[] };
 

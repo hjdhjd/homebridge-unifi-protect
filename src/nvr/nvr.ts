@@ -39,7 +39,6 @@ import { channels } from "../diagnostics.ts";
 import { isPackageCameraContext } from "../types.ts";
 import { livestreamRecoveryDecision } from "../media/livestream-recovery-policy.ts";
 import { servePlaylist } from "./nvr-playlist.ts";
-import { setTimeout as sleep } from "node:timers/promises";
 
 /**
  * The NVR's lifecycle phase. The single source of truth for "what is this NVR doing right now?", consulted by every component that needs to distinguish induced
@@ -84,9 +83,9 @@ export class ProtectNvr {
   private featureLog: Record<string, boolean>;
   private hap: HAP;
   public readonly health: DiagnosticsHealthBridge;
-  // The plugin's own-clock timestamp (Date.now()) of the last controller reboot we observed via the library's jitter-thresholded `controllerRebooted` event, or null
-  // until one is seen this process. It is the settling-tail half of the `isDisruptionExpected` classification and stays private to this root: callers ask whether a
-  // disruption is expected, never how recently a reboot landed. Not a controller clock: it is when WE observed the reboot, on our own wall clock.
+  // The platform clock's timestamp of the last controller reboot we observed via the library's jitter-thresholded `controllerRebooted` event, or null until one is
+  // seen this process. It is the settling-tail half of the `isDisruptionExpected` classification and stays private to this root: callers ask whether a disruption is
+  // expected, never how recently a reboot landed. Not a controller clock: it is when WE observed the reboot, on our own wall clock.
   private lastRebootObservedAt: Nullable<number>;
   // Per-episode quiet-classification latch for the per-camera livestream-disruption logs. The interruption edge records whether the episode should be logged quietly
   // (the tail of an induced disruption or a recently-observed reboot); the recovery edge - which can no longer read the phase reliably - consumes that classification.
@@ -203,6 +202,7 @@ export class ProtectNvr {
 
       actions: { refreshRemovalStability: (): void => this.#pushRemovalStability() },
       address: this.config.address,
+      clock: this.platform.clock,
       log: this.log,
       // The same ownership question the per-camera narration below asks of the same graph, handed over as a predicate so the graph itself stays here.
       ownsCamera: (cameraId: string): boolean => this.getDeviceById(cameraId) !== null,
@@ -215,6 +215,7 @@ export class ProtectNvr {
     this.removals = new RemovalStabilityGate({
 
       actions: { removeDevice: (accessory: ProtectAccessory): void => this.removeHomeKitDevice(accessory), runSweep: (): void => this.sweepRemovableDevices() },
+      clock: this.platform.clock,
       graceSeconds: (): number => this.getFeatureNumber("Nvr.DelayDeviceRemoval") ?? 0,
       log: this.log,
       signal: this.signal
@@ -233,6 +234,7 @@ export class ProtectNvr {
         resumeRunning: (): void => this.transition("running")
       },
       activeRecordings: (): number => this.#activeHksvRecordings(),
+      clock: this.platform.clock,
       isConnectionHealthy: (): boolean => this.client.connection.isHealthy,
       log: this.log,
       phase: (): NvrPhase => this._phase,
@@ -389,7 +391,8 @@ export class ProtectNvr {
    */
   public get isDisruptionExpected(): boolean {
 
-    return isDisruptionExpected({ lastRebootMs: this.lastRebootObservedAt, nowMs: Date.now(), phase: this._phase, windowMs: PROTECT_NVR_REBOOT_RECENCY_MS });
+    return isDisruptionExpected({ lastRebootMs: this.lastRebootObservedAt, nowMs: this.platform.clock.now(), phase: this._phase,
+      windowMs: PROTECT_NVR_REBOOT_RECENCY_MS });
   }
 
   /**
@@ -541,7 +544,7 @@ export class ProtectNvr {
         recoveryPolicy: (context) => livestreamRecoveryDecision(context,
           { healthState: this.health.state, isHealthy: this.client.connection.isHealthy, isThrottled: this.client.connection.isThrottled, phase: this.phase },
           this.episodeCameraReachable(context.cameraId)), signal,
-        username: this.config.username }), { attempts: Infinity, shouldRetry, signal: this.signal });
+        username: this.config.username }), { attempts: Infinity, clock: this.platform.clock, shouldRetry, signal: this.signal });
     } catch(error) {
 
       // The shutdown signal aborting the retry is an orderly teardown, not a failure to report. A genuine auth budget exhaustion (wrong credentials) surfaces here.
@@ -627,7 +630,7 @@ export class ProtectNvr {
 
     // Record our own-clock observation of this reboot. This is the SSOT moment the plugin learns a reboot happened (induced or organic), so it anchors the settling
     // window `isDisruptionExpected` weighs when a disruption lands after the plugin has already concluded the reboot and resumed running.
-    this.lastRebootObservedAt = Date.now();
+    this.lastRebootObservedAt = this.platform.clock.now();
 
     this.publishLifecycle("controllerRebooted");
 
@@ -741,7 +744,7 @@ export class ProtectNvr {
 
       // Let's sleep for thirty seconds to give all the accessories a chance to load before disabling everything. Homebridge doesn't have a good mechanism to notify us
       // when all the cached accessories are loaded at startup.
-      await sleep(PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY);
+      await this.platform.clock.delay(PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY);
 
       // A teardown that landed during the settle sleep must not run a removal sweep against a disposed platform - bail before touching any accessory.
       if(this.#isShuttingDown()) {

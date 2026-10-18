@@ -7,30 +7,30 @@
  * wiring of the real removal gate and the removal tail behind it, its wiring of the real reboot scheduler and the recording count behind that, the MQTT recording
  * double, the accessory-family builder, and the read-through config getters.
  *
- * The removal and reboot rows drive their companions the way production does - facts and suppliers in, real timers armed on a real TimerRegistry - so they run the clock
- * under node:test's mocked timers. Each companion's own arithmetic, drain rules, and narration are pinned directly in nvr-removal.test.ts and nvr-reboot.test.ts; what
- * these rows pin is the DOUBLE: that its wiring resolves the same grace production resolves, that its recording walk reaches the same population production's endpoint
- * walk reaches, and that a fired decision lands on the double's accessory graph through its removal tail.
+ * The removal and reboot rows drive their companions the way production does - facts and suppliers in, timers armed on a real TimerRegistry - so they drive time by
+ * advancing the double's test clock. Each companion's own arithmetic, drain rules, and narration are asserted directly in nvr-removal.test.ts and nvr-reboot.test.ts;
+ * what these rows assert is the DOUBLE: that its wiring resolves the same grace production resolves, that its recording walk reaches the same population production's
+ * endpoint walk reaches, and that a fired decision lands on the double's accessory graph through its removal tail.
  */
 import { PROTECT_NVR_REBOOT_CHECK_INTERVAL, PROTECT_NVR_REBOOT_INTERVAL } from "../settings.ts";
 import { TestCameraProjection, makeCameraConfig, makeSensorConfig } from "../devices/testing.helpers.ts";
-import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { asProtectAccessory, makeNvrConfig, makeTestAccessoryFamily, makeTestNvr } from "./testing.helpers.ts";
-import { describe, mock, test } from "node:test";
+import { describe, test } from "node:test";
+import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import type { ProtectDevices } from "../types.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
-import { formatLogEntry } from "homebridge-plugin-utils/testing";
 
 // Every "Delaying device removal" line the gate narrated, as the harness rendered it. The line carries the resolved grace, so the count of these lines is the
 // schedule-dedup observable and the text is the exact-interval pin.
-function delayingLines(entries: TestLogEntry[]): string[] {
+function delayingLines(entries: readonly TestLogEntry[]): string[] {
 
   return entries.filter((entry) => formatLogEntry(entry).includes("Delaying device removal")).map((entry) => formatLogEntry(entry));
 }
 
 // Every deferral line the reboot scheduler narrated. The line carries the recording count, so its text is the population pin the widening rows read.
-function deferringLines(entries: TestLogEntry[]): string[] {
+function deferringLines(entries: readonly TestLogEntry[]): string[] {
 
   return entries.filter((entry) => formatLogEntry(entry).includes("Deferring scheduled controller reboot")).map((entry) => formatLogEntry(entry));
 }
@@ -38,27 +38,20 @@ function deferringLines(entries: TestLogEntry[]): string[] {
 // The default reboot cadence in milliseconds, which is what a schedule entered with no explicit interval waits.
 const DEFAULT_INTERVAL_MS = PROTECT_NVR_REBOOT_INTERVAL * 60 * 60 * 1000;
 
-// The wall-clock instant the removal-grace row's mocked clock starts from, so its "up for N milliseconds" arithmetic stays clear of the zero that reads as no boot
-// time reported.
-const MOCK_EPOCH = 1700000000000;
-
 describe("harness growth: the NVR double's removal wiring", () => {
 
   test("the double's wiring resolves the registered DelayDeviceRemoval default and the fired grace removes through the tail", () => {
 
     const store = new TestStateStore(makeProtectState());
-    const { apiCalls, controller, logEntries, nvr } = makeTestNvr({ store });
+    const { apiCalls, clock, controller, logEntries, nvr } = makeTestNvr({ store });
     const accessory = makeTestAccessory("Victim", "uuid:victim");
 
     nvr.platform.accessories.push(accessory);
 
-    // Enable the mocked clock AFTER construction, so the fixture is assembled under real time and only the acts below arm mocked timers.
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
-
     try {
 
-      // Re-establish stability against the mocked clock: every timer armed from here is mocked, so a tick drives the grace deterministically.
-      nvr.restabilizeController((ms) => mock.timers.tick(ms));
+      // Take the controller through a disruption and back to stable on the double's test clock, so the grace below arms from a settled controller.
+      nvr.restabilizeController();
 
       nvr.removals.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
 
@@ -71,28 +64,23 @@ describe("harness growth: the NVR double's removal wiring", () => {
       assert.deepEqual(delayingLines(logEntries), ["Victim: Delaying device removal for at least 60 seconds."],
         "exactly one delay line across both schedules, carrying the registered sixty-second default");
 
-      mock.timers.tick(60000);
+      clock.advance(60000);
 
       assert.equal(nvr.platform.accessories.includes(accessory), false, "the fired grace removed the accessory through the double's removal tail");
       assert.equal(apiCalls.filter((call) => call.kind === "unregister").length, 1, "the fired grace unregistered the bridged accessory exactly once");
     } finally {
 
-      // The reset runs BEFORE the teardown abort below: a mocked clearTimeout cannot cancel a handle the real setTimeout armed, so an abort under a live mock would
-      // leave the construction-seeded sweep outside the drain the abort claims.
-      mock.timers.reset();
+      controller.abort();
     }
-
-    controller.abort();
   });
 
   test("an unstable controller schedules nothing through the double, and the same call arms once stability returns", () => {
 
     const store = new TestStateStore(makeProtectState());
-    const { controller, logEntries, nvr } = makeTestNvr({ store });
+    const { clock, controller, logEntries, nvr } = makeTestNvr({ store });
     const accessory = makeTestAccessory("Victim", "uuid:victim");
 
     nvr.platform.accessories.push(accessory);
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
 
     try {
 
@@ -102,25 +90,23 @@ describe("harness growth: the NVR double's removal wiring", () => {
       // The gate checks stability before it narrates anything, so a suppressed schedule leaves no line at all - and nothing is armed to fire later.
       assert.deepEqual(delayingLines(logEntries), [], "an unstable controller schedules nothing and narrates nothing");
 
-      mock.timers.tick(600000);
+      clock.advance(600000);
 
       assert.ok(nvr.platform.accessories.includes(accessory), "no removal ran while the controller was unstable");
 
       // The positive control that keeps the suppression above from passing vacuously: the identical call, once stability returns, arms and fires.
-      nvr.restabilizeController((ms) => mock.timers.tick(ms));
+      nvr.restabilizeController();
       nvr.removals.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
 
       assert.equal(delayingLines(logEntries).length, 1, "the restabilized controller armed the grace the unstable one refused");
 
-      mock.timers.tick(60000);
+      clock.advance(60000);
 
       assert.equal(nvr.platform.accessories.includes(accessory), false, "the armed grace fired and removed the accessory");
     } finally {
 
-      mock.timers.reset();
+      controller.abort();
     }
-
-    controller.abort();
   });
 
   test("user-disabling DelayDeviceRemoval makes removal immediate and the tail is presence-guarded and bridged-gated", () => {
@@ -134,7 +120,7 @@ describe("harness growth: the NVR double's removal wiring", () => {
     nvr.removals.schedule({ accessory: asProtectAccessory(victim), stillGone: () => true });
 
     // The immediate path proves itself: the removal already happened when the call returned, and no delay was narrated because none was taken. The construction seed
-    // leaves the controller stable, so this runs under real time with no clock ceremony at all.
+    // leaves the controller stable, so this needs no clock ceremony at all.
     assert.deepEqual(nvr.platform.accessories, [bystander], "the disabled option removed the accessory synchronously");
     assert.deepEqual(delayingLines(logEntries), [], "no delay line is narrated on the immediate path");
     assert.equal(apiCalls.filter((call) => call.kind === "unregister").length, 1, "a bridged accessory records exactly one unregister");
@@ -175,7 +161,7 @@ describe("harness growth: MQTT recording double and the family builder", () => {
 
     assert.deepEqual(mqtt.published, [{ payload: "true", retain: false, topic: "74ACB9000001/motion" }], "publishes are recorded");
     assert.equal(mqtt.subscriptions.length, 1, "subscription registrations are recorded");
-    assert.equal(mqtt.subscriptions[0]?.init?.signal, signal, "the per-subscription init options - including the lifetime signal - are recorded");
+    assert.equal(mqtt.subscriptions[0]?.init.signal, signal, "the per-subscription init options - including the lifetime signal - are recorded");
 
     withoutMqtt.controller.abort();
     controller.abort();
@@ -328,16 +314,13 @@ describe("harness growth: the NVR double's reboot wiring", () => {
   test("constructing the double enters no reboot schedule and moves no phase", async () => {
 
     const store = new TestStateStore(makeProtectState());
-    const { controller, logEntries, nvr } = makeTestNvr({ store });
-
-    // Enable the mocked clock AFTER construction, so the fixture is assembled under real time and only the acts below arm mocked timers.
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
+    const { clock, controller, logEntries, nvr } = makeTestNvr({ store });
 
     try {
 
       // Nothing entered the schedule, so running the clock well past the default cadence must produce no attempt at all. This is what keeps the embedded scheduler
       // inert for every other suite in the harness.
-      mock.timers.tick(2 * DEFAULT_INTERVAL_MS);
+      clock.advance(2 * DEFAULT_INTERVAL_MS);
 
       await settle();
 
@@ -346,16 +329,14 @@ describe("harness growth: the NVR double's reboot wiring", () => {
       assert.deepEqual(logEntries.filter((entry) => formatLogEntry(entry).includes("reboot")), [], "the scheduler narrated nothing");
     } finally {
 
-      mock.timers.reset();
+      controller.abort();
     }
-
-    controller.abort();
   });
 
   test("a transmitting package camera defers the scheduled reboot on its own, and both views count together", async () => {
 
     const store = new TestStateStore(makeProtectState());
-    const { controller, logEntries, nvr } = makeTestNvr({ store });
+    const { clock, controller, logEntries, nvr } = makeTestNvr({ store });
 
     // A parent that is not recording, carrying a package view that is. Only a walk that reaches package cameras sees this recording at all, so the count below is
     // exactly what the endpoint walk added.
@@ -363,13 +344,12 @@ describe("harness growth: the NVR double's reboot wiring", () => {
       streaming: { isRecordingTransmitting: false } };
 
     nvr.configuredDevices.set("uuid:cam-widening", camera as unknown as ProtectDevices);
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
 
     try {
 
       // An upSince of zero reads as no boot time reported, so the first attempt lands a full cadence from now.
       nvr.reboot.schedule({ upSince: 0 });
-      mock.timers.tick(DEFAULT_INTERVAL_MS);
+      clock.advance(DEFAULT_INTERVAL_MS);
 
       await settle();
 
@@ -379,7 +359,7 @@ describe("harness growth: the NVR double's reboot wiring", () => {
 
       // The parent starts recording too, and the next check counts the two views as two.
       camera.streaming.isRecordingTransmitting = true;
-      mock.timers.tick(PROTECT_NVR_REBOOT_CHECK_INTERVAL);
+      clock.advance(PROTECT_NVR_REBOOT_CHECK_INTERVAL);
 
       await settle();
 
@@ -387,26 +367,23 @@ describe("harness growth: the NVR double's reboot wiring", () => {
         "a parent and its package are counted as the two views they are");
     } finally {
 
-      mock.timers.reset();
+      controller.abort();
     }
-
-    controller.abort();
   });
 
   test("a package inside its removal grace still defers the reboot while it is recording", async () => {
 
     const store = new TestStateStore(makeProtectState());
-    const { controller, logEntries, nvr } = makeTestNvr({ store, userOptions: ["Enable.Nvr.DelayDeviceRemoval.3600"] });
+    const { clock, controller, logEntries, nvr } = makeTestNvr({ store, userOptions: ["Enable.Nvr.DelayDeviceRemoval.3600"] });
     const packageAccessory = makeTestAccessory("Back Door Package Camera", "uuid:package-grace");
     const camera = { packageCamera: { streaming: { isRecordingTransmitting: true } }, protectId: "cam-grace", streaming: { isRecordingTransmitting: false } };
 
     nvr.platform.accessories.push(packageAccessory);
     nvr.configuredDevices.set("uuid:cam-grace", camera as unknown as ProtectDevices);
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
 
     try {
 
-      nvr.restabilizeController((ms) => mock.timers.tick(ms));
+      nvr.restabilizeController();
 
       // The package is on its way out: a delayed removal is armed against its accessory, with an hour to run and a predicate that would keep it.
       nvr.removals.schedule({ accessory: asProtectAccessory(packageAccessory), stillGone: () => false });
@@ -415,8 +392,8 @@ describe("harness growth: the NVR double's reboot wiring", () => {
         "the removal grace is armed and pending");
 
       // Fire a reboot attempt well inside that grace: a long-up controller floors at a minute, far short of the hour the grace still has.
-      nvr.reboot.schedule({ upSince: MOCK_EPOCH - (2 * DEFAULT_INTERVAL_MS) });
-      mock.timers.tick(60000);
+      nvr.reboot.schedule({ upSince: clock.now() - (2 * DEFAULT_INTERVAL_MS) });
+      clock.advance(60000);
 
       await settle();
 
@@ -425,9 +402,7 @@ describe("harness growth: the NVR double's reboot wiring", () => {
         "a pending removal does not exclude a view that is actively recording");
     } finally {
 
-      mock.timers.reset();
+      controller.abort();
     }
-
-    controller.abort();
   });
 });

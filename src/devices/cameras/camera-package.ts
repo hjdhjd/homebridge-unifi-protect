@@ -251,7 +251,7 @@ export class ProtectCameraPackage extends ProtectCamera {
 
         try {
 
-          await retry((signal) => this.device.turnOnFlashlight({ signal }), { attempts: 3, backoff: () => 1000, signal: this.signal });
+          await retry((signal) => this.device.turnOnFlashlight({ signal }), { attempts: 3, backoff: () => 1000, clock: this.platform.clock, signal: this.signal });
         } catch {
 
           lit = false;
@@ -284,16 +284,14 @@ export class ProtectCameraPackage extends ProtectCamera {
       // If it's not dark, the flashlight will not engage - reset the switch to off and we're done.
       if(!this.ufp.isDark) {
 
-        // We defer the reset ~50ms so HomeKit settles the value it just set through this onSet before we reflect it back off. A synchronous same-characteristic write
-        // inside its own onSet would be clobbered. The captured-generation re-check keeps a legitimate later activation (isDark flipped true within the window) from
-        // being stomped off by this stale reset.
-        setTimeout(() => {
+        // The captured-generation re-check keeps a legitimate later activation (isDark flipped true before the reflect fires) from being stomped off by this stale reset.
+        this.reflectAfterSet(() => {
 
           if(generation === this.#flashlightGeneration) {
 
             service.updateCharacteristic(this.hap.Characteristic.On, false);
           }
-        }, 50);
+        });
 
         return;
       }

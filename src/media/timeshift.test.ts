@@ -29,7 +29,7 @@ import type { Segment } from "unifi-protect";
 import type { SegmentRole } from "./timeshift.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
-import { settle } from "../testing.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 
 // The keyframe-staleness threshold the timeshift compares against: PROTECT_LIVESTREAM_API_IDR_INTERVAL (5s) doubled, in milliseconds. A keyframe older than this makes
 // snapshotSource read "stale"; younger reads "fresh". The suite drives the boundary deterministically by advancing the TestClock across exactly this much.
@@ -84,7 +84,7 @@ interface StartedTimeshift {
   double: ControllableLivestreamDouble;
   events: { discontinuity: number; segment: Buffer[]; terminated: number };
   host: TestCameraHost;
-  logEntries: TestLogEntry[];
+  logEntries: readonly TestLogEntry[];
   nvr: TestProtectNvr;
   timeshift: ProtectTimeshiftBuffer;
 }
@@ -865,8 +865,8 @@ describe("timeshift buffer behavior", () => {
     const source = timeshift.snapshotSource();
 
     assert.equal(source.kind, "fresh", "snapshotSource reads fresh with a keyframe at a nonzero clock base");
-    assert.ok((source.kind === "fresh") && (source.data.length > 0), "the fresh answer carries the init + keyframe buffer content");
-    assert.ok((source.kind === "fresh") && (source.fps > 0), "the fresh answer carries the capture fps");
+    assert.ok(source.data.length > 0, "the fresh answer carries the init + keyframe buffer content");
+    assert.ok(source.fps > 0, "the fresh answer carries the capture fps");
   });
 
   // Target (y): the staleness gate (the Clock payoff). Advance the clock to a nonzero base T, push a keyframe (_lastKeyframeTime = T, nonzero), then advance so

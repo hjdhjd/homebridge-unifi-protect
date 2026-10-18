@@ -435,8 +435,8 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
         // Check to see if motion events are disabled.
         if(switchService && !switchService.getCharacteristic(this.hap.Characteristic.On).value) {
 
-          // Motion is disabled, so snap the trigger back off. The ~50ms cosmetic bounce is deliberately left out of this.timers; it need not survive cleanup().
-          setTimeout(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, false), 50);
+          // Motion is disabled, so snap the trigger back off.
+          this.reflectAfterSet(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, false));
 
         } else {
 
@@ -453,8 +453,8 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       // If the motion sensor is still on, we should be as well.
       if(motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value) {
 
-        // Re-arm the trigger to track the still-active motion sensor. Same ~50ms cosmetic bounce, deliberately left out of this.timers; it need not survive cleanup().
-        setTimeout(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, true), 50);
+        // Re-arm the trigger to track the still-active motion sensor.
+        this.reflectAfterSet(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, true));
       }
     });
 

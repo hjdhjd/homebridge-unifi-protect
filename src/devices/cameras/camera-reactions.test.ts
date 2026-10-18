@@ -30,12 +30,13 @@
  * cleanup() in an afterEach so its per-accessory abort never outlives the test.
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import type { CharacteristicType, TestAccessory, TestService, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
+import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestRecordingDispatch, makeTestNvr } from "../../nvr/testing.helpers.ts";
-import { afterEach, describe, mock, test } from "node:test";
+import { afterEach, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import { PROTECT_NVR_REBOOT_RECENCY_MS } from "../../settings.ts";
 import type { ProtectAccessory } from "../../types.ts";
@@ -44,9 +45,9 @@ import { ProtectCameraPackage } from "./camera-package.ts";
 import type { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { settle } from "homebridge-plugin-utils/testing";
 
 // Confine the lone partial-config cast here, mirroring makeCameraConfig's single-confined-cast discipline: pushCameraPatch's patch is typed as a Partial of the full wire
 // record, whose nested setting objects (smartDetectSettings, ispSettings, ledSettings, recordingSettings) carry many fields the camera's reactions never read. A test
@@ -64,9 +65,10 @@ interface BuiltCamera<C extends ProtectCamera = ProtectCamera> {
   accessory: TestAccessory;
   camera: C;
   cameraConfig: ProtectCameraConfig;
+  clock: TestClock;
   controller: AbortController;
   factory: TestStreamingDelegateFactory;
-  logEntries: TestLogEntry[];
+  logEntries: readonly TestLogEntry[];
   nvr: TestProtectNvr;
   projection: TestCameraProjection;
   recording: TestRecordingDispatch;
@@ -108,7 +110,8 @@ async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { c
   // Inject the recording dispatch through the NVR double's dispatch hook so the lastMotion observer's firehose routing is asserted against the REAL ProtectEventDispatch
   // contract (the recording subclass captures the delivery without arming the real reset timer or touching HAP), exactly as the sensor / light suites do. The recording
   // double is read back off nvr.events rather than captured from the factory closure - the same posture sensor.test.ts uses to avoid the assignment-expression smell.
-  const { controller, factory, logEntries, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), store,
+  const { clock, controller, factory, logEntries, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr),
+    store,
     userOptions: options.userOptions });
   const recording = nvr.events as TestRecordingDispatch;
   const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
@@ -128,7 +131,7 @@ async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { c
   // Settle the floating configure IIFE and the observe loops' lazy registration before any push so the camera is fully wired when the reaction is driven.
   await settle();
 
-  return { accessory, camera, cameraConfig, controller, factory, logEntries, nvr, projection, recording };
+  return { accessory, camera, cameraConfig, clock, controller, factory, logEntries, nvr, projection, recording };
 }
 
 describe("camera-family observer reactions and bound read handlers (camera-reactions concern net)", () => {
@@ -855,16 +858,12 @@ describe("camera-family observer reactions and bound read handlers (camera-react
   /* The reboot-return watch: the camera-owned answer to "did this camera come back after the controller rebooted?".
    *
    * The watch is timer-backed for ABSENCE, because nothing fires when a camera simply fails to reappear, and kicked for the RETURN through both reachability paths.
-   * That split is what these arms drive: the keyed one-shot under a mocked clock for the absence half, and the state observe / reachability override for the return
-   * half. The mock clock is installed AFTER the camera is built, so construction's own real timers (the harness's stability sweep among them) stay under real time and
-   * only the watch armed afterward is mock-armed; each arm aborts its controller INSIDE its own finally BEFORE resetting the mock, so the mock-armed drain runs while
-   * the mock that armed it is still installed. The suite's shared afterEach abort then lands as a harmless second call.
+   * That split is what these arms drive: the keyed one-shot on the harness's test clock for the absence half, and the state observe / reachability override for the
+   * return half. The one clock carries every timer the camera and the NVR double arm from construction onward, so an advance also fires whatever else is due on it -
+   * the harness's zero-delay stability sweep among them, which touches nothing these arms read. Each arm aborts its controller inside its own finally, and the suite's
+   * shared afterEach abort then lands as a harmless second call.
    */
   describe("the reboot-return watch (the never-came-back narration and its paired all-clear)", () => {
-
-    // This file arms no mocked clock anywhere else, so the epoch is defined here rather than shared: the value is the removal suite's, and only this describe's tests
-    // run under it.
-    const MOCK_EPOCH = 1700000000000;
 
     // A thin read over the inherited timer registry, mirroring the InspectableSupervisor idiom the media suites use for a protected projection: it adds one getter and
     // overrides nothing, so the instance under test runs the production paths exactly. The registry's armed state is what tells a CANCELLED watch from one that fired
@@ -888,7 +887,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
     // How many times the watch has told the user this camera never came back, and how many times it has announced the return. Both are counted rather than tested for
     // presence, because the behavior under assertion is "exactly once per outage" - a boolean would pass the moment the first line landed, whatever followed it.
-    function countWarns(entries: TestLogEntry[], fragment: string): number {
+    function countWarns(entries: readonly TestLogEntry[], fragment: string): number {
 
       return entries.filter((entry) => (entry.level === "warn") && entry.message.includes(fragment)).length;
     }
@@ -922,15 +921,13 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       await setCameraOnline(watch, false);
 
-      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
       try {
 
         watch.camera.noteControllerRebooted();
 
         assert.equal(watch.camera.hasRebootReturnWatch, true, "the reboot armed the watch");
 
-        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+        watch.clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS);
 
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "the camera that never came back was called out at the window's expiry");
 
@@ -939,14 +936,13 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         assert.equal(watch.camera.hasRebootReturnWatch, true, "the second reboot re-armed the watch");
 
-        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+        watch.clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS);
 
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "the second window's expiry did not repeat the line for the same unresolved outage");
         assert.equal(countWarns(watch.logEntries, RETURN_LINE), 0, "no all-clear was announced for a camera that never returned");
       } finally {
 
         watch.controller.abort();
-        mock.timers.reset();
       }
     });
 
@@ -960,8 +956,6 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       await setCameraOnline(watch, false);
 
-      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
       try {
 
         watch.camera.noteControllerRebooted();
@@ -972,14 +966,13 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         assert.equal(watch.camera.hasRebootReturnWatch, false, "the camera's return cleared the armed watch rather than leaving it to expire");
 
-        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS * 2);
+        watch.clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS * 2);
 
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 0, "a camera that came back inside the window was never called out");
         assert.equal(countWarns(watch.logEntries, RETURN_LINE), 0, "a return that closed nothing announced nothing");
       } finally {
 
         watch.controller.abort();
-        mock.timers.reset();
       }
     });
 
@@ -993,12 +986,10 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       await setCameraOnline(watch, false);
 
-      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
       try {
 
         watch.camera.noteControllerRebooted();
-        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+        watch.clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS);
 
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "the absent camera was called out");
 
@@ -1011,19 +1002,18 @@ describe("camera-family observer reactions and bound read handlers (camera-react
         await setCameraOnline(watch, false);
 
         watch.camera.noteControllerRebooted();
-        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+        watch.clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS);
 
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 2, "the closed story left the watch free to speak for the next outage");
         assert.equal(countWarns(watch.logEntries, RETURN_LINE), 1, "the second outage has not been resolved, so no second all-clear was announced");
       } finally {
 
         watch.controller.abort();
-        mock.timers.reset();
       }
     });
 
-    // (c-d) The package camera arms nothing. Both polarities matter: the key is never registered, and ticking a full window past the call produces no line - which is
-    // what an inherited (un-overridden) watch on this offline camera would have produced.
+    // (c-d) The package camera arms nothing. Both polarities matter: the key is never registered, and advancing the clock a full window past the call produces no line -
+    // which is what an inherited (un-overridden) watch on this offline camera would have produced.
     test("the package camera's watch is inert - it arms nothing and says nothing", async () => {
 
       const watch = await buildWatchCamera();
@@ -1033,14 +1023,12 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       await setCameraOnline(watch, false);
 
       // A package camera over the SAME physical device, built as the controller root builds it. Its parent's watch is deliberately never armed here, so any line the
-      // tick produces could only have come from the package.
+      // advance produces could only have come from the package.
       const packageCamera = new InspectablePackageCamera(watch.nvr as unknown as ProtectNvr,
         makeTestAccessory("Test Camera Package", "uuid:74ACB9000001:package") as unknown as ProtectAccessory,
         new TestCameraProjection(watch.cameraConfig.id, watch.nvr.client.state) as unknown as Camera);
 
       await settle();
-
-      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
 
       try {
 
@@ -1048,14 +1036,13 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         assert.equal(packageCamera.hasRebootReturnWatch, false, "the package camera registered no watch timer");
 
-        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS * 2);
+        watch.clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS * 2);
 
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 0, "the package camera never speaks for the hardware its parent already speaks for");
       } finally {
 
         packageCamera.cleanup();
         watch.controller.abort();
-        mock.timers.reset();
       }
     });
 
@@ -1071,8 +1058,6 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       // The camera's own device state stays ONLINE throughout: only the controller's health moves, so the state observe never fires and the override is the only path
       // that can reach the watch.
       watch.nvr.client.connection.isHealthy = false;
-
-      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
 
       try {
 
@@ -1091,14 +1076,13 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         assert.equal(watch.camera.hasRebootReturnWatch, false, "the controller-health recovery alone cancelled the watch");
 
-        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS * 2);
+        watch.clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS * 2);
 
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 0, "a camera that was never actually absent was never called out");
         assert.equal(countWarns(watch.logEntries, RETURN_LINE), 0, "a cancel that closed no open story announced nothing");
       } finally {
 
         watch.controller.abort();
-        mock.timers.reset();
       }
     });
 
@@ -1114,25 +1098,22 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       watch.nvr.client.connection.isHealthy = false;
 
-      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
       try {
 
         watch.camera.noteControllerRebooted();
-        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+        watch.clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS);
 
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 0, "the camera was not blamed while the controller itself was still away");
         assert.equal(watch.camera.hasRebootReturnWatch, true, "the expiry extended the watch by another window rather than ending it");
 
         // The controller comes back, and this camera is still gone. Now the absence is the camera's own.
         watch.nvr.client.connection.isHealthy = true;
-        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+        watch.clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS);
 
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "the camera still missing behind a recovered controller was called out");
       } finally {
 
         watch.controller.abort();
-        mock.timers.reset();
       }
     });
 
@@ -1145,21 +1126,18 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       await setCameraOnline(watch, false);
 
-      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
       try {
 
         for(let cycle = 0; cycle < 3; cycle++) {
 
           watch.camera.noteControllerRebooted();
-          mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+          watch.clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS);
         }
 
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "three reboots over one unbroken outage told the user once");
       } finally {
 
         watch.controller.abort();
-        mock.timers.reset();
       }
     });
 
@@ -1173,8 +1151,6 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       await setCameraOnline(watch, false);
 
-      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
       try {
 
         watch.camera.noteControllerRebooted();
@@ -1185,13 +1161,12 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         await settle();
 
-        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+        watch.clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS);
 
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 0, "a camera being removed was not reported as failing to come back");
       } finally {
 
         watch.controller.abort();
-        mock.timers.reset();
       }
     });
 
@@ -1206,12 +1181,10 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       await setCameraOnline(watch, false);
 
-      mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
       try {
 
         watch.camera.noteControllerRebooted();
-        mock.timers.tick(PROTECT_NVR_REBOOT_RECENCY_MS);
+        watch.clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS);
 
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "the absent camera was called out");
 
@@ -1231,7 +1204,6 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       } finally {
 
         watch.controller.abort();
-        mock.timers.reset();
       }
     });
   });

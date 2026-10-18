@@ -10,7 +10,7 @@ import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecT
   VideoCodecType, formatBps, formatErrorMessage, guardedDispatch, isHbpuAbortReason, mqttTopic } from "homebridge-plugin-utils";
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
-import type { HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
+import type { Clock, HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_PROBESIZE_OVERRIDE_MAX,
   PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectAbortedError, livestreamAudioSampleRate } from "unifi-protect";
@@ -115,13 +115,16 @@ function isCleanTalkbackStop(error: unknown, signal: AbortSignal): boolean {
 class ProbesizeSelfTune {
 
   private readonly baseline: () => number;
+  private readonly clock: Clock;
   private elevated: number;
   private lifetimeAdjustments: number;
-  private resetTimer?: NodeJS.Timeout;
+  private resetTimer?: Disposable;
 
-  constructor(baseline: () => number) {
+  // baseline supplies the camera's configured probesize on every read, and clock is the platform's clock the auto-reset timer arms on.
+  constructor(options: { baseline: () => number; clock: Clock }) {
 
-    this.baseline = baseline;
+    this.baseline = options.baseline;
+    this.clock = options.clock;
     this.elevated = 0;
     this.lifetimeAdjustments = 0;
   }
@@ -145,7 +148,7 @@ class ProbesizeSelfTune {
 
     if(isTemporary) {
 
-      this.resetTimer = setTimeout(() => {
+      this.resetTimer = this.clock.schedule(() => {
 
         this.elevated = 0;
         this.resetTimer = undefined;
@@ -173,11 +176,8 @@ class ProbesizeSelfTune {
   // Drop any pending auto-reset. Both an adjustment (which re-arms its own) and a reset need this, so the clear lives in one place.
   private clearResetTimer(): void {
 
-    if(this.resetTimer) {
-
-      clearTimeout(this.resetTimer);
-      this.resetTimer = undefined;
-    }
+    this.resetTimer?.[Symbol.dispose]();
+    this.resetTimer = undefined;
   }
 }
 
@@ -218,12 +218,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     this.protectCamera = protectCamera;
     this.pendingSessions = new Map();
     this.platform = protectCamera.platform;
-    this.probesizeTuning = new ProbesizeSelfTune(() => protectCamera.hints.probesize);
+    this.probesizeTuning = new ProbesizeSelfTune({ baseline: (): number => protectCamera.hints.probesize, clock: this.platform.clock });
     this.timeshift = null;
 
     // Configure our hardware acceleration support.
     this.ffmpegOptions = new FfmpegOptions({
 
+      clock: this.platform.clock,
       codecSupport: this.platform.codecSupport,
       crop: this.protectCamera.hints.cropOptions,
       debug: this.platform.config.debugAll,
@@ -480,8 +481,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         audioIncomingRtpPort = (await reservePort(request.addressVersion, 2)).port;
 
         // Setup the RTP demuxer for two-way audio scenarios. The talkback URL is negotiated separately: camera.talkback() resolves it in startStream.
-        rtpDemuxer = new RtpDemuxer({ inputPort: audioIncomingPort, ipFamily: request.addressVersion, log: this.log, rtcpPort: audioIncomingRtcpPort,
-          rtpPort: audioIncomingRtpPort, signal: abortController.signal });
+        rtpDemuxer = new RtpDemuxer({ clock: this.platform.clock, inputPort: audioIncomingPort, ipFamily: request.addressVersion, log: this.log,
+          rtcpPort: audioIncomingRtcpPort, rtpPort: audioIncomingRtpPort, signal: abortController.signal });
       }
 
       // Setup our video plumbing.
@@ -538,9 +539,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       audio: {
 
         port: (hasAudioSupport && this.protectCamera.hints.twoWayAudio) ? audioIncomingPort : audioIncomingRtcpPort,
-        // eslint-disable-next-line camelcase
+        // eslint-disable-next-line camelcase -- The property name is the one the HomeKit streaming response type defines.
         srtp_key: request.audio.srtp_key,
-        // eslint-disable-next-line camelcase
+        // eslint-disable-next-line camelcase -- The property name is the one the HomeKit streaming response type defines.
         srtp_salt: request.audio.srtp_salt,
         ssrc: audioSSRC
       },
@@ -548,9 +549,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       video: {
 
         port: videoReturnPort,
-        // eslint-disable-next-line camelcase
+        // eslint-disable-next-line camelcase -- The property name is the one the HomeKit streaming response type defines.
         srtp_key: request.video.srtp_key,
-        // eslint-disable-next-line camelcase
+        // eslint-disable-next-line camelcase -- The property name is the one the HomeKit streaming response type defines.
         srtp_salt: request.video.srtp_salt,
         ssrc: videoSSRC
       }

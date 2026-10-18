@@ -7,7 +7,7 @@
  * it is dropped.
  */
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
-import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
@@ -17,6 +17,7 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import assert from "node:assert/strict";
 import { livestreamAudioSampleRate } from "unifi-protect";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 
 describe("doorbell audio-filter Nyquist validation", () => {
 

@@ -16,11 +16,12 @@
  * strings the production table is (the button wire ids and gesture strings the production table carries), so they cannot catch a wire mismatch between the plugin and a
  * real controller - only HJD's live validation can. The INFO log on an unrecognized gesture is the field tell.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { Fob, ProtectFobConfig } from "unifi-protect";
 import { TestFobProjection, makeFobConfig } from "./testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
+import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
@@ -30,7 +31,6 @@ import { ProtectReservedNames } from "../types.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
-import { formatLogEntry } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // The fixed button table the production ProtectFob authors, mirrored here so every lookup in the suite names the exact index / label / wire id the class created its
@@ -68,7 +68,7 @@ const controllers: AbortController[] = [];
 // and light suites do; the instance under test runs its real configureHints / configureDevice / spawnObservers paths. Each call builds a fresh store, so an extra build
 // inside a test is fully isolated from the beforeEach fob. An optional accessory lets a test seed a restored-across-restart accessory (the grouped->lone reconfigure).
 function buildFob(configOptions: Parameters<typeof makeFobConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; userOptions?: string[] } = {}): {
-  accessory: TestAccessory; events: ProtectEventDispatch; fob: ProtectFob; fobConfig: ProtectFobConfig; logEntries: TestLogEntry[]; mqtt: TestMqttClient;
+  accessory: TestAccessory; events: ProtectEventDispatch; fob: ProtectFob; fobConfig: ProtectFobConfig; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient;
   store: TestStateStore;
 } {
 
@@ -107,7 +107,7 @@ describe("real ProtectFob construction and behavior", () => {
   let events: ProtectEventDispatch;
   let fob: ProtectFob;
   let fobConfig: ProtectFobConfig;
-  let logEntries: TestLogEntry[];
+  let logEntries: readonly TestLogEntry[];
   let mqtt: TestMqttClient;
   let store: TestStateStore;
 

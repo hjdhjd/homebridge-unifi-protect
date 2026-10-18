@@ -14,32 +14,35 @@
  * userOptions subset and HARD-asserts the service EXISTS (a non-optional assert.ok checked first) - an absent service then throws rather than passing vacuously - paired
  * with a without-feature absence test that proves the same path produces nothing when the string is omitted.
  *
- * The trigger's reverts are bare setTimeout(...,50) NOT registered in this.timers, so device.cleanup() does not clear them; the disabled-revert and the off-revert
- * tests await ~60ms so the bare revert fires within the test, touching only that test's fresh accessory. The firehose routing goes through the shared
- * TestRecordingDispatch (a real ProtectEventDispatch whose motion delivery records into an array and arms no reset timer), injected through makeTestNvr's dispatch
- * parameter and read off nvr.events.
+ * The trigger's reverts are deferred reflects armed on the platform's clock outside this.timers, so device.cleanup() does not clear them; the disabled-revert and the
+ * off-revert tests advance the harness clock through the reflect delay so the revert fires within the test, touching only that test's fresh accessory. The firehose
+ * routing goes through the shared TestRecordingDispatch (a real ProtectEventDispatch whose motion delivery records into an array and arms no reset timer), injected
+ * through makeTestNvr's dispatch parameter and read off nvr.events.
  *
  * The isolation model is per-test-fresh: each test calls buildMotionDevice with its own userOptions, and an afterEach unwinds the device's per-accessory abort. These
  * base services are HAP- and MQTT-driven, not observeState-driven, so there is no observer-wake subscription here (unlike the family suites).
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
-import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
+import type { TestClock, TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
+import { loggedAt, settle } from "homebridge-plugin-utils/testing";
+import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Sensor } from "unifi-protect";
 import type { TestAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
-import { loggedAt } from "homebridge-plugin-utils/testing";
 
-// Await the bare setTimeout(...,50) reverts the motion trigger arms outside this.timers, so the revert fires within the test rather than after teardown. 60ms clears the
-// 50ms timer with margin, exactly as the chime suite waits out its own bare reverts.
-async function awaitBareRevert(): Promise<void> {
+// Fire the deferred reflects the motion trigger arms outside this.timers, so the revert lands within the test rather than after teardown: settle the set handler,
+// advance the device's clock through the reflect delay, and settle again, exactly as the chime suite fires its own reverts.
+async function fireDeferredReflect(clock: TestClock): Promise<void> {
 
-  await new Promise<void>((resolve) => setTimeout(resolve, 60));
+  await settle();
+  clock.advance(PROTECT_HOMEKIT_REFLECT_DELAY);
+  await settle();
 }
 
 // The carrier identity, pinned so the firehose-routing assertions match the recorded id and the MQTT topic composition matches the device MAC. The all-quiet
@@ -58,12 +61,13 @@ const controllers: AbortController[] = [];
 // enabled true. The userOptions thread into the REAL FeatureOptions engine, so the Enable.Motion.* strings - and only those - materialize the services. seedAccessory,
 // when supplied, runs against the fresh accessory before construction, standing in for the services a Homebridge restart restores from the accessory cache.
 function buildMotionDevice(harnessOptions: { seedAccessory?: (accessory: TestAccessory) => void; userOptions?: string[] } = {}): {
-  accessory: TestAccessory; device: TestBaseDevice; logEntries: TestLogEntry[]; mqtt: TestMqttClient; recording: TestRecordingDispatch;
+  accessory: TestAccessory; clock: TestClock; device: TestBaseDevice; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; recording: TestRecordingDispatch;
 } {
 
   const sensorConfig = makeSensorConfig();
   const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));
-  const { controller, logEntries, mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): TestRecordingDispatch => new TestRecordingDispatch(innerNvr), mqtt: true,
+  const { clock, controller, logEntries, mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): TestRecordingDispatch => new TestRecordingDispatch(innerNvr),
+    mqtt: true,
     store, userOptions: harnessOptions.userOptions });
 
   controllers.push(controller);
@@ -94,7 +98,7 @@ function buildMotionDevice(harnessOptions: { seedAccessory?: (accessory: TestAcc
   device.configureMotionSensorFor({ enabled: true });
   device.configureOccupancySensorFor({ enabled: true });
 
-  return { accessory, device, logEntries, mqtt, recording };
+  return { accessory, clock, device, logEntries, mqtt, recording };
 }
 
 describe("base ProtectDevice motion capability (device-motion concern net)", () => {
@@ -192,8 +196,8 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
     test("with both switches, a trigger-on while motion detection is OFF takes the bare revert and fires no firehose", async () => {
 
-      // Both switches present so configureMotionTrigger's onSet can see the motion switch and read its OFF state - the disabled-revert branch (the bare setTimeout(->
-      // false, 50) NOT in this.timers).
+      // Both switches present so configureMotionTrigger's onSet can see the motion switch and read its OFF state - the disabled-revert branch (the deferred reflect to
+      // false, outside this.timers).
       const built = buildMotionDevice({ userOptions: [ "Enable.Motion.Switch", "Enable.Motion.Trigger" ] });
 
       device = built.device;
@@ -216,8 +220,8 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       await triggerOn.triggerSet(true);
 
-      // Let the bare setTimeout(-> false, 50) fire within the test. The revert is NOT in this.timers, so cleanup() would not clear it.
-      await awaitBareRevert();
+      // Let the deferred reflect to false fire within the test. The revert is outside this.timers, so cleanup() would not clear it.
+      await fireDeferredReflect(built.clock);
 
       assert.equal(built.recording.calls.length - baseline, 0, "the disabled-revert branch fired no firehose (the motion switch was OFF)");
       assert.equal(triggerOn.value, false, "the bare revert pushed the trigger back to off");
@@ -235,14 +239,14 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       assert.ok(trigger, "the trigger materialized");
       assert.ok(motionService, "the motion sensor materialized");
 
-      // Drive the off-revert in configureMotionTrigger's onSet (device.ts): on isOn false it re-arms the trigger to true via a bare setTimeout(-> true, 50) IFF the
-      // motion sensor still reports motion. Set MotionDetected true to model live motion, then turn the trigger off.
+      // Drive the off-revert in configureMotionTrigger's onSet (device.ts): on isOn false it re-arms the trigger to true through the deferred reflect IFF the motion
+      // sensor still reports motion. Set MotionDetected true to model live motion, then turn the trigger off.
       motionService.updateCharacteristic(Characteristic.MotionDetected, true);
 
       const triggerOn = trigger.getCharacteristic(Characteristic.On);
 
       await triggerOn.triggerSet(false);
-      await awaitBareRevert();
+      await fireDeferredReflect(built.clock);
 
       assert.equal(triggerOn.value, true, "the off-revert re-armed the trigger to on because the motion sensor still reported motion");
     });

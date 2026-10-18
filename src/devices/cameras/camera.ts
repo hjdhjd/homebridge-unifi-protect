@@ -662,6 +662,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
           audio: { channels: 1, codec: AudioRecordingCodecType.AAC_LC, samplerate: samplerate },
           enableAudio: this.ufp.featureFlags.hasMic && this.hasFeature("Audio"),
           ffmpegOptions: this.stream.ffmpegOptions,
+          processFactory: this.platform.livestreamProcessFactory,
           segmentLength: segmentLength,
           signal: opts.signal,
           url: channelProfile.url,
@@ -721,11 +722,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       // Protect only supports unlocking. If the user taps lock while we're in the momentary unlock window, revert the optimistic SECURED target back to UNSECURED. We
       // guard on the auto re-lock timer being pending so we don't stomp a SECURED state that our own timer just wrote...the registry deletes the keyed entry before
-      // invoking its callback, so by the time we check, a just-fired timer is already gone and we correctly become a no-op. The 50ms delay below is the same margin used
-      // throughout this file to let HomeKit settle the value it just wrote before we write back over it, mirroring the package camera's flashlight reset.
+      // invoking its callback, so by the time we check, a just-fired timer is already gone and we correctly become a no-op.
       if(value === this.hap.Characteristic.LockTargetState.SECURED) {
 
-        setTimeout(() => {
+        this.reflectAfterSet(() => {
 
           if(!this.timers.has("accessUnlock")) {
 
@@ -734,7 +734,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
           service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.UNSECURED);
           service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.UNSECURED);
-        }, 50);
+        });
 
         return;
       }
@@ -743,11 +743,11 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       if(!(await this.runDeviceCommand("unlock the Access device", () => this.device.unlock()))) {
 
         // The command failed (the helper already reported it); revert HomeKit to its prior locked state.
-        setTimeout(() => {
+        this.reflectAfterSet(() => {
 
           service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
           service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
-        }, 50);
+        });
 
         return;
       }
@@ -1078,7 +1078,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         // If the doorbell ring event is still going, we should be as well.
         if(this.isRinging) {
 
-          setTimeout(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, true), 50);
+          this.reflectAfterSet(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, true));
         }
       }
     });
@@ -1142,7 +1142,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         // Push the new night vision setting to the controller, reporting any failure through the shared command-error helper and reverting the characteristic on failure.
         if(!(await this.runDeviceCommand("set night vision to " + command.irLedMode, () => this.device.update({ ispSettings: command })))) {
 
-          setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.NightVision, !value), 50);
+          this.reflectAfterSet(() => service.updateCharacteristic(this.hap.Characteristic.NightVision, !value));
 
           return;
         }
@@ -1567,7 +1567,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       // Push the new night vision setting to the controller, reporting any failure through the shared command-error helper and reverting the characteristic on failure.
       if(!(await this.runDeviceCommand("set night vision to " + command.irLedMode, () => this.device.update({ ispSettings: command })))) {
 
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, !value), 50);
+        this.reflectAfterSet(() => service.updateCharacteristic(this.hap.Characteristic.On, !value));
 
         return;
       }
@@ -1595,7 +1595,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       }
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
-      setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, reflectedLevel), 50);
+      this.reflectAfterSet(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, reflectedLevel));
     });
 
     // Establish the dimmer at startup (a fresh adoption or create, or a restart's construct) only - never on a live reconcile re-run. The camera.ispSettings observer
@@ -1650,7 +1650,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         // settings one can choose from. Instead, we do nothing and leave it to the user to choose what state they really want to set.
         if(!value) {
 
-          setTimeout(() => this.updateDevice(), 50);
+          this.reflectAfterSet(() => this.updateDevice());
 
           return;
         }

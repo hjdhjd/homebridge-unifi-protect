@@ -10,10 +10,11 @@
  * identical package-channel dimensions never wakes the observer at all - the computed-primitive selector's value dedup is the change detection.
  */
 import { G6_PRO_ENTRY_CHANNELS, PACKAGE_FIXTURES } from "../../camera.fixtures.ts";
-import { Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import { Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import type { TestAccessory, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { after, before, describe, test } from "node:test";
+import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import type { Camera } from "unifi-protect";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
@@ -23,7 +24,6 @@ import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
-import { formatLogEntry } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // The deferral sentence's distinguishing fragment, used to count the user-facing narration exactly once.
@@ -41,7 +41,7 @@ describe("package camera defer-create (BC1)", () => {
   let doorbell: ProtectCamera;
   let factory: TestStreamingDelegateFactory;
   let harnessController: AbortController | undefined;
-  let logEntries: TestLogEntry[];
+  let logEntries: readonly TestLogEntry[];
   let store: TestStateStore;
 
   // Count the user-facing deferral narrations logged so far.
@@ -212,7 +212,7 @@ describe("package camera create-at-adoption (the channel-present arm)", () => {
 
   // Construct a real doorbell-plus-package family whose package channel is present from the start, optionally against a controller that has already entered shutdown.
   // Nothing is settled here: the caller decides whether to assert on the constructor's own call frame or after the microtasks drain.
-  function constructFamily(phase?: TestProtectNvr["phase"]): { doorbell: ProtectCamera; factory: TestStreamingDelegateFactory; logEntries: TestLogEntry[] } {
+  function constructFamily(phase?: TestProtectNvr["phase"]): { doorbell: ProtectCamera; factory: TestStreamingDelegateFactory; logEntries: readonly TestLogEntry[] } {
 
     const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, name: "Side Door" });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));

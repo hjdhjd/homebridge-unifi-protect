@@ -129,13 +129,10 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
   // Shutdown ends this camera's probesize self-tuning along with its streams. The distinguishing assertion is the IMMEDIATE post-shutdown read: a shutdown that leaves
   // the self-tune armed still reads the elevated override right after the call, and only drifts back to baseline when the auto-reset timer eventually fires - which is
   // exactly the timer that would keep a retired delegate reachable. The advance-and-recheck afterward is post-reset stability hygiene, not what tells a shutdown that
-  // ends the tuning from one that leaves it armed.
-  // Mock timers also keep a pending real timer from ever pinning the test process.
-  test("shutdown resets the probesize self-tuning and leaves no auto-reset pending", (t) => {
+  // ends the tuning from one that leaves it armed. The auto-reset arms on the harness test clock, so a pending one never holds the test process open.
+  test("shutdown resets the probesize self-tuning and leaves no auto-reset pending", () => {
 
-    t.mock.timers.enable({ apis: ["setTimeout"] });
-
-    const { controller, host, logEntries } = makeTestCameraHost();
+    const { clock, controller, host, logEntries } = makeTestCameraHost();
 
     controllers.push(controller);
 
@@ -156,7 +153,7 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
 
     assert.equal(stream.probesize, 16384, "shutdown wound the override back to the camera's baseline immediately");
 
-    t.mock.timers.tick(PROTECT_PROBESIZE_OVERRIDE_RESET_MS + 1);
+    clock.advance(PROTECT_PROBESIZE_OVERRIDE_RESET_MS + 1);
 
     assert.equal(stream.probesize, 16384, "the baseline holds past the auto-reset delay");
     assert.equal(logEntries.length, logCountAfterAdjust, "nothing was logged after the shutdown");
@@ -193,11 +190,9 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
   // while the tally underneath keeps climbing - the state a tally that reset with the elevation could never reach. The threshold is pinned TWO-SIDED, because an
   // adjustment word asserted on one side alone is equally happy with a threshold off by one: the adjustment just below reports a temporary elevation, and the one that
   // reaches the threshold reports a permanent one. The closing advance is what proves the permanent adjustment armed no auto-reset at all.
-  test("the probesize adjustment tally outlives the auto-reset and crosses the permanent threshold", (t) => {
+  test("the probesize adjustment tally outlives the auto-reset and crosses the permanent threshold", () => {
 
-    t.mock.timers.enable({ apis: ["setTimeout"] });
-
-    const { controller, host, logEntries } = makeTestCameraHost();
+    const { clock, controller, host, logEntries } = makeTestCameraHost();
 
     controllers.push(controller);
 
@@ -213,7 +208,7 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
       assert.equal(stream.probesize, 32768, "adjustment " + adjustment.toString() + " doubled the camera's baseline");
       assert.ok(lastAdjustmentLine().includes("temporarily"), "adjustment " + adjustment.toString() + " reported a temporary elevation");
 
-      t.mock.timers.tick(PROTECT_PROBESIZE_OVERRIDE_RESET_MS + 1);
+      clock.advance(PROTECT_PROBESIZE_OVERRIDE_RESET_MS + 1);
 
       assert.equal(stream.probesize, 16384, "the auto-reset after adjustment " + adjustment.toString() + " returned the camera to its baseline");
     }
@@ -223,7 +218,7 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
     assert.ok(lastAdjustmentLine().includes("permanently"), "the adjustment that reached the threshold reported a permanent elevation");
     assert.ok(!lastAdjustmentLine().includes("temporarily"), "the permanent adjustment did not also report itself as temporary");
 
-    t.mock.timers.tick(PROTECT_PROBESIZE_OVERRIDE_RESET_MS + 1);
+    clock.advance(PROTECT_PROBESIZE_OVERRIDE_RESET_MS + 1);
 
     assert.equal(stream.probesize, 32768, "no auto-reset was armed at the threshold, so the elevation stands");
   });
@@ -231,9 +226,7 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
   // Each adjustment doubles the probesize ALREADY IN EFFECT rather than the camera's baseline, so back-to-back trouble compounds instead of arriving at the same
   // elevation every time - and the compounding comes to rest on the ceiling rather than running away. The ceiling is pinned two-sided: the last adjustment below it
   // lands on its exact doubled value, and the next lands on the ceiling instead of the value it would otherwise have reached.
-  test("each probesize adjustment doubles the elevation already in effect, up to the ceiling", (t) => {
-
-    t.mock.timers.enable({ apis: ["setTimeout"] });
+  test("each probesize adjustment doubles the elevation already in effect, up to the ceiling", () => {
 
     const { controller, host } = makeTestCameraHost();
 

@@ -45,7 +45,7 @@ import { makeTestNvr } from "../nvr/testing.helpers.ts";
 // A tail-exact variant of loggedAt: it requires a formatted line at the given level to END WITH the supplied suffix. The failure-path assertion uses this so a regression
 // in runDeviceCommand's trailing-period strip (which would leave the line ending in a doubled period after the format string supplies its own terminal one) fails the
 // test, where a plain includes() of the single-period suffix would still match the doubled-period substring and let the regression through.
-function tailLoggedAt(entries: TestLogEntry[], level: TestLogEntry["level"], suffix: string): boolean {
+function tailLoggedAt(entries: readonly TestLogEntry[], level: TestLogEntry["level"], suffix: string): boolean {
 
   return entries.some((entry) => (entry.level === level) && formatLogEntry(entry).endsWith(suffix));
 }
@@ -60,7 +60,7 @@ const controllers: AbortController[] = [];
 // configureHints first (the base configurators read this.hints), then the status-LED switch with isEnabled true. The userOptions thread into the REAL FeatureOptions
 // engine, so the Enable.Device.StatusLed.Switch string - and only it - materializes the switch.
 function buildStatusLedDevice(configOptions: { ledEnabled?: boolean } = {}, harnessOptions: { userOptions?: string[] } = {}): {
-  accessory: TestAccessory; device: TestBaseDevice; logEntries: TestLogEntry[]; projection: TestSensorProjection;
+  accessory: TestAccessory; device: TestBaseDevice; logEntries: readonly TestLogEntry[]; projection: TestSensorProjection;
 } {
 
   const sensorConfig = makeSensorConfig(configOptions);

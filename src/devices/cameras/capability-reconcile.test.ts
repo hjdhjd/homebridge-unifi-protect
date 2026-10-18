@@ -22,11 +22,12 @@
  * early-return removal (lock only), and the (transition === "attached") || (source === "construct") establishment condition.
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import type { TestAccessory, TestService } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
-import { after, describe, mock, test } from "node:test";
+import { after, describe, test } from "node:test";
+import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
@@ -35,7 +36,6 @@ import { ProtectReservedNames } from "../../types.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
-import { formatLogEntry } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // Every harness controller this file opens, aborted once at the end so no observe loop outlives the suite. The constructions are per-test and numerous, so the capture
@@ -376,19 +376,18 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
   test("a teardown that lands mid-read writes neither the characteristic nor MQTT (the post-await lifetime check)", async () => {
 
     // The poll's continuation is suspended at the controller read when teardown arrives: the registry's drain stops the NEXT fire, but this fire is already past its
-    // timer, so only the capability's own signal check can stop it from writing to a camera that is gone. The arrangement is exact - tick the captured interval (which
-    // runs the callback synchronously up to its first await), tear the camera down in the SAME synchronous region, and only then settle so the continuation resumes.
+    // timer, so only the capability's own signal check can stop it from writing to a camera that is gone. The arrangement is exact - advance the clock through the
+    // interval (which runs the callback synchronously up to its first await), tear the camera down in the SAME synchronous region, and only then settle so the
+    // continuation resumes.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = buildTestNvr({ mqtt: true, store });
+    const { clock, nvr } = buildTestNvr({ mqtt: true, store });
     const accessory = makeTestAccessory("Test Camera", "uuid:capability-reconcile-9");
     const projection = new TestCameraProjection(cameraConfig.id, store);
 
     projection.luxReading = 42;
 
-    // Capture the reconcile-time global setInterval so the poll fires on tick(60000) rather than on the wall clock, the camera-best-effort idiom.
-    mock.timers.enable({ apis: ["setInterval"] });
-
+    // The reconcile arms the poll's interval on the harness clock, so the poll fires on an advance of 60000 rather than on the wall clock, the camera-best-effort idiom.
     const camera = construct(nvr, accessory, projection);
 
     await settle();
@@ -407,8 +406,9 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
 
       const publishedBaseline = nvr.mqtt?.published.length ?? 0;
 
-      // Fire the poll and tear the camera down before the read resolves - the callback is () => void updateAmbientLight(), so the tick leaves it suspended at the await.
-      mock.timers.tick(60000);
+      // Fire the poll and tear the camera down before the read resolves - the callback is () => void updateAmbientLight(), so the advance leaves it suspended at the
+      // await.
+      clock.advance(60000);
       camera.cleanup();
 
       await settle();
@@ -419,7 +419,6 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
       assert.equal(nvr.mqtt?.published.length, publishedBaseline, "the continuation that resumed after teardown published nothing");
     } finally {
 
-      mock.timers.reset();
       camera.cleanup();
     }
   });
@@ -638,8 +637,6 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
     await settle();
 
-    mock.timers.enable({ apis: ["setTimeout"] });
-
     try {
 
       // (a) The construct path stamped SECURED on the EXISTING lock (source === "construct" with the lock kept). Dropping the source === "construct" half leaves the
@@ -656,12 +653,12 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
       assert.equal(projection.unlockCalls.length, 1, "the re-bound onSet dispatched exactly one unlock when driven to UNSECURED");
 
       // (c) The success path reported the momentary unlock: current state mirrors UNSECURED so the Home app lands on "Unlocked" rather than a transition that never
-      // completes, and the auto re-lock timer restores SECURED afterwards (setTimeout is mocked here, so the re-lock never fires before this read).
+      // completes, and the auto re-lock timer restores SECURED afterwards (the re-lock is armed on the harness clock, which this row never advances, so it never fires
+      // before this read).
       assert.equal(restored.getCharacteristic(Characteristic.LockCurrentState).value, Characteristic.LockCurrentState.UNSECURED,
         "the successful unlock pushed the momentary UNSECURED current state");
     } finally {
 
-      mock.timers.reset();
       camera.cleanup();
     }
   });
@@ -1291,7 +1288,7 @@ describe("the camera capability reconcile - two-way audio", () => {
       assert.equal(churn.length, 2, "the late speaker fired exactly two controller events");
       assert.equal(churn[0]?.kind, "remove", "the first controller event is the removeController");
       assert.equal(churn[1]?.kind, "configure", "the second controller event is the configureController");
-      assert.equal(camera.stream?.builtFor.twoWayAudio, true, "the rebuilt controller is now built for two-way audio");
+      assert.equal(camera.stream.builtFor.twoWayAudio, true, "the rebuilt controller is now built for two-way audio");
       assert.equal(camera.hints.twoWayAudio, true, "the two-way audio hint refreshed to true");
     } finally {
 
@@ -1350,7 +1347,7 @@ describe("the camera capability reconcile - two-way audio", () => {
     try {
 
       assert.equal(camera.stream?.builtFor.isDoorbell, true, "the controller is built for a doorbell");
-      assert.equal(camera.stream?.builtFor.twoWayAudio, true, "the controller is built for two-way audio");
+      assert.equal(camera.stream.builtFor.twoWayAudio, true, "the controller is built for two-way audio");
 
       const churnBaseline = accessory.controllerEvents.length;
 
@@ -1505,7 +1502,7 @@ describe("the camera capability reconcile - two-way audio", () => {
 
       assert.equal(accessory.controllerEvents.length - parentBaseline, 2, "the parent rebuilt its controller: one remove then one configure");
       assert.equal(packageAccessory.controllerEvents.length - packageBaseline, 0, "the package camera's controller was never touched");
-      assert.equal(camera.packageCamera?.stream, packageDelegate, "the package still holds the very delegate it built - nothing rebuilt it");
+      assert.equal(camera.packageCamera.stream, packageDelegate, "the package still holds the very delegate it built - nothing rebuilt it");
     } finally {
 
       camera.cleanup();
@@ -1635,9 +1632,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
 
     await settle();
 
-    // The delivery arms a motionDuration reset timer, so we capture setTimeout rather than leave one on the real loop.
-    mock.timers.enable({ apis: ["setTimeout"] });
-
+    // The delivery arms a motionDuration reset timer on the double's test clock, which this test never advances, so the detection's window stays open.
     try {
 
       store.pushCameraFeatureFlags(cameraConfig.id, { hasSmartDetect: true });
@@ -1659,7 +1654,6 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
         "the smart detection tripped the newly materialized sensor - the delivery gate opened with it");
     } finally {
 
-      mock.timers.reset();
       camera.cleanup();
     }
   });
@@ -1677,8 +1671,6 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
     await settle();
-
-    mock.timers.enable({ apis: ["setTimeout"] });
 
     try {
 
@@ -1703,7 +1695,6 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
         "the detection tripped occupancy after the live arrival - the refreshed smart-occupancy list matched its type");
     } finally {
 
-      mock.timers.reset();
       camera.cleanup();
     }
   });
@@ -1720,8 +1711,6 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
     await settle();
-
-    mock.timers.enable({ apis: ["setTimeout"] });
 
     try {
 
@@ -1745,7 +1734,6 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
         "the swapped-in detection type tripped occupancy - the list followed the controller's change");
     } finally {
 
-      mock.timers.reset();
       camera.cleanup();
     }
   });
@@ -1992,8 +1980,6 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
 
     await settle();
 
-    mock.timers.enable({ apis: ["setTimeout"] });
-
     try {
 
       const person = smartDetectSensor(accessory, "person");
@@ -2016,7 +2002,6 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
         "the reconcile left the tripped sensor alone - the delivery path owns an existing sensor's state");
     } finally {
 
-      mock.timers.reset();
       camera.cleanup();
     }
   });

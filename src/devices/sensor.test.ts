@@ -38,7 +38,7 @@
  * The isolation model mirrors the light reference: a beforeEach builds a fresh sensor so the recording calls, the characteristic state, the observer baselines, and
  * store.observerCount are clean every test, the wake log is windowed per push via a captured baseline, and an afterEach unwinds the sensor's per-accessory abort.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { CharacteristicType, TestAccessory } from "../testing.helpers.ts";
 import { ProtectSensor, narratesTransition } from "./sensor.ts";
 import type { ProtectSensorAirQuality, Sensor } from "unifi-protect";
@@ -46,7 +46,7 @@ import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testi
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { TestSensorProjection, makeSensorConfig, makeSmokeStatus } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
-import { logCount, loggedAt } from "homebridge-plugin-utils/testing";
+import { logCount, loggedAt, settle } from "homebridge-plugin-utils/testing";
 import { NOT_CAPABLE_AIR_QUALITY } from "./air-quality-policy.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ObserverWakePayload } from "../diagnostics.ts";
@@ -83,8 +83,8 @@ const controllers: AbortController[] = [];
 // before construction. The injected recording dispatch is read off nvr.events after construction rather than captured from the factory closure - reading it back avoids
 // both the assignment-expression smell and a TS2454 definite-assignment error on a factory-captured binding.
 function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; userOptions?: string[] } = {}): {
-  accessory: TestAccessory; logEntries: TestLogEntry[]; mqtt: TestMqttClient; projection: TestSensorProjection; recording: TestRecordingDispatch; sensor: ProtectSensor;
-  store: TestStateStore;
+  accessory: TestAccessory; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; projection: TestSensorProjection; recording: TestRecordingDispatch;
+  sensor: ProtectSensor; store: TestStateStore;
 } {
 
   const sensorConfig = makeSensorConfig(configOptions);
@@ -119,7 +119,7 @@ describe("real ProtectSensor construction and family behavior", () => {
   // The per-test-fresh handles, rebuilt in beforeEach so every test starts from a clean sensor, clean captures, and clean wake baseline.
   let accessory: TestAccessory;
   let constructionWakes = 0;
-  let logEntries: TestLogEntry[];
+  let logEntries: readonly TestLogEntry[];
   let mqtt: TestMqttClient;
   let projection: TestSensorProjection;
   let recording: TestRecordingDispatch;
@@ -573,7 +573,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     const baseline = wakeLog.length;
 
-    // A fixed truthy timestamp literal rather than Date.now(), so the push is deterministic.
+    // A fixed truthy timestamp literal, so the push is deterministic.
     store.pushSensorPatch("test-sensor-1", { motionDetectedAt: 1700000000000 });
 
     await settle();

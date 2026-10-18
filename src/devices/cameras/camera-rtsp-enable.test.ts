@@ -21,9 +21,9 @@
 import { AI_PRO_CHANNELS, CAMERA_FIXTURES, G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS, makeChannel } from "../../camera.fixtures.ts";
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
-import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
-import { logCount, loggedAt } from "homebridge-plugin-utils/testing";
+import { logCount, loggedAt, settle } from "homebridge-plugin-utils/testing";
 import type { CameraFixture } from "../../camera.fixtures.ts";
 import { PACKAGE_CHANNEL_NAME } from "../../media/resolution.ts";
 import type { ProtectAccessory } from "../../types.ts";
@@ -67,7 +67,7 @@ interface BuiltCamera {
   cameraConfig: ProtectCameraConfig;
   controller: AbortController;
   factory: TestStreamingDelegateFactory;
-  logEntries: TestLogEntry[];
+  logEntries: readonly TestLogEntry[];
   projection: TestCameraProjection;
   store: TestStateStore;
 }

@@ -21,6 +21,8 @@ import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
+import { TEST_CLOCK_EPOCH } from "../nvr/testing.helpers.ts";
+import { TestClock } from "homebridge-plugin-utils/testing";
 import type { TestService } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import util from "node:util";
@@ -46,8 +48,9 @@ interface CommandHarness {
 }
 
 // Construct a real ProtectDevice against the minimal mocks the command path reads: a projection carrying modelKey (statusLedCommand narrows on it), name (the log
-// prefix), and the write-through update thunk; a platform whose plugin logging root captures the rendered failure line; and a real AbortSignal for composeSignals. The
-// casts are confined to this construction point; the instance itself is the production class.
+// prefix), and the write-through update thunk; a platform whose plugin logging root captures the rendered failure line, carrying the test clock the spine's timer
+// registry is built on, started at the harness epoch; and a real AbortSignal for composeSignals. The casts are confined to this construction point; the instance itself
+// is the production class.
 const makeDevice = (update: (payload: unknown) => Promise<unknown> = () => Promise.resolve({}), modelKey = "camera"): CommandHarness => {
 
   const errors: string[] = [];
@@ -63,7 +66,7 @@ const makeDevice = (update: (payload: unknown) => Promise<unknown> = () => Promi
   const nvr = {
 
     client: { connection: { isHealthy: true } },
-    platform: { api: { hap }, log, pluginLog: log, testDebug: () => false },
+    platform: { api: { hap }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
     signal: new AbortController().signal
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, makeTestAccessory() as unknown as ProtectAccessory, device as unknown as Camera);
@@ -120,7 +123,7 @@ describe("runDeviceCommand (real ProtectDevice)", () => {
 
     // We deliberately reject with a non-Error value to exercise runDeviceCommand's String(error) fallback - the branch that reports a thrown value that is not an Error.
     // Commands only ever throw classified Error subclasses, so this is the defensive path, and rejecting with a non-Error is the whole point of the assertion.
-    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- This test rejects with a non-Error value to exercise the fallback that reports one.
     const result = await instance.runCommand("set the doorbell message", () => Promise.reject("boom"));
 
     assert.equal(result, false);
@@ -188,7 +191,7 @@ describe("setStatusLed (real migrated command path)", () => {
 describe("migrated onSet revert through the HAP test-double", () => {
 
   // The night-vision onSet shape both camera reactions ship: push the command through the shared helper, and on failure revert the switch to its prior state. The leaf
-  // defers the revert via setTimeout(50) in production; we apply it synchronously here so the HAP-double write is observable without a timer, and pre-set the
+  // defers the revert through its deferred reflect in production; we apply it synchronously here so the HAP-double write is observable without a timer, and pre-set the
   // characteristic to the requested value first to model HAP applying the set to its read cache before the handler runs.
   const nightVisionOnSet = (harness: CommandHarness, service: TestService) => async (value: boolean): Promise<void> => {
 
@@ -229,8 +232,9 @@ describe("migrated onSet revert through the HAP test-double", () => {
 describe("access unlock onSet (real runDeviceCommand)", () => {
 
   // The access-unlock onSet shape the camera ships: push the unlock through the shared helper and, on failure, revert BOTH lock characteristics to SECURED. Production
-  // defers the revert via setTimeout(50); we apply it synchronously so the writes are observable without a timer. On success, production reports the momentary unlock
-  // by pushing the UNSECURED current state and schedules an auto re-lock on a live keyed timer we do not model here, so we assert the report and that nothing logs.
+  // defers the revert through its deferred reflect; we apply it synchronously so the writes are observable without a timer. On success, production reports the
+  // momentary unlock by pushing the UNSECURED current state and schedules an auto re-lock on a live keyed timer we do not model here, so we assert the report and that
+  // nothing logs.
   const unlockOnSet = (harness: CommandHarness, service: TestService, unlock: () => Promise<unknown>) => async (): Promise<void> => {
 
     if(!(await harness.instance.runCommand("unlock the Access device", unlock))) {

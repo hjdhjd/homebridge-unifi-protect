@@ -25,10 +25,11 @@
  * (getSwitchState === target), making the later toggle a genuine false->true change - setSwitchState in liveviews.ts continue()s a member already at its target, so it
  * would no-op.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { TestAccessory, TestService } from "../testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
+import { loggedAt, settle } from "homebridge-plugin-utils/testing";
 import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
 import type { ProtectDevices } from "../types.ts";
 import { ProtectLiveviews } from "./liveviews.ts";
@@ -37,7 +38,6 @@ import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
-import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
 
 // The controller MAC the makeNvrConfig record carries; the MQTT topic scope and the self-created accessory UUIDs derive from it (the platform double's uuid generator is
@@ -93,7 +93,7 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 // it built, the scope that owns every registration the test created.
 function buildLiveviews(harnessOptions: { cachedAccessories?: TestAccessory[]; liveviews?: ProtectNvrLiveviewConfig[]; mac?: string;
   sharedPlatform?: { accessories: TestAccessory[]; apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"] }; userOptions?: string[]; } = {}): {
-  apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"]; controller: AbortController; logEntries: TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr;
+  apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"]; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr;
   owner: ProtectLiveviews; store: TestStateStore;
 } {
 
@@ -201,7 +201,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     const getSubscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/securitysystem/get"));
     const setSubscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "set") && (entry.topic === CONTROLLER_MAC + "/securitysystem/set"));
 
-    assert.ok(getSubscription?.init?.signal && setSubscription?.init?.signal, "the security system registered its securitysystem get and set handlers");
+    assert.ok(getSubscription?.init.signal && setSubscription?.init.signal, "the security system registered its securitysystem get and set handlers");
     assert.equal(getSubscription.init.signal.aborted, false, "the get registration is live before removal");
     assert.equal(setSubscription.init.signal.aborted, false, "the set registration is live before removal");
 
@@ -223,7 +223,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     await settle();
 
     const liveGetSubscriptions = built.mqtt.subscriptions.filter((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/securitysystem/get") &&
-      (entry.init?.signal?.aborted === false));
+      (entry.init.signal?.aborted === false));
 
     assert.equal(liveGetSubscriptions.length, 1, "after the re-add exactly one securitysystem get registration is live - the remove/re-add cycle leaked no handlers");
   });
@@ -354,11 +354,11 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     // The subscription is scoped to this owner's composed lifetime, which for a controller owner is the controller connection: live while the controller runs, and over
     // the moment the controller signal aborts. Asserted behaviorally rather than by object identity, because the composed signal is a derived signal that fires when
     // nvr.signal does rather than being nvr.signal itself.
-    assert.equal(subscription.init?.signal?.aborted, false, "the GET registration's lifetime is live while the controller runs");
+    assert.equal(subscription.init.signal?.aborted, false, "the GET registration's lifetime is live while the controller runs");
 
     built.controller.abort();
 
-    assert.equal(subscription.init?.signal?.aborted, true, "the GET registration's lifetime ended with the controller abort");
+    assert.equal(subscription.init.signal.aborted, true, "the GET registration's lifetime ended with the controller abort");
   });
 
   test("the liveviews MQTT SET applies the commanded scene to its member cameras, rejects a non-array payload, and logs bad JSON", async () => {

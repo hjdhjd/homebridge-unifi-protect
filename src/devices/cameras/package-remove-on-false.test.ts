@@ -4,15 +4,15 @@
  *
  * This suite drives the doorbell capability's reconcilePackageCamera - the single lifecycle chokepoint for both directions of the controller's hasPackageCamera
  * capability flag - against the REAL RemovalStabilityGate the harness NVR double carries, so the stability gating, the per-UUID first-deadline rule, the grace
- * resolved through the REAL feature-option engine, and the fire body's stillGone re-check are the production ones running on production timers. Every scenario the
- * reconcile must survive is pinned: the immediate observer-armed detach and its event-timer and MQTT hygiene, the default sixty-second grace, the standalone
- * accessory's bridged-gated tail and manual-deletion guidance, the across-restart ghost the stability sweep's per-device reconcile arm catches, the stability gating
- * and the re-arm after a disruption drops a pending grace, the capability flap that cancels its own pending detach, the absence-tolerant stillGone predicate against a
- * removed parent record, and the fire-after-cascade no-op the detach's own absent-target guard guarantees.
+ * resolved through the REAL feature-option engine, and the fire body's stillGone re-check are the production ones running on the production TimerRegistry. Every
+ * scenario the reconcile must survive is asserted: the immediate observer-armed detach and its event-timer and MQTT hygiene, the default sixty-second grace, the
+ * standalone accessory's bridged-gated tail and manual-deletion guidance, the across-restart ghost the stability sweep's per-device reconcile arm catches, the
+ * stability gating and the re-arm after a disruption drops a pending grace, the capability flap that cancels its own pending detach, the absence-tolerant stillGone
+ * predicate against a removed parent record, and the fire-after-cascade no-op the detach's own absent-target guard guarantees.
  *
- * A graced detach therefore needs the clock moved, not a recorded entry invoked: each such test builds its fixture under real time, enables node:test's mocked timers,
- * re-establishes stability against the mocked clock (the gate counts from now after its first stabilization), drives the reconcile, and ticks. What every assertion
- * reads is a real observable - the live package handle, the platform accessory array, the registration recorders, the narration.
+ * A graced detach therefore needs the clock moved, not a recorded entry invoked: each such test builds its fixture on the NVR double's test clock, re-establishes
+ * stability on it (the gate counts from now after its first stabilization), drives the reconcile, and advances the clock. What every assertion reads is a real
+ * observable - the live package handle, the platform accessory array, the registration recorders, the narration.
  *
  * Honesty notes on scope: the root-side production machinery (removeHomeKitDevice's richer cascade with its per-accessory cancel, and the sweep's package pass) cannot
  * be unit-driven without standing up a real ProtectNvr, so the double wires the gate to its own thin removal tail and the doorbell-side behavior is what these tests
@@ -21,9 +21,10 @@
  */
 import type { TestAccessory, TestApiCall } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
-import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
-import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
-import { describe, mock, test } from "node:test";
+import type { TestClock, TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
+import { TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
+import { describe, test } from "node:test";
+import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import { makeTestAccessoryFamily, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import type { Camera } from "unifi-protect";
 import type { DoorbellCapability } from "./doorbell.ts";
@@ -36,7 +37,6 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
-import { formatLogEntry } from "homebridge-plugin-utils/testing";
 
 // The fixture identities, deliberately literal: the parent MAC and the package id the event timers key on.
 const PARENT_MAC = "74ACB9000001";
@@ -49,9 +49,10 @@ interface FamilyHarness {
   apiCalls: TestApiCall[];
   cameraId: string;
   capability: DoorbellCapability;
+  clock: TestClock;
   controller: AbortController;
   doorbell: ProtectCamera;
-  logEntries: TestLogEntry[];
+  logEntries: readonly TestLogEntry[];
   mqtt: Nullable<TestMqttClient>;
   nvr: TestProtectNvr;
   store: TestStateStore;
@@ -63,7 +64,7 @@ async function makeFamily(options: { hasPackageCamera?: boolean; userOptions?: s
   const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: options.hasPackageCamera ?? true, isDoorbell: true },
     name: "Front Door" });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-  const { apiCalls, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: options.userOptions });
+  const { apiCalls, clock, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: options.userOptions });
   const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "uuid:" + PARENT_MAC) as unknown as ProtectAccessory,
     new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
 
@@ -71,7 +72,7 @@ async function makeFamily(options: { hasPackageCamera?: boolean; userOptions?: s
 
   assert.ok(doorbell.doorbell, "the camera construction-attached its doorbell capability");
 
-  return { apiCalls, cameraId: cameraConfig.id, capability: doorbell.doorbell, controller, doorbell, logEntries, mqtt, nvr, store };
+  return { apiCalls, cameraId: cameraConfig.id, capability: doorbell.doorbell, clock, controller, doorbell, logEntries, mqtt, nvr, store };
 }
 
 // Push the hasPackageCamera capability flag through the shared featureFlags-composing helper so nothing else on the flags object moves.
@@ -82,7 +83,7 @@ function pushPackageFlag(harness: FamilyHarness, value: boolean): void {
 
 // Every "Delaying device removal" line the gate narrated, as the harness rendered it. The line carries the resolved grace, so counting these lines is how an arm and a
 // re-arm are told apart, and the text of one is the exact-interval pin.
-function delayingLines(entries: TestLogEntry[]): string[] {
+function delayingLines(entries: readonly TestLogEntry[]): string[] {
 
   return entries.filter((entry) => formatLogEntry(entry).includes("Delaying device removal")).map((entry) => formatLogEntry(entry));
 }
@@ -156,17 +157,15 @@ describe("package camera remove-on-false (BC2)", () => {
   test("with no option configured, the registered default applies: the detach schedules with a sixty-second grace rather than firing immediately", async () => {
 
     const harness = await makeFamily();
-    const { doorbell, logEntries, nvr } = harness;
+    const { clock, doorbell, logEntries, nvr } = harness;
 
     assert.ok(doorbell.packageCamera, "the package camera starts live");
 
     const accessory = doorbell.packageCamera.accessory as unknown as TestAccessory;
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
-
     try {
 
-      nvr.restabilizeController((ms) => mock.timers.tick(ms));
+      nvr.restabilizeController();
       pushPackageFlag(harness, false);
 
       await settle();
@@ -176,17 +175,15 @@ describe("package camera remove-on-false (BC2)", () => {
       assert.deepEqual(delayingLines(logEntries), [defaultDelayLine(accessory)], "the grace resolves to the registered DelayDeviceRemoval default of sixty seconds");
       assert.ok(nvr.platform.accessories.includes(accessory), "the package accessory is still on the platform inside the grace");
 
-      mock.timers.tick(60000);
+      clock.advance(60000);
 
       assert.equal(doorbell.packageCamera, null, "the elapsed grace detached the package camera");
       assert.equal(nvr.platform.accessories.includes(accessory), false, "the detach removed the package accessory through the tail");
     } finally {
 
-      mock.timers.reset();
+      doorbell.cleanup();
+      harness.controller.abort();
     }
-
-    doorbell.cleanup();
-    harness.controller.abort();
   });
 
   test("a standalone package camera detaches without an unregister and the user receives the manual-deletion guidance", async () => {
@@ -219,7 +216,7 @@ describe("package camera remove-on-false (BC2)", () => {
     // parent - so no live package instance ever exists, and the cached package accessory is unreachable by any other removal path.
     const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: false, isDoorbell: true }, name: "Front Door" });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { apiCalls, controller, logEntries, nvr } = makeTestNvr({ store });
+    const { apiCalls, clock, controller, logEntries, nvr } = makeTestNvr({ store });
     const { packageAccessory, parentAccessory } = makeTestAccessoryFamily({ nvr });
     const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, parentAccessory as unknown as ProtectAccessory,
       new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
@@ -229,11 +226,9 @@ describe("package camera remove-on-false (BC2)", () => {
     assert.ok(doorbell.doorbell, "the doorbell capability attached even with the package capability withdrawn");
     assert.equal(doorbell.packageCamera, null, "no live package instance exists with the capability withdrawn");
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
-
     try {
 
-      nvr.restabilizeController((ms) => mock.timers.tick(ms));
+      nvr.restabilizeController();
 
       // The stability sweep's package pass calls reconcilePackageCamera on every doorbell's capability; this is that per-device arm.
       doorbell.doorbell.reconcilePackageCamera();
@@ -242,7 +237,7 @@ describe("package camera remove-on-false (BC2)", () => {
         "the reconcile found the cached ghost through the platform lookup and armed its detach at the same default grace");
       assert.ok(nvr.platform.accessories.includes(packageAccessory), "the ghost is still on the platform inside the grace");
 
-      mock.timers.tick(60000);
+      clock.advance(60000);
 
       assert.equal(nvr.platform.accessories.includes(packageAccessory), false, "the elapsed grace removed the cached ghost");
       assert.equal(apiCalls.filter((call) => (call.kind === "unregister") && call.accessories.includes(packageAccessory)).length, 1, "the bridged ghost unregistered");
@@ -250,18 +245,16 @@ describe("package camera remove-on-false (BC2)", () => {
       assert.equal(doorbell.packageCamera, null, "no instance was ever conjured for the ghost");
     } finally {
 
-      mock.timers.reset();
+      doorbell.cleanup();
+      controller.abort();
     }
-
-    doorbell.cleanup();
-    controller.abort();
   });
 
   test("the stability gate suppresses the reconcile's schedule, and the sweep re-arms a detach a disruption dropped", async () => {
 
     const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: false, isDoorbell: true }, name: "Front Door" });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { controller, logEntries, nvr } = makeTestNvr({ store });
+    const { clock, controller, logEntries, nvr } = makeTestNvr({ store });
     const { packageAccessory, parentAccessory } = makeTestAccessoryFamily({ nvr });
     const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, parentAccessory as unknown as ProtectAccessory,
       new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
@@ -269,8 +262,6 @@ describe("package camera remove-on-false (BC2)", () => {
     await settle();
 
     assert.ok(doorbell.doorbell, "the doorbell capability attached");
-
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
 
     try {
 
@@ -281,12 +272,12 @@ describe("package camera remove-on-false (BC2)", () => {
 
       assert.deepEqual(delayingLines(logEntries), [], "no detach is scheduled or narrated while the controller is unstable");
 
-      mock.timers.tick(600000);
+      clock.advance(600000);
 
       assert.ok(nvr.platform.accessories.includes(packageAccessory), "nothing was removed across the unstable window");
 
       // Stability returns: the sweep's reconcile arm schedules the detach.
-      nvr.restabilizeController((ms) => mock.timers.tick(ms));
+      nvr.restabilizeController();
       doorbell.doorbell.reconcilePackageCamera();
 
       assert.deepEqual(delayingLines(logEntries), [defaultDelayLine(packageAccessory)], "the stability return armed the detach");
@@ -294,44 +285,40 @@ describe("package camera remove-on-false (BC2)", () => {
       // The disruption: leaving good state drops the clock and drains every pending grace as one act, so the armed detach never fires.
       nvr.pushControllerStability(false);
 
-      mock.timers.tick(600000);
+      clock.advance(600000);
 
       assert.ok(nvr.platform.accessories.includes(packageAccessory), "the disruption dropped the pending detach before it could fire");
 
       // The next stability return's sweep re-arms it, and this time it lands: the second narration line is the arm-then-re-arm observable.
-      nvr.restabilizeController((ms) => mock.timers.tick(ms));
+      nvr.restabilizeController();
       doorbell.doorbell.reconcilePackageCamera();
 
       assert.deepEqual(delayingLines(logEntries), [ defaultDelayLine(packageAccessory), defaultDelayLine(packageAccessory) ], "the re-arm schedules the detach again");
 
-      mock.timers.tick(60000);
+      clock.advance(60000);
 
       assert.equal(nvr.platform.accessories.includes(packageAccessory), false, "the re-armed grace fired and removed the ghost");
       assert.ok(nvr.platform.accessories.includes(parentAccessory), "the live parent accessory is untouched");
     } finally {
 
-      mock.timers.reset();
+      doorbell.cleanup();
+      controller.abort();
     }
-
-    doorbell.cleanup();
-    controller.abort();
   });
 
   test("a capability flap cancels its own pending detach, so only the deadline the flap-back armed ever fires", async () => {
 
     const harness = await makeFamily();
-    const { apiCalls, doorbell, logEntries, nvr } = harness;
+    const { apiCalls, clock, doorbell, logEntries, nvr } = harness;
 
     assert.ok(doorbell.packageCamera, "the package camera starts live");
 
     const instance = doorbell.packageCamera;
     const accessory = instance.accessory as unknown as TestAccessory;
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
-
     try {
 
-      nvr.restabilizeController((ms) => mock.timers.tick(ms));
+      nvr.restabilizeController();
 
       // The withdrawal arms the graced detach at the sixty-second deadline...
       pushPackageFlag(harness, false);
@@ -342,14 +329,14 @@ describe("package camera remove-on-false (BC2)", () => {
 
       // ...and the flap back cancels it through the reconcile's true arm, ahead of configurePackageCamera's instance guard. Cancellation narrates nothing, so the
       // observable that tells a broken cancel apart is WHICH deadline fires - which needs the two deadlines separated in time, and only an explicit advance does that
-      // (a settle never moves the mocked clock). Half the grace is spent here, so the flap-back detach below lands thirty seconds after the stale one would have.
+      // (a settle never moves the test clock). Half the grace is spent here, so the flap-back detach below lands thirty seconds after the stale one would have.
       pushPackageFlag(harness, true);
 
       await settle();
 
       assert.equal(doorbell.packageCamera, instance, "the live instance rode the flap untouched - a second configurePackageCamera is a no-op");
 
-      mock.timers.tick(30000);
+      clock.advance(30000);
 
       // The second withdrawal arms a FRESH detach, thirty seconds later than the cancelled one. A broken cancelFor would instead leave the stale timer armed and this
       // schedule would dedup against it silently, putting the deadline back at the earlier instant.
@@ -360,39 +347,35 @@ describe("package camera remove-on-false (BC2)", () => {
       assert.equal(delayingLines(logEntries).length, 2, "the second withdrawal armed a fresh detach rather than riding the cancelled one");
 
       // Past the CANCELLED deadline: nothing fires. A stale timer would fire here with stillGone reading true (the flag is false again) and remove the accessory early.
-      mock.timers.tick(31000);
+      clock.advance(31000);
 
       assert.equal(doorbell.packageCamera, instance, "the cancelled deadline passed without detaching anything");
       assert.ok(nvr.platform.accessories.includes(accessory), "the accessory survives past the deadline the flap cancelled");
 
       // The fresh deadline: the detach lands, exactly once.
-      mock.timers.tick(29000);
+      clock.advance(29000);
 
       assert.equal(doorbell.packageCamera, null, "the flap-back deadline detached the package camera");
       assert.equal(apiCalls.filter((call) => (call.kind === "unregister") && call.accessories.includes(accessory)).length, 1, "the accessory unregistered exactly once");
     } finally {
 
-      mock.timers.reset();
+      doorbell.cleanup();
+      harness.controller.abort();
     }
-
-    doorbell.cleanup();
-    harness.controller.abort();
   });
 
   test("stillGone is absence-tolerant: a removed parent record reads as gone, so the fire detaches rather than throwing", async () => {
 
     const harness = await makeFamily();
-    const { doorbell, logEntries, nvr, store } = harness;
+    const { clock, doorbell, logEntries, nvr, store } = harness;
 
     assert.ok(doorbell.packageCamera, "the package camera starts live");
 
     const accessory = doorbell.packageCamera.accessory as unknown as TestAccessory;
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
-
     try {
 
-      nvr.restabilizeController((ms) => mock.timers.tick(ms));
+      nvr.restabilizeController();
       pushPackageFlag(harness, false);
 
       await settle();
@@ -414,20 +397,18 @@ describe("package camera remove-on-false (BC2)", () => {
 
       // The fire runs synchronously inside the tick and the timer registry's callback carries no catch of its own, so a throwing predicate propagates straight out of
       // this call. Reading true, the predicate lets the detach run - which is the correct outcome for a parent that is genuinely gone.
-      assert.doesNotThrow(() => mock.timers.tick(60000), "the fire's predicate never throws against an absent parent");
+      assert.doesNotThrow(() => clock.advance(60000), "the fire's predicate never throws against an absent parent");
       assert.equal(nvr.platform.accessories.includes(accessory), false, "an absent parent reads as gone, so the detach proceeded");
     } finally {
 
-      mock.timers.reset();
+      harness.controller.abort();
     }
-
-    harness.controller.abort();
   });
 
   test("a detach fire after the cascade already removed the accessory is a no-op - the platform array is never corrupted", async () => {
 
     const harness = await makeFamily();
-    const { apiCalls, doorbell, logEntries, nvr } = harness;
+    const { apiCalls, clock, doorbell, logEntries, nvr } = harness;
 
     assert.ok(doorbell.packageCamera, "the package camera starts live");
 
@@ -438,11 +419,9 @@ describe("package camera remove-on-false (BC2)", () => {
 
     nvr.platform.accessories.push(bystander);
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ] });
-
     try {
 
-      nvr.restabilizeController((ms) => mock.timers.tick(ms));
+      nvr.restabilizeController();
       pushPackageFlag(harness, false);
 
       await settle();
@@ -459,16 +438,14 @@ describe("package camera remove-on-false (BC2)", () => {
 
       // The package flag is still false, so this fire finds stillGone TRUE and genuinely runs the detach. What makes it harmless is the detach's own absent-target
       // guard: the live instance is already gone and the cached accessory is no longer on the platform, so it reaches no removal at all.
-      assert.doesNotThrow(() => mock.timers.tick(60000), "the fire against an already-removed target never throws");
+      assert.doesNotThrow(() => clock.advance(60000), "the fire against an already-removed target never throws");
       assert.deepEqual(nvr.platform.accessories, survivors, "the fire removed nothing further");
       assert.equal(apiCalls.filter((call) => call.kind === "unregister").length, unregisters, "no second unregister was recorded for the already-removed accessory");
       assert.ok(nvr.platform.accessories.includes(bystander), "the bystander - the splice(-1) victim of an unguarded tail - survives");
     } finally {
 
-      mock.timers.reset();
+      harness.controller.abort();
     }
-
-    harness.controller.abort();
   });
 
   test("event-timer clearing is exact-boundary: the detach clears only the package's timers, and a parent inflight motion suppresses the terminal publish", async () => {
@@ -499,7 +476,7 @@ describe("package camera remove-on-false (BC2)", () => {
     assert.equal(mqtt.published.filter((entry) => (entry.topic === PARENT_MAC + "/motion") && (entry.payload === "false")).length, 0,
       "no premature terminal reset is published while the parent's motion is live");
 
-    // Teardown hygiene: clear the parent's real reset timer so nothing outlives the test (a parent-id clear sweeps everything, which is exactly right here).
+    // Teardown hygiene: clear the parent's pending reset timer so nothing outlives the test (a parent-id clear sweeps everything, which is exactly right here).
     nvr.events.clearEventTimersForDevice(PARENT_MAC);
     doorbell.cleanup();
     harness.controller.abort();

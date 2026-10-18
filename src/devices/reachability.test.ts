@@ -18,7 +18,9 @@ import type { Camera } from "unifi-protect";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
+import { TEST_CLOCK_EPOCH } from "../nvr/testing.helpers.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
+import { TestClock } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { composeSignals } from "homebridge-plugin-utils";
 
@@ -34,12 +36,12 @@ class TestProtectDevice extends ProtectDevice {
 }
 
 // Construct a real ProtectDevice against the minimal mocks its constructor and the methods under test actually read: the controller-health flag (client.connection),
-// the device record (read non-throwing via peek()), the HAP StatusActive identity (wired to the class the TestAccessory keyed its characteristics on),
-// and a real AbortSignal for composeSignals. ProtectBase composes its debug channel against the platform's scope gate, so that one member must be callable - this rig
-// exercises no debug output, so a gate that always answers false is the honest wiring. The total isReachable reads the device's online state through peek().state, so
-// the lever is the record's state field, and a vanished record (present false -> peek() undefined) is the unreachable-without-throwing case. Returns the mutable
-// health / record handles so a test can flip either input and re-read the real getter. The casts are confined to this construction step; the instance itself is the
-// production class.
+// the device record (read non-throwing via peek()), the HAP StatusActive identity (wired to the class the TestAccessory keyed its characteristics on), the test clock the
+// spine's timer registry is built on, started at the harness epoch, and a real AbortSignal for composeSignals. ProtectBase composes its debug channel against the
+// platform's scope gate, so that one member must be callable - this rig exercises no debug output, so a gate that always answers false is the honest wiring. The total
+// isReachable reads the device's online state through peek().state, so the lever is the record's state field, and a vanished record (present false -> peek() undefined)
+// is the unreachable-without-throwing case. Returns the mutable health / record handles so a test can flip either input and re-read the real getter. The casts are
+// confined to this construction step; the instance itself is the production class.
 const makeReachableDevice = (accessory: TestAccessory):
 { connection: { isHealthy: boolean }; device: { config: { state: string }; present: boolean }; instance: TestProtectDevice } => {
 
@@ -53,7 +55,7 @@ const makeReachableDevice = (accessory: TestAccessory):
   const nvr = {
 
     client: { connection },
-    platform: { api: { hap }, log, pluginLog: log, testDebug: () => false },
+    platform: { api: { hap }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
     signal: new AbortController().signal
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
@@ -110,7 +112,7 @@ describe("per-accessory abort signal composition (composeSignals)", () => {
 
         // Yield to the event loop so the abort can interleave between iterations, exactly as a real observe loop awaits its next yield. The serial await is the whole
         // point of the model - a loop parked on its next value is what cleanup must be able to unblock - so the in-loop await is intentional here.
-        // eslint-disable-next-line no-await-in-loop
+        // eslint-disable-next-line no-await-in-loop -- The await is serial by intent, so an abort can interleave between iterations.
         await new Promise((resolve) => setTimeout(resolve, 1));
       }
     };

@@ -14,6 +14,7 @@
 import type { HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { LivestreamHostOptions, ProtectCameraHost } from "./camera-host.ts";
 import type { LivestreamSubscriptionState, ProtectCameraConfig, Segment, SnapshotOptions, TalkbackSession } from "unifi-protect";
+import { SAMPLE_FLAG_NON_SYNC, onAbort } from "homebridge-plugin-utils";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { makeBox, makeContainer, makeTrunBox } from "homebridge-plugin-utils/testing";
@@ -25,7 +26,6 @@ import type { ProtectAccessory } from "../types.ts";
 import type { ProtectCameraHints } from "../devices/cameras/camera.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
-import { SAMPLE_FLAG_NON_SYNC } from "homebridge-plugin-utils";
 import type { StreamingDelegate } from "./stream-delegate.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
@@ -332,18 +332,11 @@ export function makeLivestreamSubscriptionDouble(options: { mediaSegments?: numb
         yield { data: KEYFRAME_FRAGMENT.data, mdat: KEYFRAME_FRAGMENT.mdat, moof: KEYFRAME_FRAGMENT.moof, type: "media" };
       }
 
-      // Park: await the dispose-abort so the consumer's for-await never completes and the filled buffer survives. Resolve immediately if already disposed, else on the
-      // one-shot abort.
+      // Park: await the dispose-abort so the consumer's for-await never completes and the filled buffer survives. onAbort resolves the park at once when the double is
+      // already disposed, and otherwise on the one-shot abort.
       await new Promise<void>((resolve) => {
 
-        if(disposed.signal.aborted) {
-
-          resolve();
-
-          return;
-        }
-
-        disposed.signal.addEventListener("abort", () => resolve(), { once: true });
+        onAbort(disposed.signal, () => resolve());
       });
     },
     [Symbol.asyncDispose]: async (): Promise<void> => { disposed.abort(); }
@@ -522,12 +515,10 @@ export function makeControllableLivestreamDouble(options: { deferEstablishment?:
           }
         }
 
-        // The queue is empty and we have not terminated: park on a fresh one-shot resolver until a control method wakes us, then re-check the queue.
-        if(!terminated) {
-
-          // eslint-disable-next-line no-await-in-loop -- The park is intentionally serial: the generator suspends here until a push/end/throwError/dispose wakes it.
-          await new Promise<void>((resolve) => { wakeResolver = resolve; });
-        }
+        // The queue is empty, so park on a fresh one-shot resolver until a control method wakes us, then re-check the queue. For the one consumer the double
+        // serves, the loop's condition is the only terminated check the park needs: the drain sets the flag only where it leaves the generator at once.
+        // eslint-disable-next-line no-await-in-loop -- The park is intentionally serial: the generator suspends here until a push/end/throwError/dispose wakes it.
+        await new Promise<void>((resolve) => { wakeResolver = resolve; });
       }
     },
     [Symbol.asyncDispose]: async (): Promise<void> => {
@@ -546,20 +537,21 @@ export function makeControllableLivestreamDouble(options: { deferEstablishment?:
  * against, so a delegate is unit-constructed with no real camera. The single boundary casts live inside TestCameraHost's constructor (the doubles are not the production
  * handle types); the host returned here is the production-interface-typed double.
  *
- * @param options - clock: an optional controllable TestClock forwarded into the makeTestNvr platform double's clock interface and re-returned, so a transmit test holds
- *                  the exact instance the recording delegate reads via platform.clock and advances it to release pacing (omitted, a fresh default TestClock is created);
+ * @param options - clock: an optional controllable TestClock forwarded into the makeTestNvr platform double's clock interface and re-returned, so a test holds the one
+ *                  clock every delegate built against this host reads through platform.clock - the recording delegate's transmit pacing and the streaming delegate's
+ *                  probesize reset among them - and advances it to fire what is due (omitted, makeTestNvr creates a fresh TestClock seeded at TEST_CLOCK_EPOCH);
  *                  recordingProcessFactory: the test recording-process factory injected into the makeTestNvr platform double's recordingProcessFactory interface, so a
  *                  transmit test's delegate constructs its FFmpeg process through the test double (omitted, makeTestNvr installs a fresh default factory); userOptions:
  *                  feature-option config strings forwarded to the makeTestNvr context's REAL FeatureOptions engine (for a later behavior test that steers a feature-gated
  *                  delegate path); the default empty context is the quiet-default host.
  *
- * @returns accessory: the TestAccessory backing the host; clock: the controllable TestClock installed on the platform double (the same instance the recording delegate
- *          reads, so a transmit test advances it to release pacing); controller: the AbortController behind the context's signal (abort it in suite teardown); host: the
- *          TestCameraHost double under test; logEntries: every line the construction and transmit paths logged (so a transmit test can assert on captured telemetry);
- *          nvr: the NVR double backing the context.
+ * @returns accessory: the TestAccessory backing the host; clock: the controllable TestClock installed on the platform double (the one clock every delegate built against
+ *          this host reads, so a test advances it to release the recording delegate's transmit pacing or to fire the streaming delegate's probesize reset); controller:
+ *          the AbortController behind the context's signal (abort it in suite teardown); host: the TestCameraHost double under test; logEntries: every line the
+ *          construction and transmit paths logged (so a transmit test can assert on captured telemetry); nvr: the NVR double backing the context.
  */
 export function makeTestCameraHost(options: { clock?: TestClock; recordingProcessFactory?: RecordingProcessFactory; userOptions?: string[] } = {}):
-{ accessory: TestAccessory; clock: TestClock; controller: AbortController; host: TestCameraHost; logEntries: TestLogEntry[]; nvr: TestProtectNvr } {
+{ accessory: TestAccessory; clock: TestClock; controller: AbortController; host: TestCameraHost; logEntries: readonly TestLogEntry[]; nvr: TestProtectNvr } {
 
   const store = new TestStateStore(makeProtectState());
   const { clock, controller, logEntries, nvr } = makeTestNvr({ clock: options.clock, recordingProcessFactory: options.recordingProcessFactory, store,

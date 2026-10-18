@@ -31,11 +31,11 @@
  * The isolation model is per-test-fresh: a beforeEach rebuilds a fresh device so the characteristic state, the observer baselines, and store.observerCount are clean
  * every test, and the wake log is windowed per push via a captured baseline. An afterEach unwinds the device's per-accessory abort.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { ProtectSensorConfig, Sensor } from "unifi-protect";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
-import { formatLogEntry, loggedAt } from "homebridge-plugin-utils/testing";
+import { formatLogEntry, loggedAt, settle } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
@@ -56,7 +56,7 @@ const controllers: AbortController[] = [];
 // and syncNameFromController read this.hints.syncName), then configureInfo (the AccessoryInformation writes plus the syncName-gated name sync), then spawnObservers (the
 // base observers). The userOptions thread into the REAL FeatureOptions engine, so Enable.Device.SyncName - and only it - flips hints.syncName true.
 function buildInfoDevice(configOptions: Parameters<typeof makeSensorConfig>[0] = {}, harnessOptions: { userOptions?: string[] } = {}): {
-  accessory: TestAccessory; device: TestBaseDevice; logEntries: TestLogEntry[]; nvr: TestProtectNvr; store: TestStateStore;
+  accessory: TestAccessory; device: TestBaseDevice; logEntries: readonly TestLogEntry[]; nvr: TestProtectNvr; store: TestStateStore;
 } {
 
   const sensorConfig = makeSensorConfig(configOptions);
@@ -89,7 +89,7 @@ describe("base ProtectDevice device-information capability (device-info concern 
   let accessory: TestAccessory;
   let constructionWakes = 0;
   let device: TestBaseDevice | undefined;
-  let logEntries: TestLogEntry[];
+  let logEntries: readonly TestLogEntry[];
   let sensorConfig: ProtectSensorConfig;
   let store: TestStateStore;
 

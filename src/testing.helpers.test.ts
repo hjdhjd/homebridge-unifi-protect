@@ -6,7 +6,7 @@
  * the reachability rewire relies on. The double earns the same coverage rigor as production code: every accessor, every fan-out branch, every handler binding. The state
  * store, the shared stubs, and settle() are pinned here alongside it.
  */
-import { Characteristic, Service, TestAccessory, TestStateStore, makeProtectState, makeTestAccessory, settle } from "./testing.helpers.ts";
+import { Characteristic, Service, TestAccessory, TestStateStore, makeProtectState, makeTestAccessory } from "./testing.helpers.ts";
 import type { CharacteristicType, TestService } from "./testing.helpers.ts";
 import type { Service as HapService, PlatformAccessory } from "homebridge";
 import type { ProtectCameraConfig, ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig, ProtectSensorConfig,
@@ -15,6 +15,7 @@ import { describe, test } from "node:test";
 import { setAccessoryName, setServiceName } from "homebridge-plugin-utils";
 import assert from "node:assert/strict";
 import { makeCameraConfig } from "./devices/testing.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 
 describe("HAP test-double", () => {
 
@@ -660,7 +661,12 @@ describe("harness growth: the AccessoryInformation naming bridge", () => {
 
     // Both writes landed on the kinds this file's namespace exposes, which is the whole point of wiring real statics: a write against an undefined static would key a
     // characteristic by undefined, leaving the reads above at null and polluting the double.
-    assert.ok(info.characteristics.every((characteristic) => characteristic.type !== undefined), "every characteristic the naming surface wrote is keyed by a real kind");
+    assert.ok(info.characteristics.every((characteristic) => {
+
+      const kind: unknown = characteristic.type;
+
+      return kind !== undefined;
+    }), "every characteristic the naming surface wrote is keyed by a real kind");
   });
 
   test("the bridge is scoped to AccessoryInformation: another service kind takes the displayName write but neither name characteristic", () => {

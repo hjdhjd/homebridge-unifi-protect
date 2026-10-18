@@ -24,11 +24,12 @@
  * CHANGE-GATED (security-system.ts writes only when detectMotion !== targetState), so the member's context.detectMotion is seeded FALSY before driving toward enabled,
  * and the test asserts the switch FLIPPED false->true and the "...Motion detection enabled." log FIRED - not merely that detectMotion ended true.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { TestAccessory, TestService } from "../testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
+import { loggedAt, settle } from "homebridge-plugin-utils/testing";
 import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
@@ -36,7 +37,6 @@ import { ProtectReservedNames } from "../types.ts";
 import { ProtectSecuritySystem } from "./security-system.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
-import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
 
 // The controller MAC the makeNvrConfig record carries, and the MQTT topic scope (the mqttId is the controller MAC for a ProtectBase owner). A literal so a drift in the
@@ -84,7 +84,7 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 // registration the test created.
 function buildSecuritySystem(
   harnessOptions: { accessory?: TestAccessory; hardwareRevision?: string; liveviews?: ProtectNvrLiveviewConfig[]; userOptions?: string[] } = {}): {
-  accessory: TestAccessory; controller: AbortController; logEntries: TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr; owner: ProtectSecuritySystem;
+  accessory: TestAccessory; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr; owner: ProtectSecuritySystem;
   store: TestStateStore;
 } {
 
@@ -141,9 +141,9 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     const info = built.accessory.getService(Service.AccessoryInformation);
 
     assert.equal(info?.getCharacteristic(Characteristic.Manufacturer).value, "github.com/hjdhjd", "configureInfo wrote the github.com/hjdhjd Manufacturer");
-    assert.equal(info?.getCharacteristic(Characteristic.Model).value, "UniFi Protect Liveview Security System", "configureInfo wrote the liveview security-system Model");
-    assert.equal(info?.getCharacteristic(Characteristic.SerialNumber).value, CONTROLLER_MAC + ".Security", "configureInfo wrote the mac+.Security SerialNumber");
-    assert.equal(info?.getCharacteristic(Characteristic.HardwareRevision).value, "1.0.0", "configureInfo wrote the controller hardwareRevision unconditionally");
+    assert.equal(info.getCharacteristic(Characteristic.Model).value, "UniFi Protect Liveview Security System", "configureInfo wrote the liveview security-system Model");
+    assert.equal(info.getCharacteristic(Characteristic.SerialNumber).value, CONTROLLER_MAC + ".Security", "configureInfo wrote the mac+.Security SerialNumber");
+    assert.equal(info.getCharacteristic(Characteristic.HardwareRevision).value, "1.0.0", "configureInfo wrote the controller hardwareRevision unconditionally");
 
     // The context was reset to carry the controller MAC and the saved state, and the owner registers ZERO self-observers (it is owner-driven).
     assert.equal(built.accessory.context["nvr"], CONTROLLER_MAC, "configureDevice reset the context to carry the controller MAC");
@@ -293,8 +293,8 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     // While the Away liveview exists, AWAY_ARM is in the menu, so updateDevice leaves the selection alone.
     built.owner.updateDevice();
 
-    assert.deepEqual(target?.props?.validValues, [ TargetState.DISARM, TargetState.AWAY_ARM ], "AWAY_ARM is in the menu while its liveview exists");
-    assert.equal(target?.value, TargetState.AWAY_ARM, "TargetState stays AWAY_ARM while it is reachable - no snap");
+    assert.deepEqual(target.props?.validValues, [ TargetState.DISARM, TargetState.AWAY_ARM ], "AWAY_ARM is in the menu while its liveview exists");
+    assert.equal(target.value, TargetState.AWAY_ARM, "TargetState stays AWAY_ARM while it is reachable - no snap");
 
     const publishedBefore = built.mqtt.published.length;
 
@@ -302,8 +302,8 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     built.store.pushLiveviews([makeLiveviewConfig({ id: "lv-off", name: "Protect-Off" })]);
     built.owner.updateDevice();
 
-    assert.deepEqual(target?.props?.validValues, [TargetState.DISARM], "the menu re-narrowed to disarm-only");
-    assert.equal(target?.value, TargetState.DISARM, "the out-of-menu AWAY_ARM snapped to DISARM as display truth");
+    assert.deepEqual(target.props.validValues, [TargetState.DISARM], "the menu re-narrowed to disarm-only");
+    assert.equal(target.value, TargetState.DISARM, "the out-of-menu AWAY_ARM snapped to DISARM as display truth");
 
     // The snap is display-only: updateCharacteristic fires no onSet, so no sweep ran - the camera's motion state is unchanged and nothing published.
     assert.equal(camera.accessory.context["detectMotion"], false, "the D5 snap ran no sweep - the camera member's detectMotion is unchanged");
@@ -329,11 +329,11 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     // The GET registration binds the owner-lifetime signal, not nvr.signal: it is live at rest, and cleanup() aborts it while the controller-lifetime nvr.signal stays
     // live - the security system unwinds independently of the plugin.
-    assert.equal(subscription.init?.signal?.aborted, false, "the GET registration's owner-lifetime signal is live at rest");
+    assert.equal(subscription.init.signal?.aborted, false, "the GET registration's owner-lifetime signal is live at rest");
 
     built.owner.cleanup();
 
-    assert.equal(subscription.init?.signal?.aborted, true, "cleanup() aborted the owner-lifetime signal that scopes the GET registration");
+    assert.equal(subscription.init.signal.aborted, true, "cleanup() aborted the owner-lifetime signal that scopes the GET registration");
     assert.equal(built.nvr.signal.aborted, false, "the controller-lifetime nvr.signal stayed live - the owner unwinds independently of the plugin");
   });
 
@@ -548,13 +548,13 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === CONTROLLER_MAC + "/securitysystem/get"));
 
-    assert.equal(subscription?.init?.signal?.aborted, false, "the GET registration's lifetime is live before the controller abort");
+    assert.equal(subscription?.init.signal?.aborted, false, "the GET registration's lifetime is live before the controller abort");
 
     built.controller.abort();
 
     await settle();
 
-    assert.equal(subscription?.init?.signal?.aborted, true, "the GET registration's lifetime ended with the controller abort");
+    assert.equal(subscription.init.signal.aborted, true, "the GET registration's lifetime ended with the controller abort");
     assert.equal(built.store.observerCount, 0, "the owner-driven security system registers and leaks no observers");
   });
 });

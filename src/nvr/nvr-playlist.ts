@@ -98,8 +98,9 @@ export function servePlaylist(nvr: ProtectNvr): void {
   const port = nvr.getFeatureNumber("Nvr.Service.Playlist") ?? PROTECT_M3U_PLAYLIST_PORT;
   const server = http.createServer();
 
-  // The pending EADDRINUSE retry timer, if one is armed. We keep the handle so the shutdown teardown can cancel it and no retry can re-listen the port after teardown.
-  let retryTimer: NodeJS.Timeout | undefined;
+  // The pending EADDRINUSE retry, if one is armed on the platform's clock. We keep its handle so the shutdown teardown can cancel it and no retry can re-listen the
+  // port after teardown.
+  let retryTimer: Disposable | undefined;
 
   // The once-per-run latch for the empty-catalog narration, so a player polling the playlist does not fill the log with the same line.
   let warnedEmptyPlaylist = false;
@@ -142,7 +143,7 @@ export function servePlaylist(nvr: ProtectNvr): void {
 
       // We wait 5 seconds before retrying, a short enough delay to recover quickly from a transient port conflict (for example, a prior instance of this server still
       // releasing the port during a restart) without hammering the port with retries.
-      retryTimer = setTimeout(() => {
+      retryTimer = nvr.platform.clock.schedule(() => {
 
         server.close();
         server.listen(port);
@@ -163,14 +164,11 @@ export function servePlaylist(nvr: ProtectNvr): void {
 
   // Tear the server down on plugin shutdown (a SHUTDOWN that is not a process exit would otherwise leak the port) and cancel any pending EADDRINUSE retry. onAbort is
   // homebridge-plugin-utils' SSOT for this: it registers the one-shot teardown AND runs it inline if the signal is ALREADY aborted - the pre-aborted case servePlaylist
-  // genuinely hits, since it runs from async login() which can race a SHUTDOWN. Pairing onAbort with clearing the retry handle means no path re-listens or leaks a timer
+  // genuinely hits, since it runs from async login() which can race a SHUTDOWN. Pairing onAbort with disposing the retry handle means no path re-listens or leaks a timer
   // after abort.
   onAbort(nvr.signal, () => {
 
-    if(retryTimer) {
-
-      clearTimeout(retryTimer);
-    }
+    retryTimer?.[Symbol.dispose]();
 
     server.close();
   });

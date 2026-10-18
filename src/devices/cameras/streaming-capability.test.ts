@@ -12,7 +12,7 @@
  */
 import type { TestAccessory, TestRecordingDelegate, TestStreamingDelegate, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
-import { TestStateStore, makeProtectState, makeRecordingDelegateDouble, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeRecordingDelegateDouble, makeTestAccessory } from "../../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import { G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
@@ -23,6 +23,7 @@ import type { StreamingDelegate } from "../../media/stream-delegate.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 
 // Every harness controller this file opens, aborted once at the end so no observe loop outlives the suite.
 const openControllers: AbortController[] = [];
@@ -241,11 +242,11 @@ describe("the streaming capability's recording-transmitting gate", () => {
 
     delegate.hksv = hksv as unknown as StreamingDelegate["hksv"];
 
-    assert.equal(doorbell.streaming?.isRecordingTransmitting, false, "a configured but idle recording arm reads as not transmitting");
+    assert.equal(doorbell.streaming.isRecordingTransmitting, false, "a configured but idle recording arm reads as not transmitting");
 
     hksv.isTransmitting = true;
 
-    assert.equal(doorbell.streaming?.isRecordingTransmitting, true, "a transmitting recording arm reads as transmitting");
+    assert.equal(doorbell.streaming.isRecordingTransmitting, true, "a transmitting recording arm reads as transmitting");
   });
 
   /* The same member read on the package INSTANCE class. The deferral counts every camera view the controller manages, so a package has to answer this as reliably as
@@ -267,10 +268,10 @@ describe("the streaming capability's recording-transmitting gate", () => {
 
     packageDelegate.hksv = hksv as unknown as StreamingDelegate["hksv"];
 
-    assert.equal(doorbell.packageCamera.streaming?.isRecordingTransmitting, false, "a configured but idle recording arm reads as not transmitting");
+    assert.equal(doorbell.packageCamera.streaming.isRecordingTransmitting, false, "a configured but idle recording arm reads as not transmitting");
 
     hksv.isTransmitting = true;
 
-    assert.equal(doorbell.packageCamera.streaming?.isRecordingTransmitting, true, "a transmitting recording arm reads as transmitting");
+    assert.equal(doorbell.packageCamera.streaming.isRecordingTransmitting, true, "a transmitting recording arm reads as transmitting");
   });
 });

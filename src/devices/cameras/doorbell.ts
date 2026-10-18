@@ -269,7 +269,8 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
         }
 
         // Set the message and sync our states.
-        await this.setMessage((value === true) ? { duration: messageSwitch.duration, text: messageSwitch.text, type: messageSwitch.type } : { resetAt: Date.now() });
+        await this.setMessage((value === true) ? { duration: messageSwitch.duration, text: messageSwitch.text, type: messageSwitch.type } :
+          { resetAt: this.platform.clock.now() });
       });
     }
 
@@ -460,9 +461,8 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
         // one can choose from. Instead, we do nothing and leave it to the user to choose what state they really want to set.
         if(!value) {
 
-          // Let HomeKit's optimistic write settle, then re-assert the switches' real state through updateDevice. The 50ms is a cosmetic revert nudge, not a
-          // functional delay.
-          setTimeout(() => this.updateDevice(), 50);
+          // Re-assert the switches' real state through updateDevice.
+          this.reflectAfterSet(() => this.updateDevice());
 
           return;
         }
@@ -601,14 +601,14 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
       // Read the LCD message non-throwing through the live camera record - an absent record (a doorbell lingering in the removal grace) reads as no message - and run it
       // through the shared expiry predicate, so an expired message reports no message rather than a stale negative duration.
-      const lcdMessage = effectiveLcdMessage({ lcdMessage: this.#device.peek()?.lcdMessage ?? {}, nowMs: Date.now() });
+      const lcdMessage = effectiveLcdMessage({ lcdMessage: this.#device.peek()?.lcdMessage ?? {}, nowMs: this.platform.clock.now() });
 
       if(!Object.keys(lcdMessage).length) {
 
         return "";
       }
 
-      const doorbellDuration = (typeof lcdMessage.resetAt === "number") ? Math.round((lcdMessage.resetAt - Date.now()) / 1000) : 0;
+      const doorbellDuration = (typeof lcdMessage.resetAt === "number") ? Math.round((lcdMessage.resetAt - this.platform.clock.now()) / 1000) : 0;
 
       // Return the current message.
       return JSON.stringify({ duration: doorbellDuration, message: lcdMessage.text ?? "" });
@@ -668,7 +668,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       // No message defined...we assume we're resetting the message.
       if(!inboundPayload.message.length) {
 
-        outboundPayload = { resetAt: Date.now() };
+        outboundPayload = { resetAt: this.platform.clock.now() };
         this.log.info("Received MQTT doorbell message reset.");
       } else {
 
@@ -774,13 +774,12 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
    * sets them. We then arm or clear the keyed expiry timer in the capability's own registry from the effective payload: the controller signals expiry by patching
    * lcdMessage, but the store cannot observe an empty-object patch (its structural sharing returns the same record), so the plugin re-synchronizes itself at the resetAt
    * deadline it already knows. Because the timer's callback re-enters here, an expiry fires as a re-read of live truth: an already-replaced message re-asserts the
-   * replacement rather than blanking, an expired one clears, and a wire clear that landed first makes the re-sync a harmless repeat. The leg is capped at the largest
-   * delay a timer expresses exactly (Node clamps a larger delay to about a millisecond, which would spin a tight refire loop for a beyond-24.8-day message), so the
-   * re-entrant re-arm sleeps in legs until the real deadline.
+   * replacement rather than blanking, an expired one clears, and a wire clear that landed first makes the re-sync a harmless repeat. The timer waits the full time
+   * remaining until the deadline, however far off it lies, because the platform's clock carries a delay of any length.
    */
   private syncLcdMessageState(): void {
 
-    const nowMs = Date.now();
+    const nowMs = this.platform.clock.now();
     const effective = effectiveLcdMessage({ lcdMessage: this.#device.peek()?.lcdMessage ?? {}, nowMs });
 
     this.updateLcdSwitch(effective);
@@ -792,7 +791,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
     if(typeof effective.resetAt === "number") {
 
-      this.timers.setTimeout("lcdMessageExpiry", () => this.syncLcdMessageState(), Math.min(effective.resetAt - nowMs, 2147483647));
+      this.timers.setTimeout("lcdMessageExpiry", () => this.syncLcdMessageState(), effective.resetAt - nowMs);
     }
   }
 
@@ -840,7 +839,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       entry.service.updateCharacteristic(this.hap.Characteristic.On, true);
 
       this.log.info("Doorbell message set%s: %s.",
-        payload.resetAt !== null ? " (" + Math.round(((payload.resetAt ?? 0) - Date.now()) / 1000).toString() + " seconds)" : "", payload.text);
+        (typeof payload.resetAt === "number") ? " (" + Math.round((payload.resetAt - this.platform.clock.now()) / 1000).toString() + " seconds)" : "", payload.text);
 
       // Publish to MQTT, if the user has configured it.
       this.publish(mqttTopics.message.topic, JSON.stringify({ duration: entry.duration / 1000, message: entry.text }));
@@ -853,7 +852,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // If a duration was given, translate it into the resetAt timestamp Protect expects and drop the duration field, which the controller does not understand.
     if("duration" in payload) {
 
-      payload.resetAt = payload.duration ? Date.now() + payload.duration : null;
+      payload.resetAt = payload.duration ? this.platform.clock.now() + payload.duration : null;
       delete payload.duration;
     }
 
@@ -886,7 +885,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
         continue;
       }
 
-      // eslint-disable-next-line no-await-in-loop
+      // eslint-disable-next-line no-await-in-loop -- The chimes are updated one at a time by intent, and the first failed command ends the loop.
       if(!(await this.runDeviceCommand("set the chime volume", () => chime.update({ ringSettings: [{ ...ring, volume: value }] })))) {
 
         return;

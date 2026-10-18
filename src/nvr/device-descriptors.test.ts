@@ -7,7 +7,7 @@
 import type { Camera, Chime, DeviceCollectionKey, Fob, Light, Relay, Sensor, Viewer } from "unifi-protect";
 import { TestCameraProjection, TestChimeProjection, TestFobProjection, TestLightProjection, TestRelayProjection, TestSensorProjection, TestViewerProjection,
   makeCameraConfig, makeChimeConfig, makeFobConfig, makeLightConfig, makeRelayConfig, makeSensorConfig, makeViewerConfig } from "../devices/testing.helpers.ts";
-import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { DEVICE_COLLECTION_KEYS } from "unifi-protect";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
@@ -23,13 +23,22 @@ import { ProtectSensor } from "../devices/sensor.ts";
 import { ProtectViewer } from "../devices/viewer.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "./testing.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
+
+// A row's builder hands back the device it constructed and the abort controller behind the NVR double's signal. The controller comes with the device because the
+// observe loops the construction spawns end when that signal aborts, so aborting it is how the caller unwinds them once its assertions are done.
+interface BuiltDevice {
+
+  controller: AbortController;
+  device: ProtectDevice;
+}
 
 // One category's construction against the harness doubles: seed a store with the category's config, build the real ProtectDevice off its Test projection, and hand back
 // the constructed device plus the harness abort controller so the caller can unwind the observe loops the construction spawned. The construction-boundary casts mirror
 // every device-family suite; the instance itself is the production class running its real configure and spawnObservers paths.
 interface Row {
 
-  build: () => { controller: AbortController; device: ProtectDevice };
+  build: () => BuiltDevice;
   category: DeviceCollectionKey;
   expected: abstract new (...args: never[]) => ProtectDevice;
 }
@@ -37,7 +46,7 @@ interface Row {
 const rows: Row[] = [
   {
 
-    build: () => {
+    build: (): BuiltDevice => {
 
       const config = makeCameraConfig({ channels: G2_PRO_CHANNELS });
       const store = new TestStateStore(makeProtectState({ cameras: [config] }));
@@ -52,7 +61,7 @@ const rows: Row[] = [
   },
   {
 
-    build: () => {
+    build: (): BuiltDevice => {
 
       const config = makeChimeConfig();
       const store = new TestStateStore(makeProtectState({ chimes: [config] }));
@@ -67,7 +76,7 @@ const rows: Row[] = [
   },
   {
 
-    build: () => {
+    build: (): BuiltDevice => {
 
       const config = makeFobConfig();
       const store = new TestStateStore(makeProtectState({ fobs: [config] }));
@@ -82,7 +91,7 @@ const rows: Row[] = [
   },
   {
 
-    build: () => {
+    build: (): BuiltDevice => {
 
       const config = makeLightConfig();
       const store = new TestStateStore(makeProtectState({ lights: [config] }));
@@ -97,7 +106,7 @@ const rows: Row[] = [
   },
   {
 
-    build: () => {
+    build: (): BuiltDevice => {
 
       const config = makeRelayConfig();
       const store = new TestStateStore(makeProtectState({ relays: [config] }));
@@ -112,7 +121,7 @@ const rows: Row[] = [
   },
   {
 
-    build: () => {
+    build: (): BuiltDevice => {
 
       const config = makeSensorConfig();
       const store = new TestStateStore(makeProtectState({ sensors: [config] }));
@@ -127,7 +136,7 @@ const rows: Row[] = [
   },
   {
 
-    build: () => {
+    build: (): BuiltDevice => {
 
       const config = makeViewerConfig();
       const store = new TestStateStore(makeProtectState({ viewers: [config] }));

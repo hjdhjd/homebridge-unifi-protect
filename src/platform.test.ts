@@ -108,7 +108,7 @@ describe("platform construction and the legacy feature-option translation", () =
 
     assert.equal(narrations.length, 1, "the translation is narrated once");
     assert.equal(narrations[0]?.level, "warn", "it is a warning, because the configuration on disk still speaks the older grammar");
-    assert.deepEqual(narrations[0]?.params, [{ entries: [ "Enable.Video.Rtsp.Only.High", "Enable.Video.Timeshift.Only.Low" ] }],
+    assert.deepEqual(narrations[0].params, [{ entries: [ "Enable.Video.Rtsp.Only.High", "Enable.Video.Timeshift.Only.Low" ] }],
       "the entries it acted on ride along as context");
   });
 

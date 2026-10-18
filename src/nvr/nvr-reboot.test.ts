@@ -7,10 +7,10 @@
  * what is exercised is the class itself rather than any controller wired to it: the schedule arithmetic, the deferral chain and its cumulative ceiling, the phase
  * choreography around the command, the no-op confirmation and each half of its guard, and the lifetime signal.
  *
- * Timing is the subject here, so every arm runs under node:test's mocked timers with the mock enabled BEFORE construction: the scheduler arms nothing at construction,
- * and enabling first means every timer it later arms is mock-armed and tick-drivable. Each arm builds its own scheduler and its own recorder, so no arm inherits a
- * cycle another one left pending. The reboot command is awaited, so a tick is followed by a settle - the tick runs the timer callback, and the settle lets the
- * continuation past that await run before anything is asserted.
+ * Timing is the subject here, so every arm builds its scheduler on its own test clock and drives time by advancing it: every timer the scheduler arms goes through
+ * that clock, and every instant it reads comes from it. Each arm builds its own scheduler and its own recorder, so no arm inherits a cycle another one left pending.
+ * The reboot command is awaited, so an advance is followed by a settle - the advance runs the timer callback, and the settle lets the continuation past that await
+ * run before anything is asserted.
  *
  * The pure arithmetic these decisions rest on (classifyRebootAttempt, computeInitialRebootDelay, countActiveRecordingViews) is pinned as arithmetic in nvr.test.ts; this
  * suite pins the stateful class those functions serve and deliberately does not restate them. Honest coverage note: what the actions DO in production - commanding the
@@ -19,17 +19,14 @@
  */
 import { PROTECT_NVR_REBOOT_CHECK_INTERVAL, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS, PROTECT_NVR_REBOOT_DEFERRAL_MAX, PROTECT_NVR_REBOOT_INTERVAL,
   PROTECT_NVR_REBOOT_MIN_INTERVAL } from "../settings.ts";
-import { describe, mock, test } from "node:test";
+import { TestClock, settle } from "homebridge-plugin-utils/testing";
+import { describe, test } from "node:test";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { NvrPhase } from "./nvr.ts";
 import { RebootScheduler } from "./nvr-reboot.ts";
+import { TEST_CLOCK_EPOCH } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
-import { settle } from "../testing.helpers.ts";
 import util from "node:util";
-
-// The wall-clock instant every arm's mocked clock starts from. The schedule reads a controller's upSince as a real timestamp and treats a zero as no boot time reported,
-// so starting at a realistic instant keeps an arm's "up for N milliseconds" fact clear of that special case.
-const MOCK_EPOCH = 1700000000000;
 
 // The default cadence, in milliseconds - what an enabled-without-a-value schedule waits.
 const DEFAULT_INTERVAL_MS = PROTECT_NVR_REBOOT_INTERVAL * 60 * 60 * 1000;
@@ -68,10 +65,13 @@ interface SchedulerRecorder {
  * @param options - holdReboot: make the reboot command return a promise the arm resolves or rejects itself, so a teardown can land while the command is outstanding.
  *                  Omitted, the command settles immediately - throwing the injected error when one is set.
  *
- * @returns the scheduler, its recorder, and the AbortController behind the lifetime signal.
+ * @returns the scheduler, its recorder, the AbortController behind the lifetime signal, the scheduler's test clock (started at the harness epoch, since the schedule
+ *          reads a controller upSince of zero as no boot time reported), and the advance that drives that clock.
  */
-function buildScheduler(options: { holdReboot?: boolean } = {}): { controller: AbortController; recorder: SchedulerRecorder; scheduler: RebootScheduler } {
+function buildScheduler(options: { holdReboot?: boolean } = {}): { advance: (ms: number) => Promise<void>; clock: TestClock; controller: AbortController;
+  recorder: SchedulerRecorder; scheduler: RebootScheduler; } {
 
+  const clock = new TestClock(TEST_CLOCK_EPOCH);
   const controller = new AbortController();
   const recorder: SchedulerRecorder = { actions: [], healthy: true, logLines: [], pendingReboot: null, phase: "running", rebootCalls: 0, rebootError: null,
     recordings: 0 };
@@ -121,13 +121,23 @@ function buildScheduler(options: { holdReboot?: boolean } = {}): { controller: A
       }
     },
     activeRecordings: (): number => recorder.recordings,
+    clock,
     isConnectionHealthy: (): boolean => recorder.healthy,
     log: { debug: sink, error: sink, info: sink, warn: sink },
     phase: (): NvrPhase => recorder.phase,
     signal: controller.signal
   });
 
-  return { controller, recorder, scheduler };
+  // Advance the scheduler's clock and let the reboot command's continuation run. Every arm below drives time through this, so no arm can assert against a
+  // half-finished attempt.
+  const advance = async (ms: number): Promise<void> => {
+
+    clock.advance(ms);
+
+    await settle();
+  };
+
+  return { advance, clock, controller, recorder, scheduler };
 }
 
 // Every line the scheduler logged that contains the given fragment.
@@ -136,25 +146,15 @@ function linesMatching(recorder: SchedulerRecorder, fragment: string): string[] 
   return recorder.logLines.filter((line) => line.includes(fragment));
 }
 
-// Advance the mocked clock and let the reboot command's continuation run. Every arm below drives time through this, so no arm can assert against a half-finished attempt.
-async function advance(ms: number): Promise<void> {
-
-  mock.timers.tick(ms);
-
-  await settle();
-}
-
 describe("the reboot scheduler: entering the schedule", () => {
 
   test("a freshly-booted controller waits the whole interval before the first attempt", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
-      scheduler.schedule({ requestedIntervalHours: PROTECT_NVR_REBOOT_INTERVAL, upSince: MOCK_EPOCH });
+      scheduler.schedule({ requestedIntervalHours: PROTECT_NVR_REBOOT_INTERVAL, upSince: TEST_CLOCK_EPOCH });
 
       await advance(DEFAULT_INTERVAL_MS - 1);
 
@@ -165,22 +165,19 @@ describe("the reboot scheduler: entering the schedule", () => {
       assert.equal(recorder.rebootCalls, 1, "the interval elapsed and the first attempt commanded the reboot");
     } finally {
 
-      // Every timer this suite arms is armed under the mock, so the drain runs while the mock that armed them is still installed.
+      // The abort drains every timer the scheduler armed on its test clock, so nothing this arm armed outlives it.
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("a controller already up longer than the interval gets the settling floor rather than an immediate reboot", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
       // Up for twice the interval: the backdate would put the fire well in the past, so the floor is what governs.
-      scheduler.schedule({ upSince: MOCK_EPOCH - (2 * DEFAULT_INTERVAL_MS) });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH - (2 * DEFAULT_INTERVAL_MS) });
 
       await advance(59999);
 
@@ -192,19 +189,16 @@ describe("the reboot scheduler: entering the schedule", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("an interval below the minimum clamps to it, and the enabled line reads in the singular", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
-      scheduler.schedule({ requestedIntervalHours: 0.25, upSince: MOCK_EPOCH });
+      scheduler.schedule({ requestedIntervalHours: 0.25, upSince: TEST_CLOCK_EPOCH });
 
       assert.deepEqual(recorder.logLines, ["Scheduled controller reboot enabled every 1 hour."], "the clamped interval is what the user is told about");
 
@@ -218,19 +212,16 @@ describe("the reboot scheduler: entering the schedule", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("an unspecified interval schedules at the default, and the enabled line reads in the plural", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       assert.deepEqual(recorder.logLines, ["Scheduled controller reboot enabled every 6 hours."], "the default cadence is what the user is told about");
 
@@ -244,7 +235,6 @@ describe("the reboot scheduler: entering the schedule", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 });
@@ -253,14 +243,12 @@ describe("the reboot scheduler: deferring for active recordings", () => {
 
   test("a recording in flight holds the reboot back until the next check finds it finished", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
       recorder.recordings = 1;
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       await advance(DEFAULT_INTERVAL_MS);
 
@@ -287,20 +275,17 @@ describe("the reboot scheduler: deferring for active recordings", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("a recording that never finishes is overridden once the cumulative ceiling elapses", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, clock, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
       recorder.recordings = 1;
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       // The first attempt defers and stamps the cycle, which is the instant the ceiling is measured from.
       await advance(DEFAULT_INTERVAL_MS);
@@ -313,7 +298,7 @@ describe("the reboot scheduler: deferring for active recordings", () => {
        */
       for(let check = 0; check < (CHECKS_TO_CEILING - 1); check++) {
 
-        mock.timers.tick(PROTECT_NVR_REBOOT_CHECK_INTERVAL);
+        clock.advance(PROTECT_NVR_REBOOT_CHECK_INTERVAL);
 
         assert.equal(recorder.rebootCalls, 0, "the ceiling still has headroom, so the deferral continues");
       }
@@ -326,7 +311,6 @@ describe("the reboot scheduler: deferring for active recordings", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 });
@@ -335,14 +319,12 @@ describe("the reboot scheduler: the reboot attempt", () => {
 
   test("a failed command rolls the phase back, narrates the failure, and retries at the check cadence", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
       recorder.rebootError = new Error("the controller refused the command");
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       await advance(DEFAULT_INTERVAL_MS);
 
@@ -361,20 +343,17 @@ describe("the reboot scheduler: the reboot attempt", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("the deferral ceiling keeps counting across a failure and the deferrals that follow it", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, clock, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
       recorder.rebootError = new Error("the controller refused the command");
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       // The failed attempt stamps the cycle, exactly as a deferral would.
       await advance(DEFAULT_INTERVAL_MS);
@@ -390,7 +369,7 @@ describe("the reboot scheduler: the reboot attempt", () => {
       // As in the ceiling arm above, a deferral runs entirely inside its own timer callback, so these ticks need no settle between them.
       for(let check = 0; check < (CHECKS_TO_CEILING - 1); check++) {
 
-        mock.timers.tick(PROTECT_NVR_REBOOT_CHECK_INTERVAL);
+        clock.advance(PROTECT_NVR_REBOOT_CHECK_INTERVAL);
 
         assert.equal(recorder.rebootCalls, 1, "the ceiling still has headroom, so the retry defers rather than commanding");
       }
@@ -401,19 +380,16 @@ describe("the reboot scheduler: the reboot attempt", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("a successful command narrates the outage and arms the next cycle at the full interval", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       await advance(DEFAULT_INTERVAL_MS);
 
@@ -434,7 +410,6 @@ describe("the reboot scheduler: the reboot attempt", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 });
@@ -443,13 +418,11 @@ describe("the reboot scheduler: the no-op confirmation", () => {
 
   test("a controller that never restarted is caught at the grace and resumed", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       await advance(DEFAULT_INTERVAL_MS);
 
@@ -465,19 +438,16 @@ describe("the reboot scheduler: the no-op confirmation", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("a lifecycle that has already left the reboot is not disturbed at the grace", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       await advance(DEFAULT_INTERVAL_MS);
 
@@ -492,19 +462,16 @@ describe("the reboot scheduler: the no-op confirmation", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("a genuinely rebooting controller whose connection dropped is not disturbed at the grace", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       await advance(DEFAULT_INTERVAL_MS);
 
@@ -519,19 +486,16 @@ describe("the reboot scheduler: the no-op confirmation", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("a confirmed reboot cancels the confirmation outright", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       await advance(DEFAULT_INTERVAL_MS);
 
@@ -546,7 +510,6 @@ describe("the reboot scheduler: the no-op confirmation", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 });
@@ -555,13 +518,11 @@ describe("the reboot scheduler: teardown", () => {
 
   test("the drain cancels a pending cycle", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
       scheduler.reset();
 
       await advance(2 * DEFAULT_INTERVAL_MS);
@@ -570,20 +531,17 @@ describe("the reboot scheduler: teardown", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("a schedule entered after the lifetime signal aborts arms nothing", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
       controller.abort();
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       await advance(2 * DEFAULT_INTERVAL_MS);
 
@@ -591,19 +549,16 @@ describe("the reboot scheduler: teardown", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("aborting the lifetime signal drains a cycle already armed", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, recorder, scheduler } = buildScheduler();
 
     try {
 
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
       controller.abort();
 
       await advance(DEFAULT_INTERVAL_MS);
@@ -612,19 +567,16 @@ describe("the reboot scheduler: teardown", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("a command rejected after teardown neither rolls back nor retries", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler({ holdReboot: true });
+    const { advance, controller, recorder, scheduler } = buildScheduler({ holdReboot: true });
 
     try {
 
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       await advance(DEFAULT_INTERVAL_MS);
 
@@ -650,19 +602,16 @@ describe("the reboot scheduler: teardown", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 
   test("a command that succeeds after teardown promises nothing and arms nothing", async () => {
 
-    mock.timers.enable({ apis: [ "Date", "setTimeout" ], now: MOCK_EPOCH });
-
-    const { controller, recorder, scheduler } = buildScheduler({ holdReboot: true });
+    const { advance, controller, recorder, scheduler } = buildScheduler({ holdReboot: true });
 
     try {
 
-      scheduler.schedule({ upSince: MOCK_EPOCH });
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
 
       await advance(DEFAULT_INTERVAL_MS);
 
@@ -689,7 +638,6 @@ describe("the reboot scheduler: teardown", () => {
     } finally {
 
       controller.abort();
-      mock.timers.reset();
     }
   });
 });

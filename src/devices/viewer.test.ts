@@ -16,11 +16,12 @@
  * The isolation model mirrors the light reference: a beforeEach builds a fresh viewer so the capture arrays, the characteristic state, the observer baselines, and
  * store.observerCount are clean every test, and the wake log is windowed per push via a captured baseline. The afterEach(() => viewer?.cleanup()) unwinds the observers.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { ProtectNvrLiveviewConfig, Viewer } from "unifi-protect";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { TestViewerProjection, makeLiveviewConfig, makeViewerConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
+import { loggedAt, settle } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
@@ -28,7 +29,6 @@ import { ProtectViewer } from "./viewer.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
-import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
@@ -45,7 +45,7 @@ const controllers: AbortController[] = [];
 // when supplied, runs against the fresh accessory before construction, standing in for the services a Homebridge restart restores from the accessory cache.
 function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {},
   harnessOptions: { liveviews?: ProtectNvrLiveviewConfig[]; seedAccessory?: (accessory: TestAccessory) => void } = {}): {
-  accessory: TestAccessory; logEntries: TestLogEntry[]; mqtt: TestMqttClient; projection: TestViewerProjection; store: TestStateStore; viewer: ProtectViewer;
+  accessory: TestAccessory; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; projection: TestViewerProjection; store: TestStateStore; viewer: ProtectViewer;
 } {
 
   const viewerConfig = makeViewerConfig(configOptions);
@@ -81,7 +81,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
   // The per-test-fresh handles, rebuilt in beforeEach so every test starts from a clean viewer, clean captures, and clean wake baseline.
   let accessory: TestAccessory;
   let constructionWakes = 0;
-  let logEntries: TestLogEntry[];
+  let logEntries: readonly TestLogEntry[];
   let mqtt: TestMqttClient;
   let projection: TestViewerProjection;
   let store: TestStateStore;

@@ -27,16 +27,16 @@
  * .value, which is written ONLY by the observer-driven updateCharacteristic: a non-firing observer leaves .value at the initial-pass write. So the observer test asserts
  * CurrentTemperature.value === NEW after pushNvrPatch moves a FRESH systemInfo by reference, never triggerGet.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState } from "../testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
+import { loggedAt, settle } from "homebridge-plugin-utils/testing";
 import { makeNvrConfig, makeTestNvr } from "./testing.helpers.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { ProtectNvrSystemInfo } from "./nvr-systeminfo.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
-import { loggedAt } from "homebridge-plugin-utils/testing";
 
 // The deterministic accessory UUID the owner composes: the platform double's uuid generator is (seed) => "uuid:" + seed, and the owner generates from
 // nvr.ufp.mac + ".NVRSystemInfo" against the makeNvrConfig mac, so the UUID is fixed. A literal rather than a derivation so a drift in the UUID composition breaks
@@ -50,7 +50,7 @@ const SYSTEMINFO_UUID = "uuid:74ACB9FFFFFF.NVRSystemInfo";
 // nvr.platform.accessories. The returned controller is the AbortController behind nvr.signal, aborted in teardown to tear down the owner's observe loop and its MQTT
 // subscriptions: the fixture tears down through the controller it built, the scope that owns every registration the test created.
 function buildSystemInfo(configOptions: Parameters<typeof makeNvrConfig>[0] = {}, harnessOptions: { seedCachedAccessory?: boolean; userOptions?: string[] } = {}): {
-  accessory: TestAccessory | undefined; apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"]; controller: AbortController; logEntries: TestLogEntry[];
+  accessory: TestAccessory | undefined; apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"]; controller: AbortController; logEntries: readonly TestLogEntry[];
   mqtt: TestMqttClient; nvr: TestProtectNvr; owner: ProtectNvrSystemInfo; store: TestStateStore;
 } {
 
@@ -123,7 +123,7 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
     const info = accessory.getService(Service.AccessoryInformation);
 
     assert.equal(info?.getCharacteristic(Characteristic.Model).value, "UniFi Dream Machine SE", "setInfo wired the Model from the controller marketName");
-    assert.equal(info?.getCharacteristic(Characteristic.SerialNumber).value, "74ACB9FFFFFF", "setInfo wired the SerialNumber from the controller mac");
+    assert.equal(info.getCharacteristic(Characteristic.SerialNumber).value, "74ACB9FFFFFF", "setInfo wired the SerialNumber from the controller mac");
 
     // The singular enabled-sensors log (one sensor, so the %s plural marker is empty).
     assert.ok(loggedAt(built.logEntries, "info", "Enabled system information sensor: cpu temperature."), "the one enabled sensor logs the singular enabled-sensor line");
@@ -246,11 +246,11 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
     // The subscription is scoped to this owner's composed lifetime, which for a controller owner is the controller connection: live while the controller runs, and over
     // the moment the controller signal aborts. Asserted behaviorally rather than by object identity, because the composed signal is a derived signal that fires when
     // nvr.signal does rather than being nvr.signal itself.
-    assert.equal(subscription.init?.signal?.aborted, false, "the GET registration's lifetime is live while the controller runs");
+    assert.equal(subscription.init.signal?.aborted, false, "the GET registration's lifetime is live while the controller runs");
 
     built.controller.abort();
 
-    assert.equal(subscription.init?.signal?.aborted, true, "the GET registration's lifetime ended with the controller abort");
+    assert.equal(subscription.init.signal.aborted, true, "the GET registration's lifetime ended with the controller abort");
   });
 
   test("aborting the controller signal deregisters the observer and ends the MQTT subscription lifetime, and a later push no longer refreshes", async () => {
@@ -265,7 +265,7 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
 
     const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "get") && (entry.topic === "74ACB9FFFFFF/systeminfo/get"));
 
-    assert.equal(subscription?.init?.signal?.aborted, false, "the GET registration's lifetime is live before the controller abort");
+    assert.equal(subscription?.init.signal?.aborted, false, "the GET registration's lifetime is live before the controller abort");
 
     const temperature = built.accessory?.getService(Service.TemperatureSensor);
 
@@ -277,7 +277,7 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
     await settle();
 
     assert.equal(built.store.observerCount, 0, "the observer deregistered through the controller signal");
-    assert.equal(subscription?.init?.signal?.aborted, true, "the GET registration's lifetime ended with the controller abort");
+    assert.equal(subscription.init.signal.aborted, true, "the GET registration's lifetime ended with the controller abort");
 
     // The positive half of the leak detector: a systemInfo push that WOULD refresh the cached value if the observer survived produces no change, proving the observer
     // truly deregistered rather than that the push was inert.

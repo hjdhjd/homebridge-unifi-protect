@@ -20,9 +20,10 @@
  * path is exercised only to the registration boundary (the subscription is recorded), not through a live MQTT broker.
  */
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
-import { Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import { Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
+import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import type { Camera } from "unifi-protect";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
@@ -32,7 +33,6 @@ import type { TestAccessory } from "../../testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
-import { formatLogEntry } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // Construct a real ProtectCamera, with the casts confined to this one boundary - the instance under test is the production class and its composed capability.
@@ -43,7 +43,7 @@ function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: Te
 
 // The count of log lines at the given level whose rendered text contains the given fragment. The harness records what the logger was called with, so the match runs
 // against the rendered line rather than the format string, which is what makes a fragment carrying a substituted value match at all.
-function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
+function countLogs(entries: readonly TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
 
   return entries.filter((entry) => (entry.level === level) && formatLogEntry(entry).includes(fragment)).length;
 }
@@ -95,7 +95,7 @@ describe("live-attach reclassification (suite C)", () => {
     assert.equal(churn[1]?.kind, "configure", "the second controller event is the configureController");
 
     // The freshly built stream is now built for a doorbell, and the ring MQTT registered exactly once.
-    assert.equal(camera.stream?.builtFor.isDoorbell, true, "the rebuilt stream is now built for a doorbell");
+    assert.equal(camera.stream.builtFor.isDoorbell, true, "the rebuilt stream is now built for a doorbell");
     assert.equal(mqtt?.subscriptions.filter((subscription) => subscription.topic.endsWith("/doorbell/set")).length, 1, "the ring-trigger MQTT registered exactly once");
 
     // Exactly one user-facing promotion INFO.

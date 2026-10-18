@@ -43,7 +43,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
         errorInfo = util.format(message, ...parameters);
 
-        // eslint-disable-next-line no-console
+        // eslint-disable-next-line no-console -- The settings server has no logger of its own, so it deliberately reports a controller error on the console.
         console.error(errorInfo);
       } };
 
@@ -85,7 +85,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
           errorInfo = (error instanceof Error) ? error.message : String(error);
 
-          // eslint-disable-next-line no-console
+          // eslint-disable-next-line no-console -- The settings server has no logger of its own, so it deliberately reports a controller error on the console.
           console.error(errorInfo);
         }
 

@@ -9,6 +9,7 @@ import type { API, HAP } from "homebridge";
 import type { ProtectDeviceConfig, ProtectNvrConfig, ProtectState } from "unifi-protect";
 import { TimerRegistry, composeSignals, debugGatedLog, formatErrorMessage, loopFaultReporter, mqttTopic, prefixedLog, superviseLoop } from "homebridge-plugin-utils";
 import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
+import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import type { ProtectNvr } from "../nvr/nvr.ts";
@@ -41,8 +42,8 @@ export abstract class ProtectBase {
   // This owner's lifetime signal, composed from its own controller and the lifetime it rides (see the constructor). Every observe loop, MQTT registration, and timer the
   // owner creates binds to it, so an abort at either level unwinds all of them.
   protected readonly signal: AbortSignal;
-  // This owner's pacing timers, keyed by purpose. The registry is bound to the lifetime signal above, so teardown drains whatever is armed and a registration attempted
-  // afterward is inert - a timer can never fire into a torn-down owner.
+  // This owner's pacing timers, keyed by purpose. The registry arms on the platform's clock and is bound to the lifetime signal above, so teardown drains whatever is
+  // armed and a registration attempted afterward is inert - a timer can never fire into a torn-down owner.
   protected readonly timers: TimerRegistry;
 
   /* Initialize the shared owner fields (api, hap, nvr, platform), build the device-prefixed log wrapper, and wire the owner-lifetime triple: this owner's own abort
@@ -77,7 +78,7 @@ export abstract class ProtectBase {
 
     this.controller = new AbortController();
     this.signal = composeSignals(this.controller.signal, parentSignal ?? nvr.signal);
-    this.timers = new TimerRegistry({ signal: this.signal });
+    this.timers = new TimerRegistry({ clock: nvr.platform.clock, signal: this.signal });
   }
 
   // Tear this owner down. Aborting the owner controller unwinds every observe loop and MQTT registration bound to the composed signal and drains the timer registry, so
@@ -284,5 +285,17 @@ export abstract class ProtectBase {
 
       return false;
     }
+  }
+
+  /* Reflect a characteristic's true state back to HomeKit once the set handler that changed it has returned. HAP writes the requested value onto the characteristic
+   * when the handler resolves, so a write made inside the handler - a momentary trigger snapping back, a failed command reverting, a level the controller quantizes -
+   * would be overwritten by it. We arm the write on the platform's clock just past that point instead.
+   *
+   * The reflect stays outside the keyed registry, so teardown leaves a pending one to fire: it is a single write at most one delay after the owner's last set handler,
+   * and it re-asserts state rather than starting anything that would need to be stopped.
+   */
+  protected reflectAfterSet(reflect: () => void): void {
+
+    this.platform.clock.schedule(reflect, PROTECT_HOMEKIT_REFLECT_DELAY);
   }
 }

@@ -12,21 +12,23 @@
  * netted here END-TO-END through the real switch onSet AND the real MQTT subscribeSet("tone") handler. The empty-payload (no-tone-selected) case is reachable ONLY via
  * the MQTT "chime" path - the switch onSet always carries a tone subtype on a speaker switch - so it is asserted through the captured MQTT handler.
  *
- * Two framing details the assertions honor exactly. First, the onSet's reverts are bare setTimeout(...,50) NOT registered in this.timers, so chime.cleanup() does
- * not clear them; the tests that arm a bare revert (the failed / falsy / no-op play paths) await ~60ms so the revert fires within the test (touching only this test's
- * fresh accessory). Second, the keyed play-timer and the "Playing %s." log fire ONLY after playTone resolves true - a falsy set, a no-op play, and a rejected play all
- * share the same bare 50ms revert-only setTimeout from the first framing detail above, with no play-timer armed and no "Playing" line logged. The afterEach(()
- * => chime?.cleanup()) drains the play-timers per test (the light suite needs no such hook because the light arms none).
+ * Two framing details the assertions honor exactly. First, the onSet's reverts are deferred reflects armed on the platform's clock outside this.timers, so
+ * chime.cleanup() does not clear them; the tests that arm one (the failed / falsy / no-op play paths) advance the harness clock through the reflect delay so the revert
+ * fires within the test (touching only this test's fresh accessory). Second, the keyed play-timer and the "Playing %s." log fire ONLY after playTone resolves true - a
+ * falsy set, a no-op play, and a rejected play all share the same deferred revert from the first framing detail above, with no play-timer armed and no "Playing" line
+ * logged. The afterEach(() => chime?.cleanup()) drains the play-timers per test (the light suite needs no such hook because the light arms none).
  *
  * The isolation model mirrors the light reference: a beforeEach builds a fresh chime so the capture arrays, the characteristic state, the observer baselines, and
  * store.observerCount are clean every test, and the wake log is windowed per push via a captured baseline.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { Chime, ProtectRingtoneConfig } from "unifi-protect";
 import { TestChimeProjection, makeChimeConfig, makeRingtoneConfig } from "./testing.helpers.ts";
-import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
-import { after, afterEach, before, beforeEach, describe, mock, test } from "node:test";
+import type { TestClock, TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
+import { after, afterEach, before, beforeEach, describe, test } from "node:test";
+import { loggedAt, settle } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../diagnostics.ts";
+import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectChime } from "./chime.ts";
@@ -35,7 +37,6 @@ import { ProtectReservedNames } from "../types.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
-import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
@@ -51,13 +52,13 @@ const controllers: AbortController[] = [];
 // spawnObservers paths. Returns logEntries and mqtt (the light suite needs neither; the chime asserts both the failure log lines and the captured MQTT tone handler).
 // The accessory factory is injectable so the legacy-removal test can pre-seed a Lightbulb and a bare speaker Switch before construction.
 function buildChime(configOptions: Parameters<typeof makeChimeConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; ringtones?: ProtectRingtoneConfig[] } = {}): {
-  accessory: TestAccessory; chime: ProtectChime; controller: AbortController; logEntries: TestLogEntry[]; mqtt: TestMqttClient; projection: TestChimeProjection;
-  store: TestStateStore;
+  accessory: TestAccessory; chime: ProtectChime; clock: TestClock; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient;
+  projection: TestChimeProjection; store: TestStateStore;
 } {
 
   const chimeConfig = makeChimeConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ chimes: [chimeConfig], ringtones: harnessOptions.ringtones ?? [] }));
-  const { controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store });
+  const { clock, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store });
 
   controllers.push(controller);
 
@@ -72,7 +73,7 @@ function buildChime(configOptions: Parameters<typeof makeChimeConfig>[0] = {}, h
     throw new Error("The MQTT recording double was not installed despite mqtt: true.");
   }
 
-  return { accessory, chime, controller, logEntries, mqtt, projection, store };
+  return { accessory, chime, clock, controller, logEntries, mqtt, projection, store };
 }
 
 describe("real ProtectChime construction and play behavior", () => {
@@ -85,9 +86,10 @@ describe("real ProtectChime construction and play behavior", () => {
   // The per-test-fresh handles, rebuilt in beforeEach so every test starts from a clean chime, clean captures, and clean wake baseline.
   let accessory: TestAccessory;
   let chime: ProtectChime | undefined;
+  let clock: TestClock;
   let constructionWakes = 0;
   let controller: AbortController;
-  let logEntries: TestLogEntry[];
+  let logEntries: readonly TestLogEntry[];
   let mqtt: TestMqttClient;
   let projection: TestChimeProjection;
   let store: TestStateStore;
@@ -105,7 +107,7 @@ describe("real ProtectChime construction and play behavior", () => {
   beforeEach(async () => {
 
     // The default fixture: one ringtone (so a speaker switch exists) whose id is the chime's one ringSettings entry, so a speaker play joins a real ring.
-    ({ accessory, chime, controller, logEntries, mqtt, projection, store } = buildChime(
+    ({ accessory, chime, clock, controller, logEntries, mqtt, projection, store } = buildChime(
       { ringSettings: [{ cameraId: "doorbell-1", repeatTimes: 2, ringtoneId: "test-ringtone-1", volume: 65 }] },
       { ringtones: [makeRingtoneConfig({ id: "test-ringtone-1", name: "Test Ringtone" })] }));
 
@@ -210,7 +212,7 @@ describe("real ProtectChime construction and play behavior", () => {
     assert.ok(buzzerSwitch, "the buzzer switch exists");
     assert.ok(chime, "the chime was built");
 
-    // The On getter reads this.timers.has(subtype): an armed play-timer reads true and a drained registry reads false, so no timer mocking is needed here.
+    // The On getter reads this.timers.has(subtype): an armed play-timer reads true and a drained registry reads false, so the row needs no clock advance here.
     await buzzerSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
 
     assert.equal(await buzzerSwitch.getCharacteristic(Characteristic.On).triggerGet(), true, "the play-timer is armed after a play");
@@ -273,8 +275,8 @@ describe("real ProtectChime construction and play behavior", () => {
   test("a speaker tone with empty ringSettings is a no-op that reverts the switch without logging Playing or arming the reset", async () => {
 
     // The chime has no ringSettings, so playTone returns false and issues NO command. A false return reverts the switch to its real state and returns before the
-    // "Playing" log or the playback-reset timer, so a no-op never shows as playing. The bare 50ms revert it arms is NOT in this.timers, so we await past it before this
-    // test's afterEach.
+    // "Playing" log or the playback-reset timer, so a no-op never shows as playing. The deferred revert it arms is outside this.timers, so we advance the clock past
+    // it before this test's afterEach.
     const fixture = buildChime({ ringSettings: [] }, { ringtones: [makeRingtoneConfig({ id: "empty-ring", name: "Empty Ring" })] });
 
     const speakerSwitch = fixture.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".empty-ring");
@@ -287,8 +289,10 @@ describe("real ProtectChime construction and play behavior", () => {
     assert.equal(fixture.mqtt.published.length, 0, "a no-op play publishes nothing");
     assert.ok(!loggedAt(fixture.logEntries, "info", "Playing Empty Ring."), "the Playing info log does NOT fire on the no-op set");
 
-    // Let the bare 50ms revert (not in this.timers) fire within the test; no playback-reset timer is armed on a no-op, so there is none to clean up.
-    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    // Let the deferred revert (outside this.timers) fire within the test; no playback-reset timer is armed on a no-op, so there is none to clean up.
+    await settle();
+    fixture.clock.advance(PROTECT_HOMEKIT_REFLECT_DELAY);
+    await settle();
 
     fixture.chime.cleanup();
   });
@@ -310,8 +314,10 @@ describe("real ProtectChime construction and play behavior", () => {
       "the shared command-error helper reported the single failure line");
     assert.ok(!loggedAt(logEntries, "info", "Playing Test Ringtone."), "the Playing info log does NOT fire on the failed play");
 
-    // Let the bare 50ms revert (armed on the false playTone return, not in this.timers) fire within the test before afterEach; no reset timer is armed on a failure.
-    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    // Let the deferred revert (armed on the false playTone return, outside this.timers) fire within the test before afterEach; no reset timer is armed on a failure.
+    await settle();
+    clock.advance(PROTECT_HOMEKIT_REFLECT_DELAY);
+    await settle();
   });
 
   test("an authorization failure on a play earns the Administrator-role guidance", async () => {
@@ -327,7 +333,9 @@ describe("real ProtectChime construction and play behavior", () => {
     assert.ok(loggedAt(logEntries, "error", "Unable to play Test Ringtone. Please ensure this username has the full management role in UniFi Protect."),
       "an authorization failure earns the admin-role guidance");
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    await settle();
+    clock.advance(PROTECT_HOMEKIT_REFLECT_DELAY);
+    await settle();
   });
 
   test("turning a switch off is a meaningless state: no command, no publish, just a deferred revert", async () => {
@@ -342,8 +350,10 @@ describe("real ProtectChime construction and play behavior", () => {
     assert.equal(mqtt.published.length, 0, "a falsy set publishes nothing");
     assert.ok(!loggedAt(logEntries, "info", "Playing "), "a falsy set logs no Playing line and arms no play-timer");
 
-    // The falsy path arms only a bare 50ms revert (not in this.timers); let it fire within the test.
-    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    // The falsy path arms only the deferred revert (outside this.timers); let it fire within the test.
+    await settle();
+    clock.advance(PROTECT_HOMEKIT_REFLECT_DELAY);
+    await settle();
   });
 
   test("the MQTT tone handler dispatches buzzer, chime (empty payload), and rejects an unknown tone", async () => {
@@ -405,37 +415,34 @@ describe("real ProtectChime construction and play behavior", () => {
 
     assert.ok(switchA && switchB, "both ringtone switches exist");
 
-    mock.timers.enable({ apis: ["setTimeout"] });
-
     try {
 
       // Tap A at t0, arming its reset at t0 + 3500.
       await switchA.getCharacteristic(Characteristic.On).triggerSet(true);
 
       // Advance to t0 + 1500 and tap B, arming its reset at t0 + 5000.
-      mock.timers.tick(1500);
+      fixture.clock.advance(1500);
       await switchB.getCharacteristic(Characteristic.On).triggerSet(true);
 
       // Checkpoint 1 (~t0 + 2000, inside A's own 3500ms window): A still reads playing, undisplaced by B's tap.
-      mock.timers.tick(500);
+      fixture.clock.advance(500);
 
       assert.equal(await switchA.getCharacteristic(Characteristic.On).triggerGet(), true, "A's switch still reads playing inside its own window");
 
       // Checkpoint 2 (~t0 + 4000: A's window closed at 3500, B's still open until 5000): A resets off, B stays on.
-      mock.timers.tick(2000);
+      fixture.clock.advance(2000);
 
       assert.equal(switchA.getCharacteristic(Characteristic.On).value, false, "A's switch resets off when its own window closes - it is not stranded on by B's play");
       assert.equal(await switchA.getCharacteristic(Characteristic.On).triggerGet(), false, "A's play-timer is gone after its own window");
       assert.equal(await switchB.getCharacteristic(Characteristic.On).triggerGet(), true, "B's switch remains playing until its own later window closes");
 
       // Checkpoint 3 (past t0 + 5000): B's window closes and it resets off too.
-      mock.timers.tick(1500);
+      fixture.clock.advance(1500);
 
       assert.equal(switchB.getCharacteristic(Characteristic.On).value, false, "B's switch resets off when its own window closes");
       assert.equal(await switchB.getCharacteristic(Characteristic.On).triggerGet(), false, "B's play-timer is gone after its own window");
     } finally {
 
-      mock.timers.reset();
       fixture.chime.cleanup();
     }
   });

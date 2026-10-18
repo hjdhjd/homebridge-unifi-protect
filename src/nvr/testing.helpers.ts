@@ -16,13 +16,13 @@
  */
 import type { Camera, Chime, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig } from "unifi-protect";
 import { Characteristic, Service, TestAccessory, TestCameraController, TestStreamingDelegateFactory } from "../testing.helpers.ts";
-import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
+import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { NvrPhase, ProtectNvr } from "./nvr.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "../options.ts";
 import type { TestApiCall, TestStateStore } from "../testing.helpers.ts";
-import { TestClock, TestMqttClient, TestRecordingProcessFactory } from "homebridge-plugin-utils/testing";
+import { TestClock, TestLivestreamProcessFactory, TestMqttClient, TestRecordingProcessFactory, capturingLog } from "homebridge-plugin-utils/testing";
 import { countActiveRecordingViews, isDisruptionExpected } from "./nvr-policy.ts";
 import { featureOptionCategories, featureOptions } from "../options.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
@@ -44,12 +44,12 @@ import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
 
 // The platform double's honest structural type. The members mirror what ProtectBase and the camera-family construction paths read off nvr.platform: the HAP
-// namespaces plus the deterministic uuid generator, the injected wall clock (the recording delegate reads platform.clock for its pacing-time primitives), the
-// platform-accessory class and the four registration recorders (the doorbell's configurePackageCamera and the NVR removal tail drive them), the platform's mutable
-// accessories array, a concrete codecSupport (the real platform getter throws before the FFmpeg probe - a concrete object with a non-raspbian hostSystem keeps the
-// recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions engine, the log sinks, the scoped debug gate every
-// owner's logger asks before it speaks, the recording-process factory interface (the recording delegate constructs its FFmpeg process through it), and the
-// streaming-delegate factory interface.
+// namespaces plus the deterministic uuid generator, the injected test clock (typed as the library's TestClock, so the double and every suite advance it with no
+// cast), the platform-accessory class and the registration recorders (the doorbell's configurePackageCamera and the NVR removal tail drive them), the platform's
+// mutable accessories array, a concrete codecSupport (the real platform getter throws before the FFmpeg probe - a concrete object with a non-raspbian hostSystem keeps
+// the recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions engine, the log sinks, the scoped debug gate every
+// owner's logger asks before it speaks, the livestream-process and recording-process factory interfaces (the RTSP debug adapter and the recording delegate construct
+// their FFmpeg processes through them), and the streaming-delegate factory interface.
 export interface TestProtectPlatform {
 
   readonly accessories: TestAccessory[];
@@ -62,11 +62,12 @@ export interface TestProtectPlatform {
     unregisterPlatformAccessories: (pluginName: string, platformName: string, accessories: TestAccessory[]) => void;
     updatePlatformAccessories: (accessories: TestAccessory[]) => void;
   };
-  readonly clock: Clock;
+  readonly clock: TestClock;
   readonly codecSupport: { hostSystem: string };
   readonly config: ProtectOptions;
   readonly featureOptions: FeatureOptions;
   readonly legacyOptions: LegacyFeatureOptions;
+  readonly livestreamProcessFactory: LivestreamProcessFactory;
   readonly log: {
 
     debug: (message: string, ...params: unknown[]) => void;
@@ -79,6 +80,12 @@ export interface TestProtectPlatform {
   readonly streamingDelegateFactory: TestStreamingDelegateFactory;
   readonly testDebug: (context: { controller?: string; device?: string }) => boolean;
 }
+
+/* The instant every harness test clock starts at, unless a caller supplies its own clock. Production reads a zero epoch time as absent in several places - a
+ * controller's upSince of 0, a timeshift buffer's first stamp - so the shared timeline starts at a realistic wall-clock instant, and a suite derives each fixture
+ * timestamp from the clock's now() rather than seeding a timeline of its own.
+ */
+export const TEST_CLOCK_EPOCH = 1700000000000;
 
 /* Present a harness accessory to an API typed on the production accessory - the removal gate's action surface and its schedule options both are. The double's graph
  * holds TestAccessory instances and the two types are assignable in neither direction, so the crossing is a structural cast, and it lives here in one owned spot
@@ -93,7 +100,7 @@ export const asProtectAccessory = (accessory: TestAccessory): ProtectAccessory =
 /* The shared recording event-dispatch double: a REAL ProtectEventDispatch whose motion delivery is overridden to record into an array rather than touch HomeKit or arm a
  * reset timer. The override's arity and parameter types mirror production's motionEventHandler (event-dispatch.ts) exactly, so it type-checks as a true override; the two
  * parameters the recording path deliberately does not read carry the underscore prefix the house no-unused-vars rule reserves for intentionally-unused arguments, and
- * their types still anchor the override against production. Recording arms NO reset timer, so a motion test leaks no handle.
+ * their types still anchor the override against production. Recording arms NO reset timer, so a motion test leaves no reset pending.
  *
  * This serves every family and base-capability path whose motion routes through the firehose - the light family's lastMotion observer and the base motion trigger / the
  * base motion-set MQTT interface alike - injected through makeTestNvr's dispatch interface and read back off nvr.events. It is the SSOT for that recording shape: the
@@ -126,12 +133,12 @@ interface TestRecordingView {
  * member is the REAL ProtectEventDispatch, constructed against this double, so event-timer behavior in tests is the production implementation rather than a mirror.
  *
  * The removals member is the REAL RemovalStabilityGate, wired as ProtectNvr wires its own: the same DelayDeviceRemoval grace supplier read through the REAL
- * FeatureOptions engine, the double's recording log, and the controller lifetime signal its timers bind to. So a test drives the production stability arithmetic and
- * the production TimerRegistry graces, and a test that needs a grace to fire runs the clock under node:test's mocked timers rather than reaching for an inspection
- * surface. Facts go in through pushControllerStability / restabilizeController; what comes out is observable on the accessory graph, the registration recorders, and
- * the log. Two ergonomics are deliberate. A fresh double starts stable - the construction seed pushes a controller up longer than the stability window - so a
- * lifecycle test schedules without ceremony. And the sweep action is a bare counter: the seed arms a real zero-delay sweep whose callback lands at whichever later
- * await point the loop reaches it on, so it must touch nothing for that timing to be harmless.
+ * FeatureOptions engine, the double's recording log, the platform's test clock, and the controller lifetime signal its timers bind to. So a test drives the production
+ * stability arithmetic and the production TimerRegistry graces, and a test that needs a grace to fire advances the platform's test clock rather than reaching for an
+ * inspection surface. Facts go in through pushControllerStability / restabilizeController; what comes out is observable on the accessory graph, the registration
+ * recorders, and the log. Its ergonomics are deliberate. A fresh double starts stable - the construction seed pushes a controller up longer than the stability window -
+ * so a lifecycle test schedules without ceremony. And the sweep action is a bare counter: the seed arms a zero-delay sweep on the test clock, which fires on whichever
+ * advance of the clock comes first, so it must touch nothing for that timing to be harmless.
  *
  * The removal tail is the production presence-guarded splice with the bridged-gated unregister recording, and it is what the gate's removeDevice action runs.
  */
@@ -158,9 +165,9 @@ export class TestProtectNvr {
   // this and nothing else: a double's stability facts arrive through the explicit pushControllerStability path, so a health transition here counts itself and leaves
   // the gate's clock to the tests that drive it deliberately.
   public healthStabilityRefreshes = 0;
-  // The plugin's own-clock timestamp of the last observed controller reboot, settable and defaulting to "none observed this process", mirroring the private field the
-  // production root stamps in onControllerRebooted. A test arranging a reboot's settling tail sets this alongside `phase`, and the two together are exactly the inputs
-  // the expectation classification below reads.
+  // The platform clock's timestamp of the last observed controller reboot, settable and defaulting to "none observed this process", mirroring the private field the
+  // production root stamps in onControllerRebooted. A test arranging a reboot's settling tail sets this alongside `phase`, stamping it from the platform's test clock,
+  // and the two together are exactly the inputs the expectation classification below reads.
   public lastRebootObservedAt: Nullable<number> = null;
   public readonly log: {
 
@@ -185,9 +192,9 @@ export class TestProtectNvr {
   public rebootError: Nullable<Error> = null;
   public readonly removals: RemovalStabilityGate;
   public readonly signal: AbortSignal;
-  // How many stability sweeps the gate has asked this root to run. The recorder behind the gate's runSweep action, which does this and nothing else: the seed arms a real
-  // zero-delay sweep at construction, so the callback fires at an unpredictable later await point in whatever test happens to be running, and touching nothing is what
-  // makes that harmless.
+  // How many stability sweeps the gate has asked this root to run. The recorder behind the gate's runSweep action, which does this and nothing else: the seed arms a
+  // zero-delay sweep at construction, so the callback fires on the first advance of the platform's test clock in whatever test happens to advance it, and touching
+  // nothing is what makes that harmless.
   public sweepRequests = 0;
 
   // The managed-device registry, mirroring ProtectNvr.configuredDevices: a Map keyed by accessory UUID whose values are the constructed device objects. The
@@ -211,7 +218,8 @@ export class TestProtectNvr {
     this.signal = init.signal;
 
     /* The REAL health bridge, wired the way ProtectNvr wires its own (nvr.ts): the double's controller address scoping the request feed, its recording log carrying
-     * the narration, its configured-device registry answering the camera-ownership question, and the controller lifetime signal the channel subscriptions detach on.
+     * the narration, its configured-device registry answering the camera-ownership question, the platform's test clock every symptom is stamped from, and the
+     * controller lifetime signal the channel subscriptions detach on.
      * The diagnostics feeds are attached immediately, because the double models a well-configured controller - production wires them past its credential guard, which
      * a double with an address and credentials would clear. They are inert in a device-test process: nothing publishes on the library's channels outside the bridge's
      * own suite, and the teardown-abort discipline every constructing file carries is what detaches them when the controller's signal fires.
@@ -224,6 +232,7 @@ export class TestProtectNvr {
 
       actions: { refreshRemovalStability: (): void => { this.healthStabilityRefreshes++; } },
       address: init.config.address,
+      clock: init.platform.clock,
       log: this.log,
       ownsCamera: (cameraId: string): boolean => this.getDeviceById(cameraId) !== null,
       signal: init.signal
@@ -232,10 +241,11 @@ export class TestProtectNvr {
     this.health.wireDiagnostics();
 
     /* The REAL removal-stability gate, wired the way ProtectNvr wires its own (nvr.ts): the grace resolved per request through the REAL FeatureOptions engine, the
-     * double's recording log, and the controller lifetime signal its TimerRegistry binds to. One divergence is deliberate: production's removeDevice action is the
-     * root's richer removeHomeKitDevice cascade, while the double's is its own thin removal tail. The gate cares only that its decision runs an action - executing a
-     * removal is the root's territory in the double exactly as it is in production - and the tail is the executor every consuming test already reads. The action
-     * surface is typed on the production accessory while the double's graph holds TestAccessory instances, so the crossing takes the file's structural cast.
+     * double's recording log, the platform's test clock, and the controller lifetime signal its TimerRegistry binds to. One divergence is deliberate: production's
+     * removeDevice action is the root's richer removeHomeKitDevice cascade, while the double's is its own thin removal tail. The gate cares only that its decision runs
+     * an action - executing a removal is the root's territory in the double exactly as it is in production - and the tail is the executor every consuming test already
+     * reads. The action surface is typed on the production accessory while the double's graph holds TestAccessory instances, so the crossing takes the file's
+     * structural cast.
      */
     this.removals = new RemovalStabilityGate({
 
@@ -244,18 +254,19 @@ export class TestProtectNvr {
         removeDevice: (accessory: ProtectAccessory): void => this.removeAccessoryFromHomeKit(accessory as unknown as TestAccessory),
         runSweep: (): void => { this.sweepRequests++; }
       },
+      clock: init.platform.clock,
       graceSeconds: (): number => this.getFeatureNumber("Nvr.DelayDeviceRemoval") ?? 0,
       log: this.log,
       signal: init.signal
     });
 
     /* The REAL reboot scheduler, wired the way ProtectNvr wires its own (nvr.ts): the recording count and the connection health as suppliers it pulls at its own fire
-     * time, the double's recording log, and the controller lifetime signal its TimerRegistry binds to. The two phase actions move the double's bare settable `phase` -
-     * the same field the recording delegate already reads - so the confirmation's still-rebooting guard and any induced-suppression read see the phase the choreography
-     * set, and the reboot action records its calls and consumes a test's injected failure.
+     * time, the double's recording log, the platform's test clock, and the controller lifetime signal its TimerRegistry binds to. The phase actions move the
+     * double's bare settable `phase` - the same field the recording delegate already reads - so the confirmation's still-rebooting guard and any induced-suppression
+     * read see the phase the choreography set, and the reboot action records its calls and consumes a test's injected failure.
      *
      * The scheduler arms NOTHING at construction: entering the schedule is an explicit call, so this member fires nothing in any suite that does not ask it to. That is
-     * what keeps the embedding inert for every existing test, unlike the removal gate above whose construction seed arms a real sweep.
+     * what keeps the embedding inert for every existing test, unlike the removal gate above whose construction seed arms a sweep.
      */
     this.reboot = new RebootScheduler({
 
@@ -278,26 +289,24 @@ export class TestProtectNvr {
         resumeRunning: (): void => { this.phase = "running"; }
       },
       activeRecordings: (): number => this.#activeHksvRecordings(),
+      clock: init.platform.clock,
       isConnectionHealthy: (): boolean => this.client.connection.isHealthy,
       log: this.log,
       phase: (): NvrPhase => this.phase,
       signal: init.signal
     });
 
-    // The real event dispatcher, wired against this double - its constructor reads only the platform's HAP namespace, the log, and the NVR handle itself. The optional
-    // dispatch factory is the reusable injection point: when omitted, the default factory is byte-identical to today's new ProtectEventDispatch(this), so every existing
-    // consumer is unchanged; a test injects a recording subclass (overriding motionEventHandler to record without arming the real reset timer) to assert the device
-    // observers' firehose routing without leaking a dangling timer handle. The factory runs at exactly the point this.events was assigned before, the last write in
-    // the constructor, so nothing reads events before this line either way.
+    // The real event dispatcher, wired against this double - its constructor reads only the platform's HAP namespace and clock, the log, and the NVR handle itself.
+    // The optional dispatch factory is the reusable injection point: when omitted, the default factory builds the real ProtectEventDispatch(this); a test injects a
+    // recording subclass (overriding motionEventHandler to record without arming the real reset timer) to assert the device observers' firehose routing. The factory
+    // runs as the last write in the constructor, so nothing reads events before this line.
     this.events = (init.dispatch ?? ((nvr: ProtectNvr): ProtectEventDispatch => new ProtectEventDispatch(nvr)))(this as unknown as ProtectNvr);
 
     /* Seed the trusted long-up posture: a controller up past the stability window is stable the instant it is pushed, so a fresh double schedules a removal without
-     * ceremony. The arithmetic holds under real time and under a mocked clock reset to epoch zero alike, because the uptime clamps to the window either way.
+     * ceremony. The uptime is stamped from the platform's test clock, so the seed, every later stability read, and every grace share one timeline.
      *
-     * This also arms the gate's one-shot sweep at a zero delay, which is a REAL timer whose action is the recording counter above. It fires the counter at some later
-     * macrotask and touches nothing else. Its true lifetime bound: the controller signal's abort drains it whenever no mocked clock is active at abort time, while
-     * under an active mock the real handle is beyond the mocked clearTimeout's reach - harmless purely because the action is inert and node:test gives each test file
-     * its own process.
+     * This also arms the gate's one-shot sweep at a zero delay on that clock, whose action is the recording counter above. It stays pending until a test first
+     * advances the clock, fires the counter on that advance, and touches nothing else; the controller signal's abort drains it with the rest of the gate's timers.
      */
     this.pushControllerStability(true);
   }
@@ -331,7 +340,8 @@ export class TestProtectNvr {
    */
   public get isDisruptionExpected(): boolean {
 
-    return isDisruptionExpected({ lastRebootMs: this.lastRebootObservedAt, nowMs: Date.now(), phase: this.phase, windowMs: PROTECT_NVR_REBOOT_RECENCY_MS });
+    return isDisruptionExpected({ lastRebootMs: this.lastRebootObservedAt, nowMs: this.platform.clock.now(), phase: this.phase,
+      windowMs: PROTECT_NVR_REBOOT_RECENCY_MS });
   }
 
   // Read-through to the controller record, mirroring the production getter.
@@ -379,24 +389,19 @@ export class TestProtectNvr {
    */
   public pushControllerStability(good: boolean): void {
 
-    this.removals.refresh(good ? { good: true, upSince: Date.now() - PROTECT_NVR_REMOVAL_STABILITY_WINDOW } : { good: false });
+    this.removals.refresh(good ? { good: true, upSince: this.platform.clock.now() - PROTECT_NVR_REMOVAL_STABILITY_WINDOW } : { good: false });
   }
 
-  /* Take the controller through a disruption and back to stable under a mocked clock: the not-good push drops the clock and drains every timer the gate holds, the good
-   * push restamps from the current instant, and the window-sized advance makes removalStable read true again. Every timer armed after this call is armed under the mock
-   * and is therefore tick-drivable.
-   *
-   * The clock advance arrives as a parameter rather than through a node:test import, so this file stays free of any test-framework dependency while still owning the
-   * gate-policy knowledge - the count-from-now latch and the window-sized advance it implies. A caller passes its own dial, for example
-   * nvr.restabilizeController((ms) => mock.timers.tick(ms)).
-   *
-   * @param advanceClock - Advances the caller's mocked clock by the given milliseconds. Requires a mock with both Date and setTimeout enabled.
+  /* Take the controller through a disruption and back to stable: the not-good push drops the gate's good-state stamp and drains every timer the gate holds, the good
+   * push restamps from the current instant, and advancing the platform's test clock by the stability window makes removalStable read true again. The double owns both
+   * the gate-policy knowledge - the count-from-now latch and the window-sized advance it implies - and the clock it advances, so a caller passes nothing. The advance
+   * fires every entry due on the shared clock within the window, whichever subsystem armed it.
    */
-  public restabilizeController(advanceClock: (ms: number) => void): void {
+  public restabilizeController(): void {
 
     this.pushControllerStability(false);
     this.pushControllerStability(true);
-    advanceClock(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
+    this.platform.clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
   }
 
   // Mirror ProtectNvr.logFeature: log a controller- or globally-scoped feature message once per option.
@@ -524,12 +529,14 @@ export function makeNvrConfig(options: { doorbellSettings?: ProtectNvrConfig["do
  *
  * @param options - chimes: the HELD chime projection doubles client.chimes exposes (omitted, the empty default), kept as the same instances across every access so the
  *                  doorbell's cross-device setChimeVolume write hits, and a test's updateRejection lever is set on, ONE projection - a per-access rebuild would silently
- *                  break the rejection drive; clock: an optional controllable TestClock installed on the platform double's clock interface and returned so a transmit
- *                  test can advance virtual time to drive the recording delegate's pacing (omitted, a fresh default TestClock seeded at 0 is created); controllerName:
+ *                  break the rejection drive; clock: an optional controllable TestClock installed as the platform double's clock and returned so a test advances
+ *                  the virtual time every timer armed on that clock reads (omitted, a fresh TestClock seeded at TEST_CLOCK_EPOCH is created); controllerName:
  *                  the controller label (defaults to "Test Controller"); dispatch: an optional event-dispatch factory threaded into the NVR double's events interface
  *                  (omitted, the default builds the real ProtectEventDispatch unchanged; a test injects a recording subclass to assert the device observers' firehose
  *                  routing without arming the real reset timer); doorbellSettings: the raw doorbell settings record forwarded to the store's default NVR config fallback
- *                  (omitted, the fallback carries no doorbell settings); mqtt: pass true to install the recording MQTT double (the default null makes every MQTT wrapper
+ *                  (omitted, the fallback carries no doorbell settings); livestreamProcessFactory: an optional test livestream-process factory installed on the platform
+ *                  double's livestreamProcessFactory interface (omitted, a fresh default factory is created so the RTSP debug adapter constructs its FFmpeg process
+ *                  through the test double); mqtt: pass true to install the recording MQTT double (the default null makes every MQTT wrapper
  *                  a no-op, matching an unconfigured broker); overrideAddress: the controller-level address override for rtspHost-chain tests; recordingProcessFactory:
  *                  an optional test recording-process factory installed on the platform double's recordingProcessFactory interface (omitted, a fresh default factory is
  *                  created so the recording delegate constructs its FFmpeg process through the test double); sharedPlatform: an optional { accessories, apiCalls } pair
@@ -540,15 +547,17 @@ export function makeNvrConfig(options: { doorbellSettings?: ProtectNvrConfig["do
  *                  "Disable.Nvr.DelayDeviceRemoval") applied to the REAL FeatureOptions engine.
  *
  * @returns apiCalls: every homebridge accessory-registration call the platform double recorded; clock: the controllable TestClock installed on the platform double (the
- *          same instance the recording delegate reads via platform.clock, so a transmit test advances it to release pacing); controller: the AbortController behind
+ *          instance everything built against the double reads through platform.clock, so a test advances it to fire what is due); controller: the AbortController behind
  *          nvr.signal (abort it in suite teardown); factory: the stub streaming-delegate factory; logEntries: every line the construction path logged; mqtt: the
  *          recording MQTT double when requested, else null; nvr: the NVR double.
  */
 export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: TestClock; controllerName?: string; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
-  doorbellSettings?: ProtectNvrConfig["doorbellSettings"]; mqtt?: boolean; overrideAddress?: string;
+  doorbellSettings?: ProtectNvrConfig["doorbellSettings"];
+  livestreamProcessFactory?: LivestreamProcessFactory;
+  mqtt?: boolean; overrideAddress?: string;
   recordingProcessFactory?: RecordingProcessFactory;
   sharedPlatform?: { accessories: TestAccessory[]; apiCalls: TestApiCall[] }; store: TestStateStore; userOptions?: string[]; }):
-{ apiCalls: TestApiCall[]; clock: TestClock; controller: AbortController; factory: TestStreamingDelegateFactory; logEntries: TestLogEntry[];
+{ apiCalls: TestApiCall[]; clock: TestClock; controller: AbortController; factory: TestStreamingDelegateFactory; logEntries: readonly TestLogEntry[];
   mqtt: Nullable<TestMqttClient>; nvr: TestProtectNvr; } {
 
   // Reuse the caller-supplied accessories array and registration recorder when sharing a platform across controllers, so a second controller sees and reconciles over
@@ -560,7 +569,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   // client.chimes and calls update() on the matching projection, and a test asserts that projection's updateCalls / sets its updateRejection lever, so they must be
   // one instance. A rebuild getter would hand the write a fresh projection each pass and a test's rejection would go unseen, so the failure drive would pass vacuously.
   const chimes = options.chimes ?? [];
-  const clock = options.clock ?? new TestClock();
+  const clock = options.clock ?? new TestClock(TEST_CLOCK_EPOCH);
   const controller = new AbortController();
 
   // The stable fallback the client.nvr.config getter returns when the store carries no nvr slice, built once so every fallback read is the SAME reference (the existing
@@ -568,18 +577,16 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   // this fallback, since the camera-family store the doorbell tests build never seeds an nvr slice.
   const defaultNvrConfig = makeNvrConfig(options.doorbellSettings !== undefined ? { doorbellSettings: options.doorbellSettings } : {});
   const factory = new TestStreamingDelegateFactory();
-  const logEntries: TestLogEntry[] = [];
+
+  // The capturing logger from homebridge-plugin-utils records what each call was actually handed - the level, the message, and the arguments beside it - which is the
+  // shape the shared testing helpers read and render. A test wanting the line the real Homebridge sink would emit renders the entry; one wanting a structured object
+  // argument reads it straight off params.
+  const log = capturingLog();
+  const livestreamProcessFactory = options.livestreamProcessFactory ?? new TestLivestreamProcessFactory();
   const recordingProcessFactory = options.recordingProcessFactory ?? new TestRecordingProcessFactory();
-  const sink = (level: TestLogEntry["level"]): ((message: string, ...params: unknown[]) => void) => (message: string, ...params: unknown[]): void => {
 
-    // Capture what the logger was actually called with - the message and the arguments beside it - which is the shape the shared testing helpers read and render. A
-    // test wanting the line the real Homebridge sink would emit renders the entry; one wanting a structured object argument reads it straight off params.
-    logEntries.push({ level, message, params });
-  };
-  const log = { debug: sink("debug"), error: sink("error"), info: sink("info"), warn: sink("warn") };
-
-  // The MQTT double reports through the harness sink, so a guarded publish that fails or is cancelled lands in logEntries alongside every other line the construction
-  // path emits. It is built after the sink for that reason.
+  // The MQTT double reports through the same capturing logger, so a guarded publish that fails or is cancelled lands in the log's entries alongside every other line
+  // the construction path emits. It is built after the log for that reason.
   const mqtt = options.mqtt ? new TestMqttClient({ log }) : null;
 
   /* The platform double's config, legacy analysis, and feature-option engine, hoisted out of the literal below so the debug gate can resolve against the very
@@ -682,6 +689,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       config: platformConfig,
       featureOptions: platformFeatureOptions,
       legacyOptions: legacyOptions,
+      livestreamProcessFactory: livestreamProcessFactory,
       log: log,
       pluginLog: log,
       recordingProcessFactory: recordingProcessFactory,
@@ -697,7 +705,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
     signal: controller.signal
   });
 
-  return { apiCalls, clock, controller, factory, logEntries, mqtt, nvr };
+  return { apiCalls, clock, controller, factory, logEntries: log.entries, mqtt, nvr };
 }
 
 /**

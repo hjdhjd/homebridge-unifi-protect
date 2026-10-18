@@ -14,8 +14,8 @@
  */
 import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
 import { PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
-import { TestStreamingDelegate, settle } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
+import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import { makeControllableLivestreamDouble, makeTestCameraHost } from "./testing.helpers.ts";
 import type { CameraRecordingConfiguration } from "homebridge";
 import type { ChannelProfile } from "./resolution.ts";
@@ -24,8 +24,8 @@ import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
+import { TestStreamingDelegate } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
-import { formatLogEntry } from "homebridge-plugin-utils/testing";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting them in teardown releases the harness signals so any leaked observer (none here -
 // neither the supervisor nor the recording delegate spawns any at construction) could never outlive the suite.
@@ -42,7 +42,7 @@ after(() => {
 // The count of INFO/WARN log lines whose first format string contains the given fragment - the harness records the raw parameters, so we match the message template. The
 // enable-ack re-acknowledgment test counts occurrences (not a boolean .some()), because a boolean would pass after the FIRST enable regardless of whether the second
 // re-acknowledged - the count distinguishes the per-enable acknowledgment behavior.
-function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
+function countLogs(entries: readonly TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
 
   return entries.filter((entry) => (entry.level === level) && entry.message.includes(fragment)).length;
 }
@@ -76,7 +76,7 @@ interface SupervisorArrange {
 
   delegate: ProtectRecordingDelegate;
   host: TestCameraHost;
-  logEntries: TestLogEntry[];
+  logEntries: readonly TestLogEntry[];
   nvr: TestProtectNvr;
   supervisor: ProtectTimeshiftSupervisor;
 }
@@ -185,7 +185,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     const { delegate, logEntries, nvr } = arrangeDeferralDelegate();
 
     // The phase is the default "running", so only the freshly-observed reboot can classify this disruption as expected.
-    nvr.lastRebootObservedAt = Date.now();
+    nvr.lastRebootObservedAt = nvr.platform.clock.now();
 
     delegate.updateRecordingActive(true);
     await settle();
@@ -201,7 +201,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     const { delegate, logEntries, nvr } = arrangeDeferralDelegate();
 
     // A reboot observed longer ago than the window puts this deferral comfortably outside the tail.
-    nvr.lastRebootObservedAt = Date.now() - PROTECT_NVR_REBOOT_RECENCY_MS - 5000;
+    nvr.lastRebootObservedAt = nvr.platform.clock.now() - PROTECT_NVR_REBOOT_RECENCY_MS - 5000;
 
     delegate.updateRecordingActive(true);
     await settle();
@@ -739,7 +739,7 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
    *
    * The arrangement is shared by both arms below because the window is the same one; each asserts a different thing about what the pass does at the finish line.
    */
-  async function arrangeDisableRace(): Promise<{ logEntries: TestLogEntry[]; supervisor: ProtectTimeshiftSupervisor }> {
+  async function arrangeDisableRace(): Promise<{ logEntries: readonly TestLogEntry[]; supervisor: ProtectTimeshiftSupervisor }> {
 
     const { controller, host, logEntries } = makeTestCameraHost();
 
@@ -1120,7 +1120,7 @@ describe("timeshift supervisor buffer channel-profile lifecycle", () => {
 
     assert.equal(observedAtEmit.length, 1, "the terminated emit fired exactly once");
     assert.equal(observedAtEmit[0]?.channelProfile, null, "the listener observed the profile already cleared at emit time");
-    assert.equal(observedAtEmit[0]?.isStarted, false, "the listener observed the buffer already stopped at emit time");
+    assert.equal(observedAtEmit[0].isStarted, false, "the listener observed the buffer already stopped at emit time");
     assert.equal(supervisor.buffer.channelProfile, null, "the profile stays cleared after the death");
   });
 });
@@ -1156,7 +1156,7 @@ describe("timeshift supervisor forwarder identity", () => {
 
 // Arrange a streaming-arm-capable supervisor: buffer-backed livestreaming is on and the success-path dependencies are wired (the buffer fills through the segment-
 // yielding double), but HomeKit recording is never armed. The streaming demand arm alone drives the buffer here.
-function arrangeStreamingHost(): { host: TestCameraHost; logEntries: TestLogEntry[]; supervisor: ProtectTimeshiftSupervisor } {
+function arrangeStreamingHost(): { host: TestCameraHost; logEntries: readonly TestLogEntry[]; supervisor: ProtectTimeshiftSupervisor } {
 
   const { controller, host, logEntries } = makeTestCameraHost();
 
@@ -1296,7 +1296,7 @@ describe("timeshift supervisor streaming arm", () => {
 
 // The rendered HKSV acknowledgment line at info level, or undefined when none fired. The hardware marker is a substituted %s argument, so the marker assertions match
 // against the RENDERED line rather than the format string countLogs keys on, since a countLogs check on the marker passes vacuously in both directions.
-function hksvAckLine(entries: TestLogEntry[]): string | undefined {
+function hksvAckLine(entries: readonly TestLogEntry[]): string | undefined {
 
   const entry = entries.find((candidate) => (candidate.level === "info") && formatLogEntry(candidate).includes("HKSV:"));
 
@@ -1348,7 +1348,7 @@ describe("timeshift supervisor HKSV hardware marker", () => {
     const line = hksvAckLine(logEntries);
 
     assert.ok(line, "the acknowledgment fired");
-    assert.equal(line?.includes(HKSV_HARDWARE_MARKER), false, "the acknowledgment carries no hardware marker when the encode runs in software");
+    assert.equal(line.includes(HKSV_HARDWARE_MARKER), false, "the acknowledgment carries no hardware marker when the encode runs in software");
   });
 });
 

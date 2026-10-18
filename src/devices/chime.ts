@@ -116,8 +116,8 @@ export class ProtectChime extends ProtectDevice<Chime> {
       // and return.
       if(!value) {
 
-        // Let HomeKit's optimistic write settle, then re-assert the switch's real play state. The 50ms is a cosmetic revert nudge, not a functional delay.
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(subtype)), 50);
+        // Re-assert the switch's real play state.
+        this.reflectAfterSet(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(subtype)));
 
         return;
       }
@@ -134,7 +134,7 @@ export class ProtectChime extends ProtectDevice<Chime> {
       // and return - arming the auto-reset timer or logging playback past this point would leave a failed play showing as "playing" for the full duration.
       if(!(await this.playTone(name, kind, tone))) {
 
-        setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(subtype)), 50);
+        this.reflectAfterSet(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(subtype)));
 
         return;
       }

@@ -3,8 +3,9 @@
  * platform.ts: homebridge-unifi-protect platform class.
  */
 import type { API, DynamicPlatformPlugin, Logging } from "homebridge";
-import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator, debugGatedLog, recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
-import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
+import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator, debugGatedLog, livestreamProcessFactory, recordingProcessFactory,
+  systemClock } from "homebridge-plugin-utils";
+import type { Clock, HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
 import type { LegacyFeatureOptions } from "./options-legacy.ts";
@@ -50,6 +51,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   private readonly controllers: ProtectNvr[];
   public readonly featureOptions: FeatureOptions;
   public readonly legacyOptions: LegacyFeatureOptions;
+  public readonly livestreamProcessFactory: LivestreamProcessFactory;
   public readonly log: Logging;
   public readonly pluginLog: HomebridgePluginLogging;
   public readonly recordingProcessFactory: RecordingProcessFactory;
@@ -72,6 +74,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, [...legacyOptions.engineOptions]);
     this.legacyOptions = legacyOptions;
+    this.livestreamProcessFactory = livestreamProcessFactory;
     this.log = log;
 
     // Say once that a translation happened, and where the permanent fix is. It is a warning rather than an informational line because the translation is exact but
@@ -209,7 +212,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     // First things first - ensure we've got a working video processor before we do anything else. The probe runs the full FFmpeg capability detection and returns a
     // populated, immutable FfmpegCodecs value object on success, or null when probing fails. We run it without a cancellation signal: the platform has no shutdown
     // controller, and probing happens once at launch, before any controller is brought up.
-    const codecs = await FfmpegCodecs.probe({ ffmpegExec: this.config.videoProcessor, log: this.log,
+    const codecs = await FfmpegCodecs.probe({ clock: this.clock, ffmpegExec: this.config.videoProcessor, log: this.log,
       verbose: this.featureOptions.test("Log.FFmpeg") || this.config.verboseFfmpeg });
 
     if(!codecs) {

@@ -59,7 +59,7 @@ describe("feature-option retirement wave", () => {
 
     assert.ok(category, "the category exists");
     assert.deepEqual(category.meta?.isNotProperty, ["isThirdPartyCamera"], "the category hides for third-party cameras and nothing else");
-    assert.deepEqual(category.meta?.modelKey, ["camera"], "the category scopes to cameras");
+    assert.deepEqual(category.meta.modelKey, ["camera"], "the category scopes to cameras");
   });
 
   // The standing-buffer options: the default-on livestreaming toggle plus the single channel pin the user picks a quality on.
@@ -137,7 +137,7 @@ describe("feature-option retirement wave", () => {
     assert.equal(entry.default, false, "no occupancy sensor exists until the user asks for one");
     assert.deepEqual(entry.meta?.choiceDomain, SMART_DETECT_TYPES.map((type) => type.value),
       "the entry carries the known-type domain the settings page offers where no camera is in view");
-    assert.deepEqual(entry.meta?.choiceLabels, Object.fromEntries(SMART_DETECT_TYPES.map((type) => [ type.value, type.label ])),
+    assert.deepEqual(entry.meta.choiceLabels, Object.fromEntries(SMART_DETECT_TYPES.map((type) => [ type.value, type.label ])),
       "the entry carries the display names the picker renders each detection type as");
   });
 
@@ -167,7 +167,7 @@ describe("feature-option retirement wave", () => {
     assert.equal(entry.group, "SmartDetect", "it stays grouped under smart detection");
     assert.deepEqual(entry.meta?.choiceDomain, SMART_DETECT_TYPES.map((type) => type.value),
       "the entry carries the known-type domain the settings page offers where no camera is in view");
-    assert.deepEqual(entry.meta?.choiceLabels, Object.fromEntries(SMART_DETECT_TYPES.map((type) => [ type.value, type.label ])),
+    assert.deepEqual(entry.meta.choiceLabels, Object.fromEntries(SMART_DETECT_TYPES.map((type) => [ type.value, type.label ])),
       "the entry carries the display names the picker renders each detection type as");
   });
 
@@ -220,7 +220,7 @@ describe("feature-option retirement wave", () => {
     assert.equal(entry.defaultValue, ALL_CHOICES, "every output the relay reports is exposed until the user narrows the list");
     assert.equal(entry.default, true, "the outputs are exposed by default");
     assert.deepEqual(entry.meta?.choiceDomain, [ "1", "2" ], "the entry carries the pair the settings page offers where no relay is in view");
-    assert.deepEqual(entry.meta?.modelKey, ["relay"], "the option applies to relays alone");
+    assert.deepEqual(entry.meta.modelKey, ["relay"], "the option applies to relays alone");
   });
 
   // The catalog declares no per-output boolean, and the surviving name is not a prefix of the retired ones - which is what keeps a retired entry from reading as this

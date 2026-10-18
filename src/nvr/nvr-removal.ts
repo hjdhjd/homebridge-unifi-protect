@@ -21,7 +21,7 @@
  * The gate is constructed once per controller and never rebuilt, because its first-stabilization latch is a fact about this process's whole life rather than about
  * the current connection.
  */
-import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import type { Clock, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { computeStableSince, isStabilityWindowElapsed } from "./nvr-policy.ts";
 import { PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
@@ -65,6 +65,8 @@ export interface RemovalScheduleOptions {
 export interface RemovalStabilityGateOptions {
 
   actions: RemovalGateActions;
+  // The time source the gate reads each good-state instant from and arms its sweep and its delayed removals on.
+  clock: Clock;
   // The user's configured removal grace, in seconds, resolved per request rather than captured, so a live configuration change governs the next removal.
   graceSeconds: () => number;
   log: HomebridgePluginLogging;
@@ -78,6 +80,8 @@ export interface RemovalStabilityGateOptions {
 export class RemovalStabilityGate {
 
   readonly #actions: RemovalGateActions;
+
+  readonly #clock: Clock;
 
   readonly #graceSeconds: () => number;
 
@@ -99,9 +103,10 @@ export class RemovalStabilityGate {
   public constructor(options: RemovalStabilityGateOptions) {
 
     this.#actions = options.actions;
+    this.#clock = options.clock;
     this.#graceSeconds = options.graceSeconds;
     this.#log = options.log;
-    this.#timers = new TimerRegistry({ signal: options.signal });
+    this.#timers = new TimerRegistry({ clock: options.clock, signal: options.signal });
   }
 
   /**
@@ -127,7 +132,7 @@ export class RemovalStabilityGate {
 
       // One instant serves the stamp, the uptime backdate, and the delay arithmetic below, so they all describe the same moment rather than drifting across separate
       // reads that could straddle a millisecond boundary and disagree.
-      const nowMs = Date.now();
+      const nowMs = this.#clock.now();
 
       // A zero uptime reads as absent: the controller has reported no boot time we could backdate from, so the period counts from now.
       this.#stableSince = computeStableSince({ hasStabilizedBefore: this.#hasStabilizedOnce, nowMs, uptimeMs: facts.upSince ? (nowMs - facts.upSince) : 0,
@@ -162,7 +167,7 @@ export class RemovalStabilityGate {
    */
   public get removalStable(): boolean {
 
-    return isStabilityWindowElapsed({ nowMs: Date.now(), stableSinceMs: this.#stableSince, windowMs: PROTECT_NVR_REMOVAL_STABILITY_WINDOW });
+    return isStabilityWindowElapsed({ nowMs: this.#clock.now(), stableSinceMs: this.#stableSince, windowMs: PROTECT_NVR_REMOVAL_STABILITY_WINDOW });
   }
 
   /**

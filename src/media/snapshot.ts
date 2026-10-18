@@ -2,8 +2,8 @@
  *
  * snapshot.ts: UniFi Protect HomeKit snapshot class.
  */
+import type { Clock, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { FfmpegExec, runWithAbort } from "homebridge-plugin-utils";
-import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_MAX_SOURCE_HEIGHT, PROTECT_MAX_SOURCE_WIDTH } from "../settings.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { SnapshotOptions } from "unifi-protect";
@@ -34,12 +34,15 @@ export class ProtectSnapshot {
 
   private _cachedSnapshot: Nullable<{ image: Buffer; time: number }>;
   private _snapshotInFlight: Nullable<Promise<Nullable<Buffer>>>;
+  // The platform's clock, which stamps each cached snapshot and ages it against the cache's maximum age.
+  private readonly clock: Clock;
   public readonly log: HomebridgePluginLogging;
   public readonly protectCamera: ProtectCameraHost;
 
   // Create an instance of the Protect snapshot handler.
   constructor(protectCamera: ProtectCameraHost) {
 
+    this.clock = protectCamera.platform.clock;
     this.log = protectCamera.log;
     this.protectCamera = protectCamera;
     this._cachedSnapshot = null;
@@ -143,10 +146,10 @@ export class ProtectSnapshot {
       }
 
       // Cache the image before returning it.
-      this._cachedSnapshot = { image: snapAttempt, time: Date.now() };
+      this._cachedSnapshot = { image: snapAttempt, time: this.clock.now() };
 
       return snapAttempt;
-    }, { timeout: PROTECT_SNAPSHOT_TIMEOUT });
+    }, { clock: this.clock, timeout: PROTECT_SNAPSHOT_TIMEOUT });
 
     // Occasional snapshot failures will happen. The controller isn't always able to generate them if one is already inflight or if it's too soon after the last one.
     if(!snapshot) {
@@ -424,7 +427,7 @@ export class ProtectSnapshot {
   private get cachedSnapshot(): Nullable<Buffer> {
 
     // If we have an image within the cache max-age (90 seconds, PROTECT_SNAPSHOT_CACHE_MAXAGE), we can use it. Otherwise, we're done.
-    if(!this._cachedSnapshot || ((Date.now() - this._cachedSnapshot.time) > (PROTECT_SNAPSHOT_CACHE_MAXAGE * 1000))) {
+    if(!this._cachedSnapshot || ((this.clock.now() - this._cachedSnapshot.time) > (PROTECT_SNAPSHOT_CACHE_MAXAGE * 1000))) {
 
       this._cachedSnapshot = null;
 

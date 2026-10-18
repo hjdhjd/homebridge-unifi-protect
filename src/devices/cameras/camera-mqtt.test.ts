@@ -24,7 +24,7 @@ import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { G2_PRO_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS } from "../../camera.fixtures.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
-import { TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
@@ -34,6 +34,7 @@ import type { TestAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 
 // One captured doorbell-ring routing. The /doorbell SET body's observable effect is which device it routed to, so this is the shape the recording subclass captures - the
 // same posture doorbell-effects.test.ts uses for its own routing assertions.
@@ -63,7 +64,7 @@ interface BuiltCamera {
   camera: ProtectCamera;
   cameraConfig: ProtectCameraConfig;
   controller: AbortController;
-  logEntries: TestLogEntry[];
+  logEntries: readonly TestLogEntry[];
   mqtt: TestMqttClient;
   nvr: TestProtectNvr;
 }

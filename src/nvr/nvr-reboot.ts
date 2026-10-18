@@ -21,11 +21,11 @@
  * The scheduler arms nothing at construction - entering the schedule is an explicit call - so a controller whose user never enabled scheduled reboots carries an inert
  * companion, and the controller's own configuration pass is the one place the feature turns on.
  */
+import type { Clock, HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { PROTECT_NVR_REBOOT_CHECK_INTERVAL, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS, PROTECT_NVR_REBOOT_DEFERRAL_MAX, PROTECT_NVR_REBOOT_INTERVAL,
   PROTECT_NVR_REBOOT_MIN_INTERVAL } from "../settings.ts";
 import { TimerRegistry, formatErrorMessage } from "homebridge-plugin-utils";
 import { classifyRebootAttempt, computeInitialRebootDelay } from "./nvr-policy.ts";
-import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import type { NvrPhase } from "./nvr.ts";
 import { exhaustiveGuard } from "../types.ts";
 
@@ -55,6 +55,8 @@ export interface RebootSchedulerOptions {
   // How many camera views are actively transmitting HomeKit Secure Video recordings right now. Pulled at each deferral check rather than pushed at it, so the decision
   // reads the recordings as of its own fire time rather than whatever was true when the timer was armed.
   activeRecordings: () => number;
+  // The time source the scheduler reads each cycle instant from and arms its reboot cycle and its confirmation on.
+  clock: Clock;
   // Whether the controller's connection is currently healthy - the no-op confirmation's test for a controller that took the command and never restarted.
   isConnectionHealthy: () => boolean;
   log: HomebridgePluginLogging;
@@ -80,6 +82,8 @@ export class RebootScheduler {
 
   readonly #activeRecordings: () => number;
 
+  readonly #clock: Clock;
+
   readonly #isConnectionHealthy: () => boolean;
 
   readonly #log: HomebridgePluginLogging;
@@ -98,11 +102,12 @@ export class RebootScheduler {
 
     this.#actions = options.actions;
     this.#activeRecordings = options.activeRecordings;
+    this.#clock = options.clock;
     this.#isConnectionHealthy = options.isConnectionHealthy;
     this.#log = options.log;
     this.#phase = options.phase;
     this.#signal = options.signal;
-    this.#timers = new TimerRegistry({ signal: options.signal });
+    this.#timers = new TimerRegistry({ clock: options.clock, signal: options.signal });
   }
 
   /**
@@ -136,7 +141,7 @@ export class RebootScheduler {
     // controller from entering a reboot loop.
     const intervalHours = Math.max(options.requestedIntervalHours ?? PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL);
     const intervalMs = intervalHours * 60 * 60 * 1000;
-    const delayMs = computeInitialRebootDelay({ intervalMs, nowMs: Date.now(), upSince: options.upSince });
+    const delayMs = computeInitialRebootDelay({ intervalMs, nowMs: this.#clock.now(), upSince: options.upSince });
 
     this.#log.info("Scheduled controller reboot enabled every %s hour%s.", intervalHours, (intervalHours === 1) ? "" : "s");
 
@@ -175,11 +180,11 @@ export class RebootScheduler {
     // reboot regardless. An open-ended series of HKSV events would otherwise let the deferral chain run indefinitely, which defeats the point of having a scheduled
     // reboot in the first place.
     const activeRecordings = this.#activeRecordings();
-    const elapsedCycleMs = (cycleStart !== undefined) ? (Date.now() - cycleStart) : 0;
+    const elapsedCycleMs = (cycleStart !== undefined) ? (this.#clock.now() - cycleStart) : 0;
     const deferralCeilingMs = PROTECT_NVR_REBOOT_DEFERRAL_MAX * 1000;
 
     // Stamp the cycle start on the first reschedule; propagate it unchanged on subsequent ones so the ceiling is measured from the first attempt, not the last.
-    const nextCycleStart = cycleStart ?? Date.now();
+    const nextCycleStart = cycleStart ?? this.#clock.now();
     const decision = classifyRebootAttempt({ activeRecordings, ceilingMs: deferralCeilingMs, elapsedCycleMs });
 
     // Every arm terminates, so the reboot choreography below is reached only by the decision arms that let the attempt continue rather than return early.

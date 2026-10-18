@@ -17,19 +17,12 @@ import { describe, test } from "node:test";
 import { NvrHealth } from "./nvr-health.ts";
 import type { NvrPhase } from "./nvr.ts";
 import { ProtectAuthError } from "unifi-protect";
+import { TestClock } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 
-// A deterministic clock for NvrHealth so the sliding window is driven by the test, not wall time. Starts at an arbitrary fixed epoch and advances only when the test
-// asks; mirrors the Clock interface the production NvrHealth already accepts.
-class FakeClock {
-
-  public current = 1000000;
-
-  public now(): number {
-
-    return this.current;
-  }
-}
+// The instant each health observer's test clock starts at, so the sliding window is driven by the test rather than wall time. Any nonzero epoch serves: the rows stamp
+// every symptom from the same clock the observer reads, so only the window's arithmetic reaches an assertion.
+const HEALTH_CLOCK_EPOCH = 1000000;
 
 // A stand-in non-authentication fault. The retry policy branches solely on `error instanceof ProtectAuthError`, so any other error value exercises the non-auth path;
 // a plain Error is the clearest representative of "network / transient".
@@ -119,7 +112,7 @@ describe("NvrHealth connection-input mapping", () => {
 
   test("a run of request failures drives the controller degraded then stressed", () => {
 
-    const clock = new FakeClock();
+    const clock = new TestClock(HEALTH_CLOCK_EPOCH);
     const health = new NvrHealth(clock);
 
     // Five weighted failures cross the degraded threshold; twelve cross stressed. The mapping under test is request-outcome -> apiError/apiSuccess symptom; the
@@ -141,7 +134,7 @@ describe("NvrHealth connection-input mapping", () => {
 
   test("request successes count as recovery evidence against failures", () => {
 
-    const clock = new FakeClock();
+    const clock = new TestClock(HEALTH_CLOCK_EPOCH);
     const health = new NvrHealth(clock);
 
     // Drive to degraded, then feed successes: the weighted count falls below the release bound and the controller returns to healthy. This pins that a 2xx maps to
@@ -163,7 +156,7 @@ describe("NvrHealth connection-input mapping", () => {
 
   test("a library throttle latches stressed, and release alone does not auto-recover", () => {
 
-    const clock = new FakeClock();
+    const clock = new TestClock(HEALTH_CLOCK_EPOCH);
     const health = new NvrHealth(clock);
 
     // throttleEntered maps to the libraryThrottleEntered symptom, which short-circuits to stressed regardless of the symptom count.

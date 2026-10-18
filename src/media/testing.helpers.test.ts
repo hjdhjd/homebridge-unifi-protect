@@ -11,7 +11,7 @@ import { makeControllableLivestreamDouble, makeKeyframeFragment, makeLivestreamS
 import type { Segment } from "unifi-protect";
 import assert from "node:assert/strict";
 import { isKeyframe } from "homebridge-plugin-utils";
-import { settle } from "../testing.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 
 describe("harness growth: the recording transmit doubles", () => {
 
@@ -44,11 +44,6 @@ describe("harness growth: the recording transmit doubles", () => {
       const result = await iterator.next();
 
       assert.equal(result.done, false, "the iterator yields its init and media segments before parking");
-
-      if(result.done) {
-
-        break;
-      }
 
       segments.push(result.value);
     }

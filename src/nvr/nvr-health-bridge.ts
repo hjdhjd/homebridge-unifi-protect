@@ -21,9 +21,9 @@
  * The bridge is constructed once per controller and never rebuilt. Its channel subscriptions are process-global and detach on the controller's lifetime signal, while
  * the two connection rails are re-subscribed against each fresh client and handed back to the root to own alongside its other per-client subscriptions.
  */
+import type { Clock, HomebridgePluginLogging } from "homebridge-plugin-utils";
 import type { HttpRequestEndPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload } from "unifi-protect";
 import { isRequestForController, isSuccessfulRequest } from "./nvr-policy.ts";
-import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { NvrHealth } from "./nvr-health.ts";
 import type { NvrHealthState } from "./nvr-health.ts";
 import type { NvrPhase } from "./nvr.ts";
@@ -50,6 +50,8 @@ export interface DiagnosticsHealthBridgeOptions {
   // This controller's configured address. The library's HTTP diagnostics channel carries every request from every client in the process, so an exact host match
   // against this address is what scopes the request-outcome feed to this controller's own traffic.
   address: string;
+  // The time source the bridge stamps every symptom from, handed on to the health observer as its eviction-window reference.
+  clock: Clock;
   log: HomebridgePluginLogging;
   // Whether a camera id belongs to this controller's devices. The livestream channels are process-global too, and this narrow predicate is the only form the root's
   // graph knowledge takes here.
@@ -81,6 +83,8 @@ export class DiagnosticsHealthBridge {
 
   readonly #address: string;
 
+  readonly #clock: Clock;
+
   readonly #health: NvrHealth;
 
   readonly #log: HomebridgePluginLogging;
@@ -97,10 +101,11 @@ export class DiagnosticsHealthBridge {
 
     this.#actions = options.actions;
     this.#address = options.address;
+    this.#clock = options.clock;
     this.#log = options.log;
     this.#ownsCamera = options.ownsCamera;
     this.#signal = options.signal;
-    this.#health = new NvrHealth();
+    this.#health = new NvrHealth(options.clock);
 
     /* Born suspended, matching the controller's `connecting` posture at construction: no organic baseline exists yet against which stress could be weighed, and the
      * errors of initial credential validation are real without being evidence of controller load. No symptom can slip in ahead of this regardless, because no feed
@@ -207,8 +212,8 @@ export class DiagnosticsHealthBridge {
 
     return [
 
-      connection.on("throttleEntered", () => this.#health.observe({ at: Date.now(), kind: "libraryThrottleEntered" })),
-      connection.on("throttleExited", () => this.#health.observe({ at: Date.now(), kind: "libraryThrottleReleased" }))
+      connection.on("throttleEntered", () => this.#health.observe({ at: this.#clock.now(), kind: "libraryThrottleEntered" })),
+      connection.on("throttleExited", () => this.#health.observe({ at: this.#clock.now(), kind: "libraryThrottleReleased" }))
     ];
   }
 
@@ -247,7 +252,7 @@ export class DiagnosticsHealthBridge {
         return;
       }
 
-      this.#health.observe({ at: Date.now(), kind: isSuccessfulRequest(payload) ? "apiSuccess" : "apiError" });
+      this.#health.observe({ at: this.#clock.now(), kind: isSuccessfulRequest(payload) ? "apiSuccess" : "apiError" });
     };
 
     /* The livestream feeds. Both filter to this controller's own cameras: the channels are shared by every controller in the process, so an unfiltered symptom would
@@ -263,7 +268,7 @@ export class DiagnosticsHealthBridge {
         return;
       }
 
-      this.#health.observe({ at: Date.now(), cameraId: payload.cameraId, kind: "livestreamStall" });
+      this.#health.observe({ at: this.#clock.now(), cameraId: payload.cameraId, kind: "livestreamStall" });
     };
 
     const onRecoveryRecovered = (message: unknown): void => {
@@ -275,7 +280,7 @@ export class DiagnosticsHealthBridge {
         return;
       }
 
-      this.#health.observe({ at: Date.now(), cameraId: payload.cameraId, kind: "livestreamRecovery" });
+      this.#health.observe({ at: this.#clock.now(), cameraId: payload.cameraId, kind: "livestreamRecovery" });
     };
 
     protectChannels.httpRequestEnd.subscribe(onRequestEnd);

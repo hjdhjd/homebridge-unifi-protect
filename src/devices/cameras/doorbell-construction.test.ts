@@ -17,12 +17,13 @@
  * vacuity-proofed by the same subscription later observing positive wakes. Test files run in separate processes under the node:test runner, so the subscriptions
  * never cross-talk with other suites.
  */
-import { Characteristic, Service, TestAccessory, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestAccessory, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { G2_PRO_CHANNELS, G6_INSTANT_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import type { TestApiCall, TestStreamingDelegate, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig, makeChimeConfig } from "../testing.helpers.ts";
 import { TestRecordingDispatch, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { after, afterEach, before, describe, test } from "node:test";
+import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import type { Camera } from "unifi-protect";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
@@ -33,7 +34,6 @@ import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
-import { formatLogEntry } from "homebridge-plugin-utils/testing";
 
 // Construct a real ProtectCamera against an isDoorbell-true config so it construction-attaches its DoorbellCapability, with the casts confined to this one boundary - the
 // instance under test is the production ProtectCamera and its composed capability.
@@ -233,7 +233,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
   let constructionWakes = 0;
   let doorbell: ProtectCamera;
   let harnessController: AbortController | undefined;
-  let logEntries: TestLogEntry[];
+  let logEntries: readonly TestLogEntry[];
   let nvr: TestProtectNvr;
   let store: TestStateStore;
 
@@ -416,14 +416,14 @@ describe("doorbell + package camera family construction (suite B)", () => {
     const packageTransition = doorbell.packageCamera.refreshReachability();
 
     assert.deepEqual(packageTransition, { now: false, was: true }, "the package reports its own reachability flip for the fanout diagnostics");
-    assert.equal(motionService?.getCharacteristic(Characteristic.StatusActive).value, false, "the package endpoint write landed on its motion sensor");
+    assert.equal(motionService.getCharacteristic(Characteristic.StatusActive).value, false, "the package endpoint write landed on its motion sensor");
 
     // Restore controller health for any suite that follows.
     nvr.client.connection.isHealthy = true;
     doorbell.refreshReachability();
     doorbell.packageCamera.refreshReachability();
 
-    assert.equal(motionService?.getCharacteristic(Characteristic.StatusActive).value, true, "the restored health reads back active");
+    assert.equal(motionService.getCharacteristic(Characteristic.StatusActive).value, true, "the restored health reads back active");
   });
 
   test("family cleanup unwinds the doorbell and the package together", async () => {

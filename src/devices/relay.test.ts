@@ -14,22 +14,23 @@
  * only makeRelayConfig, TestRelayProjection, the slice keys, the observer count (the base class's universal observers, one per output, plus ledSettings), and the
  * relay-specific reactions are relay-particular.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import { PROTECT_HOMEKIT_REFLECT_DELAY, PROTECT_RELAY_COMMAND_TIMEOUT } from "../settings.ts";
 import type { ProtectRelayConfig, Relay } from "unifi-protect";
+import type { TestClock, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { TestRelayProjection, makeRelayConfig } from "./testing.helpers.ts";
-import { after, afterEach, before, beforeEach, describe, mock, test } from "node:test";
+import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../diagnostics.ts";
-import { PROTECT_RELAY_COMMAND_TIMEOUT } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectRelay } from "./relay.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestAccessory } from "../testing.helpers.ts";
-import type { TestMqttClient } from "homebridge-plugin-utils/testing";
 import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 
 // The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
 // which is the tail rather than the child topic the registration lands on.
@@ -47,12 +48,13 @@ const controllers: AbortController[] = [];
 // and camera suites do; the instance under test runs its real configureHints / configureDevice / spawnObservers paths. Each call builds a fresh store, so an extra build
 // inside a test (the feature-enabled variants) is fully isolated from the beforeEach relay.
 function buildRelay(configOptions: Parameters<typeof makeRelayConfig>[0] = {}, harnessOptions: { userOptions?: string[] } = {}): {
-  accessory: TestAccessory; mqtt: TestMqttClient; relay: ProtectRelay; relayConfig: ProtectRelayConfig; relayProjection: TestRelayProjection; store: TestStateStore;
+  accessory: TestAccessory; clock: TestClock; mqtt: TestMqttClient; relay: ProtectRelay; relayConfig: ProtectRelayConfig; relayProjection: TestRelayProjection;
+  store: TestStateStore;
 } {
 
   const relayConfig = makeRelayConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ relays: [relayConfig] }));
-  const { controller, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
+  const { clock, controller, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
 
   controllers.push(controller);
 
@@ -70,7 +72,7 @@ function buildRelay(configOptions: Parameters<typeof makeRelayConfig>[0] = {}, h
     throw new Error("The MQTT recording double was not installed despite mqtt: true.");
   }
 
-  return { accessory, mqtt, relay, relayConfig, relayProjection: projection, store };
+  return { accessory, clock, mqtt, relay, relayConfig, relayProjection: projection, store };
 }
 
 describe("real ProtectRelay construction and behavior", () => {
@@ -81,6 +83,7 @@ describe("real ProtectRelay construction and behavior", () => {
 
   // The per-test-fresh handles, rebuilt in beforeEach so every test starts from a clean relay, clean recording, and clean wake baseline.
   let accessory: TestAccessory;
+  let clock: TestClock;
   let constructionWakes = 0;
   let mqtt: TestMqttClient;
   let relay: ProtectRelay;
@@ -110,7 +113,7 @@ describe("real ProtectRelay construction and behavior", () => {
 
   beforeEach(async () => {
 
-    ({ accessory, mqtt, relay, relayConfig, relayProjection, store } = buildRelay());
+    ({ accessory, clock, mqtt, relay, relayConfig, relayProjection, store } = buildRelay());
 
     // Settle the observe loops' lazy registration before any test asserts, then snapshot the construction-wake count and reset the window so each test measures only
     // its own pushes.
@@ -369,64 +372,48 @@ describe("real ProtectRelay construction and behavior", () => {
 
   test("a toggle command failure drops the intent, cancels the safety timer, and bounces the tile back to controller truth", async () => {
 
-    mock.timers.enable({ apis: ["setTimeout"] });
+    const output0 = accessory.getServiceById(Service.Switch, outputSubtype(0));
 
-    try {
+    assert.ok(output0, "output 0's switch exists");
 
-      const output0 = accessory.getServiceById(Service.Switch, outputSubtype(0));
+    relayProjection.toggleRejection = new Error("the controller refused the command.");
 
-      assert.ok(output0, "output 0's switch exists");
+    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
 
-      relayProjection.toggleRejection = new Error("the controller refused the command.");
+    assert.deepEqual(relayProjection.toggleCalls, [{ outputId: 0 }], "the command was attempted");
 
-      await output0.getCharacteristic(Characteristic.On).triggerSet(true);
+    // HAP holds the requested (true) value on the characteristic; the deferred reflect then writes the true controller state, which is still off.
+    clock.advance(PROTECT_HOMEKIT_REFLECT_DELAY);
 
-      assert.deepEqual(relayProjection.toggleCalls, [{ outputId: 0 }], "the command was attempted");
+    assert.equal(output0.getCharacteristic(Characteristic.On).value, false, "the deferred bounce restored the tile to the live off state after the failure");
 
-      // HAP holds the requested (true) value on the characteristic; the deferred cosmetic bounce then reflects the true controller state, which is still off.
-      mock.timers.tick(50);
+    // The intent was dropped on failure, so a fresh on tap (rejection cleared) toggles again rather than being suppressed against a stale pending value.
+    relayProjection.toggleRejection = null;
 
-      assert.equal(output0.getCharacteristic(Characteristic.On).value, false, "the deferred bounce restored the tile to the live off state after the failure");
+    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
 
-      // The intent was dropped on failure, so a fresh on tap (rejection cleared) toggles again rather than being suppressed against a stale pending value.
-      relayProjection.toggleRejection = null;
-
-      await output0.getCharacteristic(Characteristic.On).triggerSet(true);
-
-      assert.deepEqual(relayProjection.toggleCalls, [ { outputId: 0 }, { outputId: 0 } ], "the failure dropped the intent, so a fresh tap toggled again");
-    } finally {
-
-      mock.timers.reset();
-    }
+    assert.deepEqual(relayProjection.toggleCalls, [ { outputId: 0 }, { outputId: 0 } ], "the failure dropped the intent, so a fresh tap toggled again");
   });
 
   test("the pending-intent safety timer drops an unconfirmed intent so a later same-direction tap toggles again", async () => {
 
-    mock.timers.enable({ apis: ["setTimeout"] });
+    const output0 = accessory.getServiceById(Service.Switch, outputSubtype(0));
 
-    try {
+    assert.ok(output0, "output 0's switch exists");
 
-      const output0 = accessory.getServiceById(Service.Switch, outputSubtype(0));
+    // Tap on: the intent is recorded, and a same-direction second tap is suppressed while it stands.
+    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
+    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
 
-      assert.ok(output0, "output 0's switch exists");
+    assert.deepEqual(relayProjection.toggleCalls, [{ outputId: 0 }], "the second same-direction tap was suppressed while the intent stood");
 
-      // Tap on: the intent is recorded, and a same-direction second tap is suppressed while it stands.
-      await output0.getCharacteristic(Characteristic.On).triggerSet(true);
-      await output0.getCharacteristic(Characteristic.On).triggerSet(true);
+    // No broadcast ever confirms; the bounded safety timer fires and drops the intent so a lost broadcast cannot wedge the tap decision.
+    clock.advance(PROTECT_RELAY_COMMAND_TIMEOUT);
 
-      assert.deepEqual(relayProjection.toggleCalls, [{ outputId: 0 }], "the second same-direction tap was suppressed while the intent stood");
+    // A fresh on tap now toggles again: the controller value is still off and the stale intent is gone.
+    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
 
-      // No broadcast ever confirms; the bounded safety timer fires and drops the intent so a lost broadcast cannot wedge the tap decision.
-      mock.timers.tick(PROTECT_RELAY_COMMAND_TIMEOUT);
-
-      // A fresh on tap now toggles again: the controller value is still off and the stale intent is gone.
-      await output0.getCharacteristic(Characteristic.On).triggerSet(true);
-
-      assert.deepEqual(relayProjection.toggleCalls, [ { outputId: 0 }, { outputId: 0 } ], "after the safety timer dropped the intent, a fresh tap toggled again");
-    } finally {
-
-      mock.timers.reset();
-    }
+    assert.deepEqual(relayProjection.toggleCalls, [ { outputId: 0 }, { outputId: 0 } ], "after the safety timer dropped the intent, a fresh tap toggled again");
   });
 
   test("an output with a controller-assigned name uses that name; an unnamed output falls back to the 1-based Output N label", () => {

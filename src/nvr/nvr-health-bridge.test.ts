@@ -8,9 +8,9 @@
  * test. Reaching a given state costs publishing the reducer's own thresholds; nothing here imports them, because a suite that reads the thresholds it is meant to
  * exercise proves only that arithmetic agrees with itself.
  *
- * No mocked time anywhere, deliberately: the observer owns no timers (its symptom eviction is lazy, computed inside the reducer on each observation) and its
- * sixty-second window dwarfs any arm's runtime, so real time cannot move a result. That is the difference worth naming against the sibling gate suite, where timing IS
- * the subject and every arm runs under mocked timers.
+ * Time is the bridge's injected test clock, which no arm advances: the observer owns no timers (its symptom eviction is lazy, computed inside the reducer on each
+ * observation), and every symptom is stamped from the same clock the observer measures its window against, so a still clock keeps each arm's symptoms inside the
+ * window. That is the difference worth naming against the sibling gate suite, where timing IS the subject and every arm advances its clock.
  *
  * Each arm builds its own bridge on its own AbortController and aborts it in a finally. That is not only hygiene: the channels are process-global, so the abort is
  * what detaches an arm's subscriptions before the next arm publishes.
@@ -22,6 +22,8 @@
 import type { HttpRequestEndPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload } from "unifi-protect";
 import { describe, test } from "node:test";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
+import type { NvrHealthState } from "./nvr-health.ts";
+import { TestClock } from "homebridge-plugin-utils/testing";
 import type { ThrottleRailSource } from "./nvr-health-bridge.ts";
 import assert from "node:assert/strict";
 import { channels as protectChannels } from "unifi-protect";
@@ -43,9 +45,11 @@ interface BridgeRecorder {
   refreshes: number;
 }
 
-// Build a bridge against recording stubs. Every log level lands in the one collection, so an arm asserting "no lines" is asserting that the bridge said nothing at
-// all rather than nothing at one chosen level - and since the state narration is its entire log surface, the collection IS the narration.
-function buildBridge(options: { address?: string } = {}): { bridge: DiagnosticsHealthBridge; controller: AbortController; recorder: BridgeRecorder } {
+// Build a bridge against recording stubs and a test clock, the caller's when it supplies one. Every log level lands in the one collection, so an arm asserting "no
+// lines" is asserting that the bridge said nothing at all rather than nothing at one chosen level - and since the state narration is its entire log surface, the
+// collection IS the narration.
+function buildBridge(options: { address?: string; clock?: TestClock } = {}): { bridge: DiagnosticsHealthBridge; controller: AbortController;
+  recorder: BridgeRecorder; } {
 
   const controller = new AbortController();
   const recorder: BridgeRecorder = { logLines: [], owned: true, refreshes: 0 };
@@ -58,6 +62,7 @@ function buildBridge(options: { address?: string } = {}): { bridge: DiagnosticsH
 
     actions: { refreshRemovalStability: (): void => { recorder.refreshes++; } },
     address: options.address ?? CONTROLLER_ADDRESS,
+    clock: options.clock ?? new TestClock(),
     log: { debug: sink, error: sink, info: sink, warn: sink },
     ownsCamera: (cameraId: string): boolean => recorder.owned && (cameraId === CAMERA_ID),
     signal: controller.signal
@@ -544,5 +549,55 @@ describe("the health bridge: the repeat-wire guard", () => {
 
       controller.abort();
     }
+  });
+});
+
+describe("the health bridge: the clock", () => {
+
+  test("every weighed symptom carries the injected clock's instant, on a clock seeded far from the system's", () => {
+
+    // The observer measures its window back from the injected clock's now(), and this clock reads 2100-01-01, decades past any instant the suite runs at. A symptom
+    // stamped from the system clock instead would land decades before the window opens and be evicted on arrival, so its feed would leave the state where it was. The
+    // throttle rails are not driven here: their symptoms carry no weight, so their instant cannot reach the state.
+    const clock = new TestClock(4102444800000);
+
+    // Open a bridge on that clock, run one feed's publishes, and read the state they leave. Each feed gets its own bridge, aborted before the next one publishes.
+    const stateAfter = (publish: () => void): NvrHealthState => {
+
+      const { bridge, controller } = buildBridge({ clock });
+
+      try {
+
+        bridge.notePhase("running");
+        publish();
+
+        return bridge.state;
+      } finally {
+
+        controller.abort();
+      }
+    };
+
+    assert.equal(stateAfter(() => publishRequests(5, { ok: false })), "degraded", "request failures carry the clock's instant and are weighed");
+
+    assert.equal(stateAfter(() => {
+
+      for(let published = 0; published < 5; published++) {
+
+        publishRecoveryStarted();
+      }
+    }), "degraded", "livestream stalls carry the clock's instant and are weighed");
+
+    // The failures open the arm at degraded, and the recoveries bring it back under the release bound only when they too are inside the window.
+    assert.equal(stateAfter(() => {
+
+      publishRequests(5, { ok: false });
+
+      for(let published = 0; published < 3; published++) {
+
+        protectChannels.livestreamRecoveryRecovered.publish({ cameraId: CAMERA_ID, downtimeMs: 3000, key: "episode-key" } satisfies
+          LivestreamRecoveryRecoveredPayload);
+      }
+    }), "healthy", "livestream recoveries carry the clock's instant and are weighed");
   });
 });

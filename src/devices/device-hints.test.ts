@@ -57,7 +57,7 @@ const SENSOR_MAC = "74ACB9000401";
 // userOptions thread into the REAL FeatureOptions engine, so the supplied Enable.* / Disable.* strings - and only those - move the hints off their defaults. There is no
 // projection recorder, no MQTT, and no observer wiring: configureHints reads only feature options (resolved against the carrier's MAC), so a plain TestSensorProjection
 // supplies the read-through identity and nothing more.
-function buildHintsDevice(harnessOptions: { userOptions?: string[] } = {}): { accessory: TestAccessory; device: TestBaseDevice; logEntries: TestLogEntry[] } {
+function buildHintsDevice(harnessOptions: { userOptions?: string[] } = {}): { accessory: TestAccessory; device: TestBaseDevice; logEntries: readonly TestLogEntry[] } {
 
   const sensorConfig = makeSensorConfig();
   const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));

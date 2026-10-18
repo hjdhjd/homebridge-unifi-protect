@@ -162,7 +162,7 @@ export function smartDetectLabel(value: string): string {
   return SMART_DETECT_LABELS[value] ?? humanizeDetectionType(value);
 }
 
-/* eslint-disable @stylistic/max-len */
+/* eslint-disable @stylistic/max-len -- The catalog's category and option entries are one-line records, kept unwrapped by intent. */
 
 // Feature option categories.
 export const featureOptionCategories: FeatureCategoryEntry<ProtectCategoryMeta>[] = [

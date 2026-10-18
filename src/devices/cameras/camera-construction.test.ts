@@ -16,12 +16,13 @@
  * construction assertion is vacuity-proofed by the SAME subscription later observing the positive push wake. The subscription is removed once, in the suite's
  * unconditional teardown, because a leaked subscriber would flip hasSubscribers for every later test in the process.
  */
-import { CAMERA_FIXTURES, G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
+import { CAMERA_FIXTURES, FIXTURE_HOST, FIXTURE_RTSPS_PORT, G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import type { CameraFixture, EntryProjection } from "../../camera.fixtures.ts";
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import type { TestAccessory, TestStreamingDelegate, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
+import { TestLivestreamProcessFactory, settle } from "homebridge-plugin-utils/testing";
 import { after, before, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
@@ -30,6 +31,7 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { Resolution } from "homebridge";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { buildChannelProfile } from "../../media/resolution.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
@@ -148,8 +150,12 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     // setServiceName would write ConfiguredName / Name against undefined characteristic statics and silently pollute the double with undefined-keyed entries.
     for(const service of accessory.services) {
 
-      assert.ok(service.characteristics.every((characteristic) => characteristic.type !== undefined),
-        "every characteristic on " + service.displayName + " is keyed by a real kind");
+      assert.ok(service.characteristics.every((characteristic) => {
+
+        const kind: unknown = characteristic.type;
+
+        return kind !== undefined;
+      }), "every characteristic on " + service.displayName + " is keyed by a real kind");
     }
   });
 
@@ -370,5 +376,43 @@ describe("the streaming-delegate construction gate", () => {
 
     assert.equal(factory.createCalls.length, 0, "construction never reached the factory");
     assert.equal(camera.stream, undefined, "the camera holds no delegate");
+  });
+});
+
+describe("the RTSP debug livestream", () => {
+
+  // The hand-off the compiler cannot see: the camera reaches its platform through the NVR double's cast, so a platform double that lacked the livestream-process
+  // factory would still compile and the adapter would meet an undefined factory only at runtime. A camera with the debug option on, a standing streaming delegate,
+  // and an RTSP-enabled channel builds the adapter's process through the platform's factory, and the factory's record shows the camera's own FFmpeg options arrived
+  // with it.
+  test("a camera with the RTSP debug option builds its livestream's process through the platform's factory with the camera's own FFmpeg options", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const livestreamProcessFactory = new TestLivestreamProcessFactory();
+    const { controller, nvr } = makeTestNvr({ livestreamProcessFactory, store, userOptions: ["Enable.Debug.Video.Timeshift.UseRtsp"] });
+    const accessory = makeTestAccessory("RTSP Debug Camera", "44444444-5555-6666-7777-888888888888");
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory,
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+
+    // The debug path needs the streaming delegate, which the floating configure pass stands up, so the pass settles before the livestream is requested.
+    await settle();
+
+    const channel = G2_PRO_CHANNELS.find((candidate) => candidate.isRtspEnabled);
+
+    assert.ok(camera.stream, "the camera stood up its streaming delegate");
+    assert.ok(channel, "the G2 Pro fixture carries an RTSP-enabled channel for the debug path to dial");
+
+    const subscription = camera.livestream(buildChannelProfile(channel, { rtspPort: FIXTURE_RTSPS_PORT, urlHost: FIXTURE_HOST }));
+
+    assert.equal(livestreamProcessFactory.createCalls.length, 1, "the camera built the adapter's process through the platform's factory, exactly once");
+    assert.equal(livestreamProcessFactory.createCalls[0]?.options, camera.stream.ffmpegOptions, "the factory received the camera's own FFmpeg options");
+
+    await subscription[Symbol.asyncDispose]();
+    camera.cleanup();
+
+    await settle();
+
+    controller.abort();
   });
 });

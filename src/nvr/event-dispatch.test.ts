@@ -11,12 +11,13 @@
  * suites already established; the instance under test is the production class.
  */
 import type { AuthMethod, Camera, ProtectEventMetadata, TypedEvent } from "unifi-protect";
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import { PROTECT_DOORBELL_AUTHSENSOR_DURATION, PROTECT_DOORBELL_TRIGGER_DURATION } from "../settings.ts";
 import { ProtectReservedNames, packageCameraId } from "../types.ts";
 import { TestCameraProjection, makeCameraConfig } from "../devices/testing.helpers.ts";
-import { describe, mock, test } from "node:test";
+import { TestClock, settle } from "homebridge-plugin-utils/testing";
+import { describe, test } from "node:test";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
-import { PROTECT_DOORBELL_AUTHSENSOR_DURATION } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
 import type { ProtectDevice } from "../devices/device.ts";
@@ -152,7 +153,7 @@ const makeDispatch = (options: DispatchOptions = {}): { dispatch: RecordingDispa
     hasFeature,
     log,
     mqtt: { publishGuarded },
-    platform: { api: { hap: {} }, config: {} },
+    platform: { api: { hap: {} }, clock: new TestClock(), config: {} },
     ufp: { mac: "AA:BB:CC:DD:EE:FF" }
   };
 
@@ -477,7 +478,7 @@ describe("access door_bell delivery (real ProtectEventDispatch.accessEventHandle
     // all the routing needs.
     const noop = (): void => { /* swallow log output in tests */ };
     const log = { debug: noop, error: noop, info: noop, warn: noop };
-    const nvr = { log, platform: { api: { hap: {} }, config: {} } };
+    const nvr = { log, platform: { api: { hap: {} }, clock: new TestClock(), config: {} } };
     const dispatch = new DoorbellRoutingDispatch(nvr as unknown as ProtectNvr);
     const camera = { id: "cam-access" } as unknown as ProtectCamera;
 
@@ -501,7 +502,7 @@ const makeTamperDispatch = (accessory: TestAccessory): { camera: ProtectCamera; 
   const noop = (): void => { /* swallow log output in tests */ };
   const log = { debug: noop, error: noop, info: noop, warn: noop };
   const hap = { Characteristic: { StatusTampered: Characteristic.StatusTampered }, Service: { MotionSensor: Service.MotionSensor } };
-  const nvr = { log, platform: { api: { hap }, config: {} } };
+  const nvr = { log, platform: { api: { hap }, clock: new TestClock(), config: {} } };
   const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
   const camera = { accessory, id: "cam-tamper", isTampered: false, log };
 
@@ -555,47 +556,40 @@ describe("camera tamper delivery (real ProtectEventDispatch.tamperEventHandler)"
 // Build a real ProtectEventDispatch wired to the ContactSensor / ContactSensorState HAP double and an mqtt publish spy, plus a camera stand-in carrying the supplied
 // TestAccessory. The auth delivery trips the doorbell's authentication contact sensor, so these drive the real method against real HAP-double services rather than
 // recording the routing. Only the surface authEventHandler touches is mocked: the ContactSensor / ContactSensorState identities on hap, the camera's accessory / id / log
-// / ufp.mac, and an mqtt.publishGuarded spy whose calls land in `published`.
-const makeAuthDispatch = (accessory: TestAccessory): { camera: ProtectCamera; dispatch: ProtectEventDispatch; published: unknown[][] } => {
+// / ufp.mac, an mqtt.publishGuarded spy whose calls land in `published`, and the test clock the reset timer arms on.
+const makeAuthDispatch = (accessory: TestAccessory): { camera: ProtectCamera; clock: TestClock; dispatch: ProtectEventDispatch; published: unknown[][] } => {
 
+  const clock = new TestClock();
   const published: unknown[][] = [];
   const noop = (): void => { /* swallow log output in tests */ };
   const log = { debug: noop, error: noop, info: noop, warn: noop };
   const hap = { Characteristic: { ContactSensorState: Characteristic.ContactSensorState }, Service: { ContactSensor: Service.ContactSensor } };
   const publishGuarded = (...args: unknown[]): void => { published.push(args); };
-  const nvr = { log, mqtt: { publishGuarded }, platform: { api: { hap }, config: {} } };
+  const nvr = { log, mqtt: { publishGuarded }, platform: { api: { hap }, clock, config: {} } };
   const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
   const camera = { accessory, id: "cam-auth", log, mac: "AA:BB:CC:DD:EE:FF", ufp: { mac: "AA:BB:CC:DD:EE:FF" } };
 
-  return { camera: camera as unknown as ProtectCamera, dispatch, published };
+  return { camera: camera as unknown as ProtectCamera, clock, dispatch, published };
 };
 
 describe("doorbell auth delivery (real ProtectEventDispatch.authEventHandler)", () => {
 
   test("a recognized fingerprint trips the auth contact sensor, then resets it after the window", () => {
 
-    mock.timers.enable({ apis: ["setTimeout"] });
+    const accessory = makeTestAccessory();
+    const contact = accessory.addService(Service.ContactSensor, "Authenticated", ProtectReservedNames.CONTACT_AUTHSENSOR);
+    const { camera, clock, dispatch } = makeAuthDispatch(accessory);
 
-    try {
+    dispatch.authEventHandler(camera, "fingerprint", { fingerprint: { ulpId: "ulp-1" } });
 
-      const accessory = makeTestAccessory();
-      const contact = accessory.addService(Service.ContactSensor, "Authenticated", ProtectReservedNames.CONTACT_AUTHSENSOR);
-      const { camera, dispatch } = makeAuthDispatch(accessory);
+    assert.equal(contact.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "a recognized fingerprint trips the sensor to its authenticated (not-detected) state");
 
-      dispatch.authEventHandler(camera, "fingerprint", { fingerprint: { ulpId: "ulp-1" } });
+    // Advancing past the auth window fires the timer that returns the sensor to its resting (detected / not-authenticated) state.
+    clock.advance(PROTECT_DOORBELL_AUTHSENSOR_DURATION);
 
-      assert.equal(contact.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
-        "a recognized fingerprint trips the sensor to its authenticated (not-detected) state");
-
-      // Advancing past the auth window fires the timer that returns the sensor to its resting (detected / not-authenticated) state.
-      mock.timers.tick(PROTECT_DOORBELL_AUTHSENSOR_DURATION);
-
-      assert.equal(contact.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
-        "the sensor resets to its resting state after the auth window");
-    } finally {
-
-      mock.timers.reset();
-    }
+    assert.equal(contact.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the sensor resets to its resting state after the auth window");
   });
 
   test("a recognized NFC card trips the sensor and publishes the card credential to MQTT", () => {
@@ -655,45 +649,39 @@ describe("doorbell auth delivery (real ProtectEventDispatch.authEventHandler)", 
 
   test("a second scan before the window cancels the pending reset rather than racing it", () => {
 
-    mock.timers.enable({ apis: ["setTimeout"] });
+    const accessory = makeTestAccessory();
+    const contact = accessory.addService(Service.ContactSensor, "Authenticated", ProtectReservedNames.CONTACT_AUTHSENSOR);
+    const { camera, clock, dispatch } = makeAuthDispatch(accessory);
 
-    try {
+    // First scan trips the sensor and schedules a reset at PROTECT_DOORBELL_AUTHSENSOR_DURATION.
+    dispatch.authEventHandler(camera, "fingerprint", { fingerprint: { ulpId: "ulp-1" } });
 
-      const accessory = makeTestAccessory();
-      const contact = accessory.addService(Service.ContactSensor, "Authenticated", ProtectReservedNames.CONTACT_AUTHSENSOR);
-      const { camera, dispatch } = makeAuthDispatch(accessory);
+    // Advance to just before that reset would fire, then scan again - which must clear the pending reset and schedule a fresh one.
+    clock.advance(PROTECT_DOORBELL_AUTHSENSOR_DURATION - 1);
+    dispatch.authEventHandler(camera, "fingerprint", { fingerprint: { ulpId: "ulp-1" } });
 
-      // First scan trips the sensor and schedules a reset at PROTECT_DOORBELL_AUTHSENSOR_DURATION.
-      dispatch.authEventHandler(camera, "fingerprint", { fingerprint: { ulpId: "ulp-1" } });
+    // Crossing the first window's original deadline must NOT reset: the first timer was cleared, so the sensor is still authenticated one tick past where it would
+    // have fired.
+    clock.advance(1);
+    assert.equal(contact.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the cancelled reset does not fire at the first window's deadline");
 
-      // Advance to just before that reset would fire, then scan again - which must clear the pending reset and schedule a fresh one.
-      mock.timers.tick(PROTECT_DOORBELL_AUTHSENSOR_DURATION - 1);
-      dispatch.authEventHandler(camera, "fingerprint", { fingerprint: { ulpId: "ulp-1" } });
-
-      // Crossing the first window's original deadline must NOT reset: the first timer was cleared, so the sensor is still authenticated one tick past where it would
-      // have fired.
-      mock.timers.tick(1);
-      assert.equal(contact.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
-        "the cancelled reset does not fire at the first window's deadline");
-
-      // The fresh timer fires a full window after the second scan, resetting exactly once.
-      mock.timers.tick(PROTECT_DOORBELL_AUTHSENSOR_DURATION);
-      assert.equal(contact.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
-        "the rescheduled reset fires a full window after the second scan");
-    } finally {
-
-      mock.timers.reset();
-    }
+    // The fresh timer fires a full window after the second scan, resetting exactly once.
+    clock.advance(PROTECT_DOORBELL_AUTHSENSOR_DURATION);
+    assert.equal(contact.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the rescheduled reset fires a full window after the second scan");
   });
 });
 
 // Build a real ProtectEventDispatch wired to the HAP doubles motionEventDelivery touches, plus a camera stand-in carrying the supplied TestAccessory and the motion
 // hints the delivery reads. The info log is captured (formatted through util.format, as the real Homebridge logger renders its printf-style calls) so the assertions
 // can pin the coalescing of simultaneous types and the strictly-grows enrichment dedup; mqtt.publishGuarded calls land in `published`. Smart detection and motion
-// logging are enabled by default so a test names only the axis it varies. Every delivery arms a motionDuration reset timer, so the suite runs under mock timers.
-const makeMotionDispatch = (accessory: TestAccessory, hints: Record<string, unknown> = {}): { camera: ProtectCamera; dispatch: ProtectEventDispatch;
+// logging are enabled by default so a test names only the axis it varies. Every delivery arms a motionDuration reset timer on the returned test clock, which a test
+// advances to close a window and otherwise leaves unfired.
+const makeMotionDispatch = (accessory: TestAccessory, hints: Record<string, unknown> = {}): { camera: ProtectCamera; clock: TestClock; dispatch: ProtectEventDispatch;
   logged: string[]; published: unknown[][]; } => {
 
+  const clock = new TestClock();
   const logged: string[] = [];
   const published: unknown[][] = [];
   const noop = (): void => { /* swallow non-info log output in tests */ };
@@ -705,7 +693,7 @@ const makeMotionDispatch = (accessory: TestAccessory, hints: Record<string, unkn
     Service: { ContactSensor: Service.ContactSensor, MotionSensor: Service.MotionSensor, OccupancySensor: Service.OccupancySensor, Switch: Service.Switch }
   };
   const publishGuarded = (...args: unknown[]): void => { published.push(args); };
-  const nvr = { log, mqtt: { publishGuarded }, platform: { api: { hap }, config: {} } };
+  const nvr = { log, mqtt: { publishGuarded }, platform: { api: { hap }, clock, config: {} } };
   const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
   const camera = {
 
@@ -717,26 +705,12 @@ const makeMotionDispatch = (accessory: TestAccessory, hints: Record<string, unkn
     ufp: { mac: "AA:BB:CC:DD:EE:FF" }
   };
 
-  return { camera: camera as unknown as ProtectCamera, dispatch, logged, published };
-};
-
-// Run a test body under mock setTimeout so each delivery's motionDuration reset timer is controllable and never lingers on the real loop after the test.
-const withMockTimers = (body: () => void): void => {
-
-  mock.timers.enable({ apis: ["setTimeout"] });
-
-  try {
-
-    body();
-  } finally {
-
-    mock.timers.reset();
-  }
+  return { camera: camera as unknown as ProtectCamera, clock, dispatch, logged, published };
 };
 
 describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler)", () => {
 
-  test("coalesces simultaneous plain object types onto a single log line", () => withMockTimers(() => {
+  test("coalesces simultaneous plain object types onto a single log line", () => {
 
     const accessory = makeTestAccessory();
 
@@ -748,9 +722,9 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
 
     assert.deepEqual(logged, [ "Motion detected.", "Smart motion detected: Animal, Face, Person." ],
       "the three simultaneous detections coalesce onto one line rather than three");
-  }));
+  });
 
-  test("logs a vehicle bare first, then re-logs it once as its metadata fills in", () => withMockTimers(() => {
+  test("logs a vehicle bare first, then re-logs it once as its metadata fills in", () => {
 
     const accessory = makeTestAccessory();
 
@@ -771,9 +745,9 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
       "Smart motion detected: Vehicle.",
       "Smart motion detected: Vehicle (color: black [68% confidence], vehicleType: suv [96% confidence])."
     ], "the bare vehicle line is followed by exactly one enriched line");
-  }));
+  });
 
-  test("does not re-log a vehicle whose metadata has not grown", () => withMockTimers(() => {
+  test("does not re-log a vehicle whose metadata has not grown", () => {
 
     const accessory = makeTestAccessory();
 
@@ -788,9 +762,9 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
 
     assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")), ["Smart motion detected: Vehicle (color: black [68% confidence])."],
       "the identical retriggers re-arm the timer but do not re-log the enriched line");
-  }));
+  });
 
-  test("does not re-log a plain detection that retriggers within the motion window", () => withMockTimers(() => {
+  test("does not re-log a plain detection that retriggers within the motion window", () => {
 
     const accessory = makeTestAccessory();
 
@@ -803,9 +777,9 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
 
     assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")), ["Smart motion detected: Person."],
       "the second person detection within the window re-arms the timer but does not re-log");
-  }));
+  });
 
-  test("trips the configured license-plate contact sensor and renders the plate into the log line", () => withMockTimers(() => {
+  test("trips the configured license-plate contact sensor and renders the plate into the log line", () => {
 
     const accessory = makeTestAccessory();
 
@@ -820,9 +794,35 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
       "the matching plate contact sensor trips on the detection");
     assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
       ["Smart motion detected: Vehicle (license plate: ABC123 [98% confidence])."], "the plate is rendered into the enriched log line");
-  }));
+  });
 
-  test("suppresses all smart-detection logging when motion logging is disabled, but still trips the motion sensor", () => withMockTimers(() => {
+  test("resets the license-plate contact sensor when its motion window ends", () => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const plateSensor = accessory.addService(Service.ContactSensor, "Plate ABC123", ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + ".ABC123");
+    const { camera, clock, dispatch } = makeMotionDispatch(accessory, { motionDuration: 10 });
+
+    dispatch.motionEventHandler(camera, [], { detectedThumbnails: [{ confidence: 98, name: "ABC123", type: "vehicle" }] });
+
+    assert.equal(plateSensor.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the matching plate contact sensor trips on the detection");
+
+    // The window is bounded on both sides: one tick short of the motion duration the plate sensor still holds, and the tick that completes it resets the sensor.
+    clock.advance((10 * 1000) - 1);
+
+    assert.equal(plateSensor.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the plate sensor holds until its motion window ends");
+
+    clock.advance(1);
+
+    assert.equal(plateSensor.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the plate sensor resets to its resting state when its motion window ends");
+  });
+
+  test("suppresses all smart-detection logging when motion logging is disabled, but still trips the motion sensor", () => {
 
     const accessory = makeTestAccessory();
     const motion = accessory.addService(Service.MotionSensor, "Motion");
@@ -832,29 +832,29 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
 
     assert.deepEqual(logged, [], "no lines are logged when motion logging is disabled");
     assert.equal(motion.getCharacteristic(Characteristic.MotionDetected).value, true, "the motion sensor still trips regardless of the logging hint");
-  }));
+  });
 
-  test("re-logs the enriched line in a fresh motion window after the reset timer fires", () => withMockTimers(() => {
+  test("re-logs the enriched line in a fresh motion window after the reset timer fires", () => {
 
     const accessory = makeTestAccessory();
 
     accessory.addService(Service.MotionSensor, "Motion");
 
-    const { camera, dispatch, logged } = makeMotionDispatch(accessory, { motionDuration: 10 });
+    const { camera, clock, dispatch, logged } = makeMotionDispatch(accessory, { motionDuration: 10 });
     const thumbnail = { detectedThumbnails: [{ attributes: { color: { confidence: 68, val: "black" } }, type: "vehicle" }] };
 
     dispatch.motionEventHandler(camera, [], thumbnail);
 
     // Advance past the motion window so the reset timer clears the per-type tracker, then deliver the same detection again - which must log afresh.
-    mock.timers.tick(10 * 1000);
+    clock.advance(10 * 1000);
     dispatch.motionEventHandler(camera, [], thumbnail);
 
     assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
       [ "Smart motion detected: Vehicle (color: black [68% confidence]).", "Smart motion detected: Vehicle (color: black [68% confidence])." ],
       "the detection re-logs once per motion window");
-  }));
+  });
 
-  test("logs a vehicle once when it arrives bare and enriched in the same delivery", () => withMockTimers(() => {
+  test("logs a vehicle once when it arrives bare and enriched in the same delivery", () => {
 
     const accessory = makeTestAccessory();
 
@@ -870,9 +870,9 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
       ["Smart motion detected: Vehicle (color: black [68% confidence], vehicleType: suv [96% confidence])."],
       "the vehicle logs once enriched, never also as a bare coalesced line");
-  }));
+  });
 
-  test("in one delivery coalesces plain types and logs a rich type on its own enriched line", () => withMockTimers(() => {
+  test("in one delivery coalesces plain types and logs a rich type on its own enriched line", () => {
 
     const accessory = makeTestAccessory();
 
@@ -888,9 +888,9 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
       "Smart motion detected: Vehicle (color: black [68% confidence], vehicleType: suv [96% confidence]).",
       "Smart motion detected: Person."
     ], "the plain person coalesces on its own line and the enriched vehicle is not also listed there");
-  }));
+  });
 
-  test("publishes the per-type MQTT state once and the metadata topic only as it grows", () => withMockTimers(() => {
+  test("publishes the per-type MQTT state once and the metadata topic only as it grows", () => {
 
     const accessory = makeTestAccessory();
 
@@ -911,9 +911,9 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     assert.equal(metadata.length, 1, "the metadata publishes once and not again on an identical retrigger");
     assert.deepEqual(JSON.parse(String(metadata[0]?.[1])), { color: { confidence: 68, val: "black" }, type: "vehicle" },
       "the metadata payload matches the enricher output");
-  }));
+  });
 
-  test("with motion logging off, publishes MQTT state and metadata but logs nothing", () => withMockTimers(() => {
+  test("with motion logging off, publishes MQTT state and metadata but logs nothing", () => {
 
     const accessory = makeTestAccessory();
 
@@ -930,9 +930,9 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     assert.ok(topics.some(topic => topic.endsWith("/motion/smart/vehicle")), "the per-type state publishes on MQTT regardless of the logging hint");
     assert.ok(topics.some(topic => topic.endsWith("/motion/smart/vehicle/metadata")), "the metadata publishes on MQTT regardless of the logging hint");
     assert.deepEqual(logged, [], "but nothing is logged when motion logging is disabled");
-  }));
+  });
 
-  test("clearing a device's timers also clears its smart-detect log high-water marks", () => withMockTimers(() => {
+  test("clearing a device's timers also clears its smart-detect log high-water marks", () => {
 
     const accessory = makeTestAccessory();
 
@@ -950,9 +950,9 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     assert.deepEqual(logged.filter(line => line.startsWith("Smart motion detected")),
       [ "Smart motion detected: Vehicle (color: black [68% confidence]).", "Smart motion detected: Vehicle (color: black [68% confidence])." ],
       "after the device's timers are cleared, the next detection logs afresh rather than being suppressed by a stale high-water mark");
-  }));
+  });
 
-  test("trips occupancy, its MQTT topic, and its log from a thumbnail-only smart detection", () => withMockTimers(() => {
+  test("trips occupancy, its MQTT topic, and its log from a thumbnail-only smart detection", () => {
 
     const accessory = makeTestAccessory();
 
@@ -968,9 +968,9 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "a thumbnail-only person detection trips occupancy");
     assert.ok(published.some(entry => (String(entry[0]) === "AA:BB:CC:DD:EE:FF/occupancy") && (entry[1] === "true")), "the occupancy MQTT topic publishes \"true\"");
     assert.ok(logged.includes("Occupancy detected: Person."), "the occupancy log names the thumbnail-derived type rather than rendering an empty list");
-  }));
+  });
 
-  test("does not trip occupancy for a smart detection outside the configured occupancy set", () => withMockTimers(() => {
+  test("does not trip occupancy for a smart detection outside the configured occupancy set", () => {
 
     const accessory = makeTestAccessory();
 
@@ -983,9 +983,9 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     dispatch.motionEventHandler(camera, [], { detectedThumbnails: [{ type: "vehicle" }] });
 
     assert.notEqual(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "a detection outside the occupancy set leaves occupancy clear");
-  }));
+  });
 
-  test("with smart detection off, bare motion still trips occupancy", () => withMockTimers(() => {
+  test("with smart detection off, bare motion still trips occupancy", () => {
 
     const accessory = makeTestAccessory();
 
@@ -998,9 +998,38 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     dispatch.motionEventHandler(camera, []);
 
     assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "bare motion trips occupancy when smart detection is disabled");
-  }));
+  });
 
-  test("logs and publishes two simultaneous same-type detections, keyed by detection identity", () => withMockTimers(() => {
+  test("resets occupancy, publishes its MQTT reset, and logs it when the occupancy window ends", () => {
+
+    const accessory = makeTestAccessory();
+
+    accessory.addService(Service.MotionSensor, "Motion");
+
+    const occupancy = accessory.addService(Service.OccupancySensor, "Occupancy");
+    const { camera, clock, dispatch, logged, published } = makeMotionDispatch(accessory, { motionDuration: 10, occupancyDuration: 30, smartDetect: false });
+    const occupancyPublishes = (): unknown[] => published.filter(entry => String(entry[0]) === "AA:BB:CC:DD:EE:FF/occupancy").map(entry => entry[1]);
+
+    // The occupancy window outlasts the motion window here, so the motion reset that fires along the way leaves occupancy held.
+    dispatch.motionEventHandler(camera, []);
+
+    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "bare motion trips occupancy");
+    assert.deepEqual(occupancyPublishes(), ["true"], "the occupancy topic publishes \"true\" when the window opens");
+
+    // The window is bounded on both sides: one tick short of the occupancy duration the sensor still holds, and the tick that completes it resets the sensor.
+    clock.advance((30 * 1000) - 1);
+
+    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "occupancy holds until its window ends");
+    assert.deepEqual(occupancyPublishes(), ["true"], "the occupancy topic publishes no reset while its window is open");
+
+    clock.advance(1);
+
+    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, false, "occupancy resets when its window ends");
+    assert.deepEqual(occupancyPublishes(), [ "true", "false" ], "the occupancy topic publishes \"false\" once when its window ends");
+    assert.equal(logged.at(-1), "Occupancy no longer detected.", "the occupancy reset is logged");
+  });
+
+  test("logs and publishes two simultaneous same-type detections, keyed by detection identity", () => {
 
     const accessory = makeTestAccessory();
 
@@ -1019,21 +1048,21 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
       "two distinct same-type detections each log their own enriched line");
     assert.equal(published.filter(entry => String(entry[0]).endsWith("/motion/smart/vehicle/metadata")).length, 2,
       "two distinct same-type detections each publish their own metadata");
-  }));
+  });
 
-  test("re-logs the SAME identity in a fresh window after the type window closes and sweeps its mark", () => withMockTimers(() => {
+  test("re-logs the SAME identity in a fresh window after the type window closes and sweeps its mark", () => {
 
     const accessory = makeTestAccessory();
 
     accessory.addService(Service.MotionSensor, "Motion");
 
-    const { camera, dispatch, logged, published } = makeMotionDispatch(accessory, { motionDuration: 10 });
+    const { camera, clock, dispatch, logged, published } = makeMotionDispatch(accessory, { motionDuration: 10 });
     const thumbnail = { detectedThumbnails: [{ attributes: { color: { confidence: 68, val: "black" } }, objectId: "obj-1", type: "vehicle" }] };
 
     dispatch.motionEventHandler(camera, [], thumbnail);
 
     // Close the type window: the reset timer fires and must sweep the identity-suffixed high-water mark under the type boundary, not only the bare type key.
-    mock.timers.tick(10 * 1000);
+    clock.advance(10 * 1000);
 
     // The same identity with the same attribute count in a fresh window must log and publish again - an implementation that swept only the bare type key would leave the
     // identity mark latched and suppress this.
@@ -1043,16 +1072,18 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
       "the same identity re-logs in a fresh window because the window-close swept its high-water mark");
     assert.equal(published.filter(entry => String(entry[0]).endsWith("/motion/smart/vehicle/metadata")).length, 2,
       "the same identity re-publishes its metadata in a fresh window");
-  }));
+  });
 });
 
-// Build a real ProtectEventDispatch plus a factory for camera stand-ins that share its timers and mqtt spy, for the removal-settle and sibling-window tests. Each camera
-// the factory builds carries its own accessory with a MotionSensor (and an OccupancySensor when asked), the motion hints the delivery reads, and a caller-chosen id/mac -
-// so a parent (id === mac, as in production) and its package camera (id === packageCameraId(mac), same mac) can arm independently-keyed windows on one shared MQTT topic.
-// smartDetect is off so a bare motionEventHandler delivery trips both the bare-motion window and, when an occupancy service exists, the occupancy window.
-const makeRetireDispatch = (): { dispatch: ProtectEventDispatch; makeCam: (id: string, mac: string, options?: { occupancy?: boolean }) => ProtectCamera;
+// Build a real ProtectEventDispatch plus a factory for camera stand-ins that share its timers, its test clock, and its mqtt spy, for the removal-settle and
+// sibling-window tests. Each camera the factory builds carries its own accessory with a MotionSensor (and an OccupancySensor when asked), the motion hints the delivery
+// reads, and a caller-chosen id/mac - so a parent (id === mac, as in production) and its package camera (id === packageCameraId(mac), same mac) can arm
+// independently-keyed windows on one shared MQTT topic. smartDetect is off so a bare motionEventHandler delivery trips both the bare-motion window and, when an occupancy
+// service exists, the occupancy window.
+const makeRetireDispatch = (): { clock: TestClock; dispatch: ProtectEventDispatch; makeCam: (id: string, mac: string, options?: { occupancy?: boolean }) => ProtectCamera;
   published: unknown[][]; } => {
 
+  const clock = new TestClock();
   const published: unknown[][] = [];
   const noop = (): void => { /* swallow log output in tests */ };
   const log = { debug: noop, error: noop, info: noop, warn: noop };
@@ -1063,7 +1094,7 @@ const makeRetireDispatch = (): { dispatch: ProtectEventDispatch; makeCam: (id: s
     Service: { ContactSensor: Service.ContactSensor, MotionSensor: Service.MotionSensor, OccupancySensor: Service.OccupancySensor, Switch: Service.Switch }
   };
   const publishGuarded = (...args: unknown[]): void => { published.push(args); };
-  const nvr = { log, mqtt: { publishGuarded }, platform: { api: { hap }, config: {} } };
+  const nvr = { log, mqtt: { publishGuarded }, platform: { api: { hap }, clock, config: {} } };
   const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
   const makeCam = (id: string, mac: string, options: { occupancy?: boolean } = {}): ProtectCamera => {
 
@@ -1080,7 +1111,7 @@ const makeRetireDispatch = (): { dispatch: ProtectEventDispatch; makeCam: (id: s
       ufp: { mac } } as unknown as ProtectCamera;
   };
 
-  return { dispatch, makeCam, published };
+  return { clock, dispatch, makeCam, published };
 };
 
 // The "false" publishes a retire landed on a given MQTT topic tail, read back from the mqtt spy tuples ([composed {mac}/{topic} tail, payload]).
@@ -1093,9 +1124,9 @@ describe("device retirement settle (real ProtectEventDispatch.retireDevice)", ()
 
   const mac = "AA:BB:CC:DD:EE:FF";
 
-  test("settles the latched motion and occupancy topics once each, then reclaims the timers", () => withMockTimers(() => {
+  test("settles the latched motion and occupancy topics once each, then reclaims the timers", () => {
 
-    const { dispatch, makeCam, published } = makeRetireDispatch();
+    const { clock, dispatch, makeCam, published } = makeRetireDispatch();
     const camera = makeCam(mac, mac, { occupancy: true });
 
     // Arm both the bare-motion window and the occupancy window (bare motion trips occupancy with smart detection off), latching both topics "true".
@@ -1108,14 +1139,14 @@ describe("device retirement settle (real ProtectEventDispatch.retireDevice)", ()
     assert.equal(falsePublishes(published, "occupancy").length, 1, "the occupancy topic settles to \"false\" exactly once on retirement");
 
     // The reset timers were cleared, not fired: advancing well past both durations produces no further publish and the device holds no inflight motion.
-    mock.timers.tick(60 * 1000);
+    clock.advance(60 * 1000);
 
     assert.equal(falsePublishes(published, "motion").length, 1, "no stale motion reset fires after the timers were reclaimed");
     assert.equal(falsePublishes(published, "occupancy").length, 1, "no stale occupancy reset fires after the timers were reclaimed");
     assert.equal(dispatch.hasInflightMotion(mac), false, "the device holds no inflight motion timer after retirement");
-  }));
+  });
 
-  test("collapses the parent and package cameras' shared motion topic to a single terminal publish", () => withMockTimers(() => {
+  test("collapses the parent and package cameras' shared motion topic to a single terminal publish", () => {
 
     const { dispatch, makeCam, published } = makeRetireDispatch();
     const parent = makeCam(mac, mac);
@@ -1129,9 +1160,9 @@ describe("device retirement settle (real ProtectEventDispatch.retireDevice)", ()
     dispatch.retireDevice(parent);
 
     assert.equal(falsePublishes(published, "motion").length, 1, "the shared motion topic settles to \"false\" exactly once, never twice, when both windows are inflight");
-  }));
+  });
 
-  test("settles the shared motion topic when ONLY the package camera's window is inflight", () => withMockTimers(() => {
+  test("settles the shared motion topic when ONLY the package camera's window is inflight", () => {
 
     const { dispatch, makeCam, published } = makeRetireDispatch();
     const parent = makeCam(mac, mac);
@@ -1143,89 +1174,91 @@ describe("device retirement settle (real ProtectEventDispatch.retireDevice)", ()
     dispatch.retireDevice(parent);
 
     assert.equal(falsePublishes(published, "motion").length, 1, "the shared motion topic still settles to \"false\" when only the package camera's window was inflight");
-  }));
+  });
 });
 
 describe("shared motion topic sibling ownership (real ProtectEventDispatch.motionEventHandler)", () => {
 
   const mac = "AA:BB:CC:DD:EE:FF";
 
-  test("holds the shared motion reset until the last sibling window ends, when the package window ends first", () => withMockTimers(() => {
+  test("holds the shared motion reset until the last sibling window ends, when the package window ends first", () => {
 
-    const { dispatch, makeCam, published } = makeRetireDispatch();
+    const { clock, dispatch, makeCam, published } = makeRetireDispatch();
     const parent = makeCam(mac, mac);
     const packageCamera = makeCam(packageCameraId(mac), mac);
 
     // Arm the package window first, then the parent window three seconds later, so the parent outlasts the package (each window is 10 seconds).
     dispatch.motionEventHandler(packageCamera, []);
-    mock.timers.tick(3000);
+    clock.advance(3000);
     dispatch.motionEventHandler(parent, []);
 
     // Advance to the package window's end while the parent's window is still inflight: the shared "false" must be held, not published.
-    mock.timers.tick(7000);
+    clock.advance(7000);
 
     assert.equal(falsePublishes(published, "motion").length, 0, "the shared motion topic is not reset while the parent's sibling window is still inflight");
 
     // Advance to the parent window's end: the last window has now closed, so exactly one terminal "false" lands.
-    mock.timers.tick(3000);
+    clock.advance(3000);
 
     assert.equal(falsePublishes(published, "motion").length, 1, "the shared motion topic resets exactly once, when the last sibling window ends");
-  }));
+  });
 
-  test("holds the shared motion reset until the last sibling window ends, when the parent window ends first", () => withMockTimers(() => {
+  test("holds the shared motion reset until the last sibling window ends, when the parent window ends first", () => {
 
-    const { dispatch, makeCam, published } = makeRetireDispatch();
+    const { clock, dispatch, makeCam, published } = makeRetireDispatch();
     const parent = makeCam(mac, mac);
     const packageCamera = makeCam(packageCameraId(mac), mac);
 
     // The mirror case: arm the parent window first, then the package window three seconds later, so the package outlasts the parent.
     dispatch.motionEventHandler(parent, []);
-    mock.timers.tick(3000);
+    clock.advance(3000);
     dispatch.motionEventHandler(packageCamera, []);
 
-    mock.timers.tick(7000);
+    clock.advance(7000);
 
     assert.equal(falsePublishes(published, "motion").length, 0, "the shared motion topic is not reset while the package's sibling window is still inflight");
 
-    mock.timers.tick(3000);
+    clock.advance(3000);
 
     assert.equal(falsePublishes(published, "motion").length, 1, "the shared motion topic resets exactly once, when the package window ends last");
-  }));
+  });
 
-  test("a lone camera with no package sibling publishes its terminal motion reset exactly once", () => withMockTimers(() => {
+  test("a lone camera with no package sibling publishes its terminal motion reset exactly once", () => {
 
-    const { dispatch, makeCam, published } = makeRetireDispatch();
+    const { clock, dispatch, makeCam, published } = makeRetireDispatch();
     const camera = makeCam(mac, mac);
 
     // The parity case: with no package camera, the sibling probe finds nothing inflight, so the reset publishes exactly as it always has.
     dispatch.motionEventHandler(camera, []);
-    mock.timers.tick(10000);
+    clock.advance(10000);
 
     assert.equal(falsePublishes(published, "motion").length, 1, "a lone camera resets its motion topic once when its window ends");
-  }));
+  });
 });
+
+// Build a real doorbell against the full NVR double, for every doorbell-handler row below. The mac is threaded so a device-suffixed option entry can address one
+// doorbell and leave its siblings unaddressed, mqtt installs the recording MQTT double for a row that reads the ring's MQTT publishes, and the returned clock is the
+// test clock the double's dispatcher arms its ring timers on.
+function buildDoorbell(options: { id: string; mac: string; mqtt?: boolean; name: string; userOptions?: string[] }):
+{ camera: ProtectCamera; clock: TestClock; controller: AbortController; nvr: TestProtectNvr } {
+
+  const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { isDoorbell: true }, id: options.id, mac: options.mac, name: options.name });
+  const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+  const { clock, controller, nvr } = makeTestNvr({ mqtt: options.mqtt ?? false, store, userOptions: options.userOptions ?? [] });
+  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory(options.name) as unknown as ProtectAccessory,
+    new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+
+  return { camera, clock, controller, nvr };
+}
 
 /* The ring-suppression window is the one dispatch decision that reads a per-device feature option, so it cannot be driven by the hand-rolled stubs above - they carry
  * neither a feature-option engine nor a controller record. These pins use the full NVR double instead, whose platform carries the REAL FeatureOptions engine seeded
  * through userOptions and whose dispatch is the real ProtectEventDispatch, and drive a REAL constructed doorbell so the resolution runs exactly as it does in the field.
  *
- * The suppression is observed through its user-visible effect rather than the private timer map: a second ring inside the window produces no HomeKit ding, and outside
- * one it does. Every arrangement clears its device's timers and unwinds its doorbell, so neither the ring window nor the MQTT reset outlives its test.
+ * The suppression is observed through its user-visible effect rather than the dispatcher's private timers: a second ring inside the window produces no HomeKit ding,
+ * and outside one it does. Every arrangement clears its device's timers and unwinds its doorbell, so neither the ring window nor the MQTT reset outlives its test.
  */
 describe("the doorbell ring-suppression window (Doorbell.Ring.Delay resolution)", () => {
-
-  // Build a real doorbell against the full NVR double. The mac is threaded so a device-suffixed option entry can address exactly one of two siblings.
-  function buildDoorbell(options: { id: string; mac: string; name: string; userOptions?: string[] }):
-  { camera: ProtectCamera; controller: AbortController; nvr: TestProtectNvr } {
-
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { isDoorbell: true }, id: options.id, mac: options.mac, name: options.name });
-    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { controller, nvr } = makeTestNvr({ store, userOptions: options.userOptions ?? [] });
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory(options.name) as unknown as ProtectAccessory,
-      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
-
-    return { camera, controller, nvr };
-  }
 
   // Ring a doorbell twice through the REAL dispatch and report how many HomeKit dings reached its Doorbell service. One means the second ring was suppressed; two means
   // it was delivered. The service is hard-asserted first so an absent Doorbell service throws rather than letting the count pass vacuously.
@@ -1294,6 +1327,112 @@ describe("the doorbell ring-suppression window (Doorbell.Ring.Delay resolution)"
     await settle();
 
     assert.equal(ringTwice(camera, nvr), 2, "no window is armed, so both rings ding");
+
+    nvr.events.clearEventTimersForDevice(camera.id);
+    camera.cleanup();
+
+    await settle();
+
+    controller.abort();
+  });
+
+  test("the window closes when its delay ends, and the next ring is delivered", async () => {
+
+    const userOptions = ["Enable.Doorbell.Ring.Delay.74ACB9000001=15"];
+    const { camera, clock, controller, nvr } = buildDoorbell({ id: "ring-close", mac: "74ACB9000001", name: "Front Door", userOptions });
+
+    await settle();
+
+    const doorbellService = (camera.accessory as unknown as TestAccessory).getService(Service.Doorbell);
+
+    assert.ok(doorbellService, "the doorbell service exists");
+
+    const dings = (): number => doorbellService.getCharacteristic(Characteristic.ProgrammableSwitchEvent).events.length;
+
+    // The first ring opens the window. The window is bounded on both sides: a ring one tick short of the delay is suppressed, and a ring on the tick that completes
+    // it is delivered.
+    nvr.events.doorbellEventHandler(camera);
+    clock.advance((15 * 1000) - 1);
+    nvr.events.doorbellEventHandler(camera);
+
+    assert.equal(dings(), 1, "a ring one tick before the window ends is suppressed");
+
+    clock.advance(1);
+    nvr.events.doorbellEventHandler(camera);
+
+    assert.equal(dings(), 2, "the first ring once the window has closed is delivered");
+
+    nvr.events.clearEventTimersForDevice(camera.id);
+    camera.cleanup();
+
+    await settle();
+
+    controller.abort();
+  });
+});
+
+/* The ring's trigger and MQTT resets are armed by the same doorbell handler, which resolves the suppression delay on every ring, so their rows drive the same full NVR
+ * double and real doorbell as the suppression window above. Each reset is observed through its user-visible effect: the trigger switch and the camera's ringing flag
+ * for the trigger reset, and the doorbell topic's publishes for the MQTT reset. Each window is bounded on both sides, held one tick short of its duration and reset on
+ * the tick that completes it.
+ */
+describe("doorbell ring resets (real ProtectEventDispatch.doorbellEventHandler)", () => {
+
+  test("the trigger switch and the ringing flag reset when the ring's trigger window ends", async () => {
+
+    const { camera, clock, controller, nvr } = buildDoorbell({ id: "ring-trigger", mac: "74ACB9000001", name: "Front Door", userOptions: ["Enable.Doorbell.Trigger"] });
+
+    await settle();
+
+    const triggerSwitch = (camera.accessory as unknown as TestAccessory).getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
+
+    assert.ok(triggerSwitch, "Enable.Doorbell.Trigger materializes the doorbell-trigger switch");
+
+    nvr.events.doorbellEventHandler(camera);
+
+    assert.equal(triggerSwitch.getCharacteristic(Characteristic.On).value, true, "the ring turns the trigger switch on");
+    assert.equal(camera.isRinging, true, "the ring flags the camera as ringing");
+
+    clock.advance(PROTECT_DOORBELL_TRIGGER_DURATION - 1);
+
+    assert.equal(triggerSwitch.getCharacteristic(Characteristic.On).value, true, "the trigger switch holds until the trigger window ends");
+    assert.equal(camera.isRinging, true, "the camera stays flagged as ringing until the trigger window ends");
+
+    clock.advance(1);
+
+    assert.equal(triggerSwitch.getCharacteristic(Characteristic.On).value, false, "the trigger switch turns off when the trigger window ends");
+    assert.equal(camera.isRinging, false, "the ringing flag clears when the trigger window ends");
+
+    nvr.events.clearEventTimersForDevice(camera.id);
+    camera.cleanup();
+
+    await settle();
+
+    controller.abort();
+  });
+
+  test("the doorbell topic publishes its \"false\" reset when the ring's MQTT window ends", async () => {
+
+    const { camera, clock, controller, nvr } = buildDoorbell({ id: "ring-mqtt", mac: "74ACB9000001", mqtt: true, name: "Front Door" });
+    const mqtt = nvr.mqtt;
+
+    assert.ok(mqtt, "the recording MQTT double is installed");
+
+    await settle();
+
+    const doorbellPublishes = (): unknown[] => mqtt.published.filter(entry => entry.topic === "74ACB9000001/doorbell").map(entry => entry.payload);
+
+    nvr.events.doorbellEventHandler(camera);
+
+    assert.deepEqual(doorbellPublishes(), ["true"], "the ring publishes \"true\" on the doorbell topic");
+
+    clock.advance(PROTECT_DOORBELL_TRIGGER_DURATION - 1);
+
+    assert.deepEqual(doorbellPublishes(), ["true"], "the doorbell topic publishes no reset while the MQTT window is open");
+
+    clock.advance(1);
+
+    assert.deepEqual(doorbellPublishes(), [ "true", "false" ], "the doorbell topic publishes \"false\" once when the MQTT window ends");
 
     nvr.events.clearEventTimersForDevice(camera.id);
     camera.cleanup();

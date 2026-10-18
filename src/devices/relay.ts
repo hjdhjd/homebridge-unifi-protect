@@ -147,15 +147,13 @@ export class ProtectRelay extends ProtectDevice<Relay> {
     if(!(await this.runDeviceCommand("turn " + label + " " + (desired ? "on" : "off"), () => this.device.toggleOutput(id)))) {
 
       // The command failed and the output never changed, so no broadcast will arrive to reconcile the tile. Drop the intent and cancel its safety timer, then reflect the
-      // true controller state back to the tile through a brief deferred bounce: a synchronous write here would be clobbered by HAP writing the requested value to the
-      // characteristic once this non-throwing onSet resolves, so we reflect just past that settle. The ~50ms cosmetic bounce is deliberately left out of this.timers, as
-      // the motion trigger's is; it need not survive cleanup().
+      // true controller state back to the tile.
       this.#pendingDesired.delete(id);
       this.timers.clear(this.pendingTimerKey(id));
 
       const service = this.accessory.getServiceById(this.hap.Service.Switch, this.outputSubtype(id));
 
-      setTimeout(() => service?.updateCharacteristic(this.hap.Characteristic.On, this.outputState(id)), 50);
+      this.reflectAfterSet(() => service?.updateCharacteristic(this.hap.Characteristic.On, this.outputState(id)));
 
       return;
     }

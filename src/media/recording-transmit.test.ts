@@ -19,8 +19,7 @@ import { HDSProtocolSpecificErrorReason, HKSV_TIMEOUT } from "homebridge-plugin-
 import type { LivestreamSubscriptionState, Segment } from "unifi-protect";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import type { TestClock, TestLogEntry, TestRecordingProcessInit } from "homebridge-plugin-utils/testing";
-import { TestRecordingProcess, TestRecordingProcessFactory } from "homebridge-plugin-utils/testing";
-import { TestStreamingDelegate, settle } from "../testing.helpers.ts";
+import { TestRecordingProcess, TestRecordingProcessFactory, settle } from "homebridge-plugin-utils/testing";
 import { after, describe, test } from "node:test";
 import { makeLivestreamSubscriptionDouble, makeTestCameraHost } from "./testing.helpers.ts";
 import type { ChannelProfile } from "./resolution.ts";
@@ -30,6 +29,7 @@ import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import type { RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { TestCameraHost } from "./testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
+import { TestStreamingDelegate } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 
 // The exact pacing interval the delegate computes between yields: HKSV_TIMEOUT minus the 500ms HomeKit-timeout safety margin. Because the injected clock is
@@ -51,7 +51,7 @@ after(() => {
 // The count of INFO/WARN log lines whose first format string contains the given fragment - the harness records the raw parameters, so we match the message template. The
 // enable-ack re-acknowledgment test counts occurrences (not a boolean .some()), because a boolean would pass after the FIRST enable regardless of whether the second
 // re-acknowledged - the count tells apart the per-enable acknowledgment behavior.
-function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
+function countLogs(entries: readonly TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
 
   return entries.filter((entry) => (entry.level === level) && entry.message.includes(fragment)).length;
 }
@@ -179,7 +179,7 @@ interface TransmittingArrange {
   clock: TestClock;
   delegate: ProtectRecordingDelegate;
   host: TestCameraHost;
-  logEntries: TestLogEntry[];
+  logEntries: readonly TestLogEntry[];
   nvr: TestProtectNvr;
 }
 
@@ -214,7 +214,7 @@ async function buildTransmittingDelegate(factory: RecordingProcessFactory): Prom
 
 // Find the early-end telemetry log a closeRecordingStream emitted. record.ts logs error("HKSV recording event ended early: %s%s", reasonDescription, telemetry), so the
 // log's first parameter is the format string and the telemetry payload is the THIRD parameter (the %s%s template's second substitution) - never a pre-formatted string.
-function findEndedEarlyTelemetry(logEntries: TestLogEntry[], fromIndex = 0): string {
+function findEndedEarlyTelemetry(logEntries: readonly TestLogEntry[], fromIndex = 0): string {
 
   const entry = logEntries.slice(fromIndex).find((e) => (e.level === "error") && e.message.includes("ended early"));
 
@@ -299,7 +299,7 @@ describe("recording delegate transmit-path behavior", () => {
     // Exactly one packet, marked last, one byte - the decline contract. And the factory was never constructed.
     assert.equal(packets.length, 1);
     assert.equal(packets[0]?.isLast, true);
-    assert.equal(packets[0]?.data.length, 1);
+    assert.equal(packets[0].data.length, 1);
     assert.equal(recordingProcessFactory.createCalls.length, 0);
   });
 

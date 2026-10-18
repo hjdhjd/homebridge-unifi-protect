@@ -11,8 +11,8 @@
  *
  * Alongside the HAP double this file holds the rest of the harness's cross-cutting core: TestStateStore, the facade over unifi-protect's real state store, with
  * makeProtectState to seed it; the streaming and timeshift stubs every device family that constructs a real camera host shares (the streaming delegate and its factory,
- * which satisfies the platform's dependency-inversion contract so a REAL device can be constructed with no FFmpeg, and the timeshift buffer and supervisor doubles); the
- * TestApiCall record shape the registration sink captures into; and settle(), the one-macrotask wait every asynchronous assertion turns on.
+ * which satisfies the platform's dependency-inversion contract so a REAL device can be constructed with no FFmpeg, and the timeshift buffer and supervisor doubles);
+ * and the TestApiCall record shape the registration sink captures into.
  *
  * The per-subsystem helpers live beside the code they serve, each importing this file: devices/testing.helpers.ts owns the config builders, the projection doubles,
  * and TestBaseDevice; media/testing.helpers.ts owns TestCameraHost and the fragment and livestream doubles; nvr/testing.helpers.ts owns the NVR, platform, and MQTT
@@ -1610,16 +1610,4 @@ export interface TestApiCall {
 
   accessories: TestAccessory[];
   kind: "publishExternal" | "register" | "unregister" | "update";
-}
-
-/**
- * Settle the asynchronous machinery a construction or push sets in motion: one macrotask tick, which lets every pending microtask chain - the floating configure
- * IIFE, the observe loops' lazy registration, a store wake's drain-and-react - run to quiescence before a test asserts. The store double wakes exclusively
- * through the microtask queue (no timers), so a single setImmediate is a complete settle.
- *
- * @returns a promise that resolves after one macrotask turn.
- */
-export async function settle(): Promise<void> {
-
-  await new Promise<void>((resolve) => setImmediate(resolve));
 }

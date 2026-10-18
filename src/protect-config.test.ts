@@ -663,7 +663,7 @@ describe("protect webUI device-list outcomes", () => {
 
     for(const answer of malformed) {
 
-      const label = JSON.stringify(answer) ?? "undefined";
+      const label = (JSON.stringify(answer) as string | undefined) ?? "undefined";
       const verdict = readDeviceListAnswer(answered(answer));
 
       assert.deepEqual(verdict, { devices: [], guidance: SERVER_FAILURE_GUIDANCE, headline: SERVER_FAILURE_HEADLINE, kind: "serverFailure",

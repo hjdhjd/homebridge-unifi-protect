@@ -18,7 +18,7 @@ import type { ProtectViewer } from "./devices/viewer.ts";
 // Compile-time exhaustiveness check for discriminated unions. When all cases of a union are handled in a switch statement, TypeScript narrows the remaining type to
 // `never`. Passing it to this function ensures the compiler will flag an error if a new variant is added to the union without a corresponding case. At runtime this is a
 // no-op...the call site is responsible for graceful degradation (logging, returning null, etc.).
-// eslint-disable-next-line @typescript-eslint/no-empty-function
+// eslint-disable-next-line @typescript-eslint/no-empty-function -- The function is empty by design: its parameter's never type is the whole check.
 export function exhaustiveGuard(_value: never): void {}
 
 // The Protect device categories this plugin supports, mapped to the HomeKit device class each becomes. The vocabulary itself is the library's DeviceCollectionKey; this

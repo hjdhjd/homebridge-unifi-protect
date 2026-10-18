@@ -18,7 +18,7 @@
  * path FFmpeg-free with deterministic injected-clock pacing.
  */
 import type { CameraRecordingConfiguration, RecordingPacket } from "homebridge";
-import { Characteristic, Service, TestStreamingDelegate, settle } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStreamingDelegate } from "../testing.helpers.ts";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { after, describe, test } from "node:test";
 import type { ChannelProfile } from "./resolution.ts";
@@ -27,6 +27,7 @@ import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import type { TestCameraHost } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestCameraHost } from "./testing.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting it in teardown releases the harness signal so a leaked observer (none here, the
 // recording delegate spawns none at construction) could never outlive the suite.
@@ -98,7 +99,7 @@ describe("recording delegate decline-path behavior", () => {
     // Exactly one packet, marked as the last, carrying a single byte - the end-of-stream marker's observable shape.
     assert.equal(packets.length, 1);
     assert.equal(packets[0]?.isLast, true);
-    assert.equal(packets[0]?.data.length, 1);
+    assert.equal(packets[0].data.length, 1);
   });
 
   // A reused delegate declines a second event without crashing. This proves the generator/decline path survives re-entry on the same delegate instance - the lifecycle a

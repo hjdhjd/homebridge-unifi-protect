@@ -15,7 +15,7 @@
  * its comments and materializes the phantom, turning the absence assertion RED. The package camera rides the guarded base availability projection, so it needs no bespoke
  * updateAvailability override of its own; that its projection carries the guard is pinned by doorbell-construction.test.ts.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
@@ -27,6 +27,7 @@ import type { TestAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 
 // Construct a real ProtectCamera, with the casts confined to this one construction call - the instance under test is the production class and its real configure path.
 // A doorbell config (isDoorbell plus hasPackageCamera) composes the doorbell capability, which creates the package camera reachable through the camera's packageCamera

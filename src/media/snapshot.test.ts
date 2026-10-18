@@ -9,14 +9,16 @@
  * serves, and then caches, a frozen image), that an EMPTY buffer declines SILENTLY (no staleness to claim), and that in both cases the chain moves past the buffer to the
  * next source. The freshness DECISION itself - whether the buffer reads fresh, stale, or empty - is covered directly over ProtectTimeshiftBuffer in timeshift.test.ts.
  */
-import { TestStreamingDelegate, makeTimeshiftSupervisorDouble, settle } from "../testing.helpers.ts";
+import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
+import { TestStreamingDelegate, makeTimeshiftSupervisorDouble } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { ProtectSnapshot } from "./snapshot.ts";
+import type { SnapshotSource } from "./timeshift.ts";
 import type { StreamingDelegate } from "./stream-delegate.ts";
 import type { TestCameraHost } from "./testing.helpers.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { makeTestCameraHost } from "./testing.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 
 // Every host this suite builds shares its makeTestNvr AbortController. Aborting them in teardown releases the harness signals.
 const controllers: AbortController[] = [];
@@ -30,17 +32,18 @@ after(() => {
 });
 
 // The count of log lines at a level whose first format string contains the given fragment.
-function countLogs(entries: TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
+function countLogs(entries: readonly TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
 
   return entries.filter((entry) => (entry.level === level) && entry.message.includes(fragment)).length;
 }
 
 // Build a ProtectSnapshot over a camera host whose timeshift buffer's snapshotSource is steered to the given decline kind, and whose RTSP and controller sources decline
 // without spawning FFmpeg (no channel to select, the controller command rejects). The whole acquisition chain therefore runs spawn-free. selectCalls counts the RTSP
-// channel selection so a test can prove the chain moved past the declined buffer.
-function buildSnapshot(kind: "empty" | "stale"): { host: TestCameraHost; logEntries: TestLogEntry[]; selectCalls: { count: number }; snapshot: ProtectSnapshot } {
+// channel selection so a test can prove the chain moved past the declined buffer, and clock is the host's test clock, which stamps and ages the snapshot cache.
+function buildSnapshot(kind: "empty" | "stale"):
+{ clock: TestClock; host: TestCameraHost; logEntries: readonly TestLogEntry[]; selectCalls: { count: number }; snapshot: ProtectSnapshot } {
 
-  const { controller, host, logEntries } = makeTestCameraHost();
+  const { clock, controller, host, logEntries } = makeTestCameraHost();
 
   controllers.push(controller);
 
@@ -50,14 +53,14 @@ function buildSnapshot(kind: "empty" | "stale"): { host: TestCameraHost; logEntr
   const stream = new TestStreamingDelegate();
   const supervisor = makeTimeshiftSupervisorDouble();
 
-  supervisor.buffer.snapshotSource = () => ({ kind });
+  supervisor.buffer.snapshotSource = (): SnapshotSource => ({ kind });
   stream.timeshift = supervisor as unknown as StreamingDelegate["timeshift"];
   host.stream = stream;
 
   // RTSP declines without spawning; count the calls to prove it was attempted after the buffer declined.
   const selectCalls = { count: 0 };
 
-  host.selectChannel = () => {
+  host.selectChannel = (): null => {
 
     selectCalls.count++;
 
@@ -65,9 +68,9 @@ function buildSnapshot(kind: "empty" | "stale"): { host: TestCameraHost; logEntr
   };
 
   // The controller source rejects too, so the whole chain resolves null without producing (or caching) any image.
-  host.snapshotFromController = () => Promise.reject(new Error("controller declined"));
+  host.snapshotFromController = (): Promise<Buffer> => Promise.reject(new Error("controller declined"));
 
-  return { host, logEntries, selectCalls, snapshot: new ProtectSnapshot(host) };
+  return { clock, host, logEntries, selectCalls, snapshot: new ProtectSnapshot(host) };
 }
 
 describe("ProtectSnapshot timeshift freshness", () => {
@@ -130,5 +133,46 @@ describe("ProtectSnapshot package-camera source ordering", () => {
     assert.equal(controllerCalls.length, 1, "the controller source was tried exactly once");
     assert.equal(controllerCalls[0]?.packageCamera, true, "the controller request carried the package flag");
     assert.equal(selectCalls.count, 0, "the package ordering left the RTSP source untouched");
+  });
+});
+
+describe("ProtectSnapshot cache window", () => {
+
+  // The cache's maximum age, which snapshot.ts keeps module-private: a failed acquisition falls back to a cached image until it is this old on the platform's clock.
+  const CACHE_WINDOW_MS = 90 * 1000;
+
+  test("a failed acquisition serves the cached snapshot while it is inside the cache window, and nothing once the clock has moved past it", async () => {
+
+    const { clock, host, logEntries, snapshot } = buildSnapshot("empty");
+
+    // The controller source serves one image, which the chain caches stamped with the clock's instant, and declines every request after it.
+    let controllerCalls = 0;
+
+    host.snapshotFromController = (): Promise<Buffer> => {
+
+      controllerCalls++;
+
+      return (controllerCalls === 1) ? Promise.resolve(Buffer.from("cached-snapshot")) : Promise.reject(new Error("controller declined"));
+    };
+
+    const first = await snapshot.getSnapshot();
+
+    assert.equal(first?.toString(), "cached-snapshot", "the controller source served the first snapshot, which the chain cached");
+
+    // The window is bounded on both sides: an image exactly as old as the window still serves a failed acquisition, and one tick older does not.
+    clock.advance(CACHE_WINDOW_MS);
+
+    const cached = await snapshot.getSnapshot();
+
+    assert.equal(cached?.toString(), "cached-snapshot", "a failed acquisition serves the cached snapshot while it is inside the cache window");
+    assert.equal(countLogs(logEntries, "warn", "using the most recent cached snapshot"), 1, "the cache fallback is reported");
+
+    clock.advance(1);
+
+    const expired = await snapshot.getSnapshot();
+
+    assert.equal(expired, null, "a failed acquisition serves nothing once the cached snapshot has aged past the window");
+    assert.equal(countLogs(logEntries, "error", "Unable to retrieve a snapshot."), 1, "the failure with no usable cache is reported");
+    assert.equal(controllerCalls, 3, "every acquisition reached the controller source before falling back");
   });
 });

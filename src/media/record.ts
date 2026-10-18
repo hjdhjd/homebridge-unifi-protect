@@ -298,7 +298,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
           // If we've stopped transmitting, a discontinuity fired, or the recording is terminating, exit the segment loop. isDiscontinuity and isTerminated
           // are mutated asynchronously by the event listeners above.
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- The listeners set the event flags during the loop's awaits, unseen by TS narrowing.
           if(!this._isTransmitting || isDiscontinuity || isTerminated) {
 
             break;
@@ -318,7 +318,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           // because a discontinuity abort should not prevent yielding...the current segment is valid pre-stall data that must be delivered before restarting FFmpeg.
           // `_isTransmitting` and `signal.aborted` can both mutate during the paceSegmentDelivery await above; TS flow narrows them after the earlier break check
           // and does not re-widen across the await.
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- The transmitting flag can change during the pacing wait, unseen by TS narrowing.
           if(!this._isTransmitting || signal.aborted) {
 
             break;
@@ -330,8 +330,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
           lastYieldTime = this.clock.now();
         }
 
-      // isDiscontinuity and isTerminated are mutated asynchronously by the event listeners above.
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- The event listeners set the event flags during the loop, unseen by TS narrowing.
       } while(isDiscontinuity && !isTerminated && this._isTransmitting);
     } finally {
 
@@ -349,12 +348,12 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     //     not kick the wire from here. We just end this event with its final marker; the next event re-establishes a fresh FFmpeg pipeline.
     //
     // Normal completion (HAP-initiated close via signal.aborted or _isTransmitting false) falls through both branches...HAP already knows the stream is done
-    // and doesn't need a marker. Removing the optional chain on ffmpegStream breaks this: the discontinuity-recovery path's startTransmitting(true) call inside
-    // the do/while above may have cleared the field, and TS does not track that across the method call.
+    // and doesn't need a marker. Removing the optional chain on ffmpegStream breaks this: the field is cleared when HomeKit closes the recording while the
+    // generator is suspended, and TS keeps its narrowing across that suspension.
     if(isTerminated) {
 
       yield { data: HKSV_END_OF_STREAM_MARKER, isLast: true };
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- HomeKit's close clears the FFmpeg stream while we are suspended, unseen by TS narrowing.
     } else if(this.ffmpegStream?.isTimedOut) {
 
       yield { data: HKSV_END_OF_STREAM_MARKER, isLast: true };

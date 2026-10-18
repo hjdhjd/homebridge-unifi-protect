@@ -13,10 +13,10 @@
  *   - RtspLivestreamSubscription: the RTSP-debug adapter, a pure-FFmpeg plugin concern that produces the same Segment stream behind the same interface.
  *   - logLivestreamIterationError: the shared classification and logging for errors thrown from a livestream subscription iterator, used by every consumer.
  */
-import type { FMp4AudioTarget, FfmpegOptions, HomebridgePluginLogging } from "homebridge-plugin-utils";
-import { FfmpegLivestreamProcess, formatErrorMessage, splitMoofMdat } from "homebridge-plugin-utils";
+import type { FMp4AudioTarget, FfmpegOptions, HomebridgePluginLogging, LivestreamProcess, LivestreamProcessFactory } from "homebridge-plugin-utils";
 import type { LivestreamSubscriptionState, Segment } from "unifi-protect";
 import { ProtectCodecChangeError, ProtectLivestreamUnavailableError } from "unifi-protect";
+import { formatErrorMessage, splitMoofMdat } from "homebridge-plugin-utils";
 
 // Process-local monotonic counter used to mint stable RTSP-debug subscription ids. A counter is sufficient here (no cross-process uniqueness needed) and keeps
 // ids cheap, comparable, and greppable in logs.
@@ -38,14 +38,15 @@ export interface LivestreamSubscription extends AsyncIterable<Segment>, AsyncDis
   whenEstablished(): Promise<boolean>;
 }
 
-// The fully-resolved options the RTSP-debug adapter needs. Every value is derived from camera facts at the camera interface, so the adapter never re-narrows or uses
-// non-null assertions. The audio target mirrors the livestream API's native delivery shape and is the adapter's sole audio-encode input - it carries no HKSV
-// recording configuration.
+// The fully-resolved options the RTSP-debug adapter needs. Every value but the process factory is derived from camera facts at the camera interface, so the adapter never
+// re-narrows or uses non-null assertions; the process factory is the platform's, which the camera passes through. The audio target mirrors the livestream API's native
+// delivery shape and is the adapter's sole audio-encode input - it carries no HKSV recording configuration.
 interface RtspLivestreamSubscriptionOptions {
 
   audio: FMp4AudioTarget;
   enableAudio: boolean;
   ffmpegOptions: FfmpegOptions;
+  processFactory: LivestreamProcessFactory;
   segmentLength?: number;
   signal?: AbortSignal;
   url: string;
@@ -53,10 +54,11 @@ interface RtspLivestreamSubscriptionOptions {
 }
 
 /**
- * The RTSP-debug adapter (Debug.Video.Timeshift.UseRtsp). It implements the plugin's LivestreamSubscription interface over a single FfmpegLivestreamProcess that
- * transcodes the camera's RTSP stream into the same fMP4 Segment stream the unifi-protect library's pool produces, feeding the standing timeshift buffer from RTSP
- * rather than the native livestream API. This is a pure-FFmpeg plugin concern, so it stays the plugin behind the interface, and it is the mechanical seed of a future
- * first-class RTSP-fed-buffer option.
+ * The RTSP-debug adapter (Debug.Video.Timeshift.UseRtsp). It implements the plugin's LivestreamSubscription interface over a single livestream process that transcodes
+ * the camera's RTSP stream into the same fMP4 Segment stream the unifi-protect library's pool produces, feeding the standing timeshift buffer from RTSP rather than the
+ * native livestream API. The adapter builds that process through the factory it is handed, which in production is the platform's and builds homebridge-plugin-utils'
+ * FFmpeg livestream process, so a test drives the adapter over a process double with no FFmpeg behind it. This is a pure-FFmpeg plugin concern, so it stays the plugin
+ * behind the interface, and it is the mechanical seed of a future first-class RTSP-fed-buffer option.
  *
  * There is deliberately NO recovery loop here: a failed RTSP transcode simply ends. The lifecycle state is correspondingly simple - "connecting" before the init
  * segment resolves, "live" after, "closed" once its owner ends it by disposal or by aborting its signal, as the pooled subscription does - and it never reports
@@ -69,9 +71,9 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
   readonly #initPromise: Promise<Buffer>;
   #initSegment: { codec: string; data: Buffer } | null;
   #disposed: boolean;
-  readonly #proc: FfmpegLivestreamProcess;
+  readonly #proc: LivestreamProcess;
   readonly #signal?: AbortSignal;
-  #state: LivestreamSubscriptionState;
+  #state: "connecting" | "live";
   readonly #videoCodec: string;
 
   public constructor(options: RtspLivestreamSubscriptionOptions) {
@@ -83,7 +85,7 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
     this.#state = "connecting";
     this.#videoCodec = options.videoCodec;
 
-    this.#proc = new FfmpegLivestreamProcess(options.ffmpegOptions, {
+    this.#proc = options.processFactory.create(options.ffmpegOptions, {
 
       audio: options.audio,
       livestream: { codec: options.videoCodec, enableAudio: options.enableAudio, url: options.url },

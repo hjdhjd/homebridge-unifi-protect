@@ -18,8 +18,9 @@
  *      module does not decide what to do.
  *
  * The reducer is a pure function `(state, symptom, now) => state'`, exported and independently testable. The class is a thin event-sink wrapper that drives
- * the reducer with a wall clock and emits a `stateChange` event when the derived state crosses a boundary.
+ * the reducer with the clock its constructor is handed and emits a `stateChange` event when the derived state crosses a boundary.
  */
+import type { Clock } from "homebridge-plugin-utils";
 import { EventEmitter } from "node:events";
 
 // Sliding window over which symptoms are weighed, in milliseconds. One minute is long enough to absorb a single retry burst without flipping state, short enough
@@ -234,19 +235,6 @@ function transitionState(prev: NvrHealthState, weight: number): NvrHealthState {
 }
 
 /**
- * Injectable clock for testability. Production uses {@link systemClock}; tests can substitute a deterministic clock to drive eviction without real time.
- */
-export interface Clock {
-
-  now(): number;
-}
-
-/**
- * The production clock, backed by Date.now(). The default {@link Clock} implementation everywhere except tests, which substitute a deterministic clock.
- */
-export const systemClock: Clock = { now: (): number => Date.now() };
-
-/**
  * Event surface for {@link NvrHealth}. Listeners receive the new state on every transition; the previous state is provided for context (so listeners can
  * render directional log lines like "healthy -> degraded" without tracking it themselves).
  */
@@ -279,7 +267,7 @@ export class NvrHealth extends EventEmitter<NvrHealthEvents> {
   private suspended: boolean;
   private readonly clock: Clock;
 
-  public constructor(clock: Clock = systemClock) {
+  public constructor(clock: Clock) {
 
     super();
 
@@ -291,8 +279,8 @@ export class NvrHealth extends EventEmitter<NvrHealthEvents> {
   /**
    * Record a symptom. Drives the reducer with the current clock and emits a `stateChange` event if the derived state crossed a transition.
    *
-   * The caller stamps the symptom's `at` field at the call site (typically `Date.now()`, but a different value is acceptable for replayed or queued symptoms).
-   * The clock injected into NvrHealth is used as the eviction-window reference time on each call; it is not a fallback for `symptom.at`.
+   * The caller stamps the symptom's `at` field at the call site (the bridge stamps it from the same clock it injects here, but a different value is acceptable for
+   * replayed or queued symptoms). The clock injected into NvrHealth is used as the eviction-window reference time on each call; it is not a fallback for `symptom.at`.
    *
    * No-op while suspended: symptoms observed during operations the plugin is intentionally driving are not signal we want to surface to consumers.
    */

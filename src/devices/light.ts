@@ -108,7 +108,7 @@ export class ProtectLight extends ProtectDevice<Light> {
       }
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
-      setTimeout(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledLevelToBrightness(brightness)), 50);
+      this.reflectAfterSet(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledLevelToBrightness(brightness)));
 
       // Publish our state.
       this.publish(mqttTopics.lightBrightness.topic, this.ledLevelToBrightness(brightness).toString());

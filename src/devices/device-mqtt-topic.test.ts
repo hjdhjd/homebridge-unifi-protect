@@ -12,15 +12,16 @@
  * ProtectBase leaf are the smallest real surfaces that carry the wrappers: the abstract base declares no abstract members, so a near-empty concrete leaf is a faithful
  * instance whose publish, subscribeGet, and subscribeSet are all the base's own - the same admission command-error.test.ts and reachability.test.ts rely on.
  */
+import { TestClock, TestMqttClient, settle } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
-import { makeTestAccessory, settle } from "../testing.helpers.ts";
 import type { Camera } from "unifi-protect";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectBase } from "./device-base.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
-import { TestMqttClient } from "homebridge-plugin-utils/testing";
+import { TEST_CLOCK_EPOCH } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { makeTestAccessory } from "../testing.helpers.ts";
 import util from "node:util";
 
 // The smallest concrete leaf of the abstract base, mirroring command-error.test.ts: ProtectDevice declares no abstract members, so this adds nothing but a public window
@@ -76,8 +77,8 @@ interface MqttCapture {
 const MAC = "AABBCCDDEEFF";
 
 // Construct a real ProtectDevice against the minimal mocks the MQTT wrappers read: the device-leaf mqttId sources the bare MAC from the persisted accessory context
-// (context.mac), not this.ufp.mac, so we seed it on the accessory; and an nvr whose mqtt captures the composed topic for each verb. The casts are confined to this
-// construction step; the instance itself is the production class.
+// (context.mac), not this.ufp.mac, so we seed it on the accessory; an nvr whose mqtt captures the composed topic for each verb; and a platform carrying the test clock
+// the spine's timer registry is built on, started at the harness epoch. The casts are confined to this construction step; the instance itself is the production class.
 const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => {
 
   const capture: MqttCapture = { publish: [], subscribeGet: [], subscribeSet: [] };
@@ -97,7 +98,7 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
   const nvr = {
 
     mqtt,
-    platform: { api: { hap: {} }, log, pluginLog: log, testDebug: () => false },
+    platform: { api: { hap: {} }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
     signal: new AbortController().signal
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
@@ -126,7 +127,7 @@ const makeGuardedDevice = (): { errors: string[]; instance: TestProtectDevice; m
   const nvr = {
 
     mqtt,
-    platform: { api: { hap: {} }, log, pluginLog: log, testDebug: () => false },
+    platform: { api: { hap: {} }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
     signal: new AbortController().signal
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
@@ -139,7 +140,8 @@ const makeGuardedDevice = (): { errors: string[]; instance: TestProtectDevice; m
 const NVR_MAC = "112233445566";
 
 // Construct a bare ProtectBase against the minimal mocks its MQTT wrappers read: an nvr carrying the controller MAC (the base mqttId reads through to this.nvr.ufp.mac)
-// and an mqtt that captures the composed topic for each verb. The casts are confined to this construction step; the instance itself is the production base class.
+// and an mqtt that captures the composed topic for each verb, with the same platform test clock the spine's timer registry is built on. The casts are confined to this
+// construction step; the instance itself is the production base class.
 const makeController = (): { capture: MqttCapture; instance: TestProtectBase } => {
 
   const capture: MqttCapture = { publish: [], subscribeGet: [], subscribeSet: [] };
@@ -154,7 +156,7 @@ const makeController = (): { capture: MqttCapture; instance: TestProtectBase } =
   const nvr = {
 
     mqtt,
-    platform: { api: { hap: {} }, log, pluginLog: log, testDebug: () => false },
+    platform: { api: { hap: {} }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
     ufp: { mac: NVR_MAC }
   };
   const instance = new TestProtectBase(nvr as unknown as ProtectNvr);

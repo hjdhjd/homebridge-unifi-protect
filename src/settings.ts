@@ -43,6 +43,10 @@ export const PROTECT_FFMPEG_AUDIO_FILTER_HIGHPASS = 150;
 // FFmpeg lowpass audio filter defaults - this setting attenuates (eliminates) frequencies above the value.
 export const PROTECT_FFMPEG_AUDIO_FILTER_LOWPASS = 9000;
 
+// Delay, in milliseconds, before a deferred write reflects a characteristic's true state back to HomeKit after a set handler returns. It only has to clear HAP's own
+// write of the requested value, so it stays short enough that the correction reads as part of the tap.
+export const PROTECT_HOMEKIT_REFLECT_DELAY = 50;
+
 // Ceiling, in bytes, on the probesize a camera's self-tuning will ever elevate to. This sits far above any probesize FFmpeg has needed in practice, so it bounds the
 // repeated doubling without meaningfully limiting our ability to recover from a difficult stream.
 export const PROTECT_PROBESIZE_OVERRIDE_MAX = 5000000;
