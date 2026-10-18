@@ -15,7 +15,6 @@ import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTE
   PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectReservedNames, isPackageCameraContext } from "../types.ts";
 import { RECORDING_AUDIO_STAND_IN, controllerIdentityOf, recordingSamplerateOf, streamingSamplerates } from "./stream-delegate.ts";
-import { canUseLivestreamApi, resolveSessionSource } from "./stream-source-policy.ts";
 import { resolveChannelRequest, resolveTranscodeDecision, resolveVideoEncoding } from "./stream-encode-policy.ts";
 import type { AdvertisedStreams } from "../devices/cameras/camera.ts";
 import type { ChannelProfile } from "./resolution.ts";
@@ -31,6 +30,7 @@ import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import type { TalkbackSession } from "unifi-protect";
 import { logLivestreamIterationError } from "./livestream.ts";
 import { mqttTopics } from "../mqtt.ts";
+import { resolveSessionSource } from "./stream-source-policy.ts";
 
 interface OngoingSessionEntry {
 
@@ -233,7 +233,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     this.pendingSessions = new Map();
     this.platform = protectCamera.platform;
     this.probesizeTuning = new ProbesizeSelfTune({ baseline: (): number => protectCamera.hints.probesize, clock: this.platform.clock });
-    this.timeshift = null;
 
     // Configure our hardware acceleration support.
     this.ffmpegOptions = new FfmpegOptions({
@@ -256,19 +255,14 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         "performance and an improved user experience.");
     }
 
-    // The timeshift supervisor - the lifecycle authority for the camera's standing buffer - is constructed for any camera that can use buffer-backed livestreaming: the
-    // livestream-accessibility predicate, a strict superset of HKSV capability, so it also covers every HKSV-capable camera. This means the streaming arm and (when
-    // present) the recording arm share one buffer lifecycle owner. The recording delegate is constructed only for an HKSV-capable camera and always finds its required
-    // supervisor already in place, so a supervisor-less recording delegate is unrepresentable. An Access-adopted camera therefore gets the supervisor without a
-    // recording delegate - the streaming-only column of the OR made flesh.
-    if(canUseLivestreamApi(this.protectCamera.ufp)) {
+    // The timeshift supervisor - the lifecycle authority for the camera's standing buffer - stands for every camera, since the livestream API serves every adopted
+    // camera, so the streaming arm and (when present) the recording arm share one buffer lifecycle owner. The recording delegate is constructed for a camera that can
+    // back HKSV and always finds its required supervisor already in place, so a supervisor-less recording delegate is unrepresentable.
+    this.timeshift = new ProtectTimeshiftSupervisor(protectCamera, { adopt: derived.probe, advertised: advertised.format });
 
-      this.timeshift = new ProtectTimeshiftSupervisor(protectCamera, { adopt: derived.probe, advertised: advertised.format });
+    if(this.protectCamera.isHksvCapable) {
 
-      if(this.protectCamera.isHksvCapable) {
-
-        this.hksv = new ProtectRecordingDelegate(protectCamera, this.timeshift);
-      }
+      this.hksv = new ProtectRecordingDelegate(protectCamera, this.timeshift);
     }
 
     // Configure our snapshot handler.
@@ -352,12 +346,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
               audioChannels: 1,
 
-              // The samplerate helper hands HomeKit both of its streaming rates to choose from for a doorbell and for a camera served directly over RTSP, and the lower
-              // rate alone for every other camera. This surface is constructor-frozen, so the capability is sampled at construction here, and livestream-API reach is a
-              // term of the controller identity for exactly that reason: a camera that gains reach while the delegate stands rebuilds it, while a lost reach leaves the
-              // delegate as it was built.
-              samplerate: streamingSamplerates({ canUseLivestreamApi: canUseLivestreamApi(this.protectCamera.ufp),
-                isDoorbell: this.protectCamera.ufp.featureFlags.isDoorbell }),
+              // The samplerate helper hands HomeKit both of its streaming rates to choose from for a doorbell and the lower rate alone for every other camera. This
+              // surface is constructor-frozen, so doorbell-ness is sampled at construction here and is a term of the controller identity for exactly that reason.
+              samplerate: streamingSamplerates({ isDoorbell: this.protectCamera.ufp.featureFlags.isDoorbell }),
               type: AudioStreamingCodecType.AAC_ELD
             }
           ],
@@ -686,8 +677,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
     // Resolve which transport this live view draws from: the standing timeshift buffer's pooled socket, or a direct RTSP session. The decision is a pure policy over the
     // camera's current facts (the buffer-backed-livestreaming toggle, the recording demand, the buffer's liveness, the package preference, the AV1 constraint, whether
-    // an RTSP-enabled stream exists to dial, whether the camera can reach the livestream API, and the internal A/B test). The A/B test flip is captured and the toggle
-    // advanced here so the policy itself stays pure.
+    // an RTSP-enabled stream exists to dial, and the internal A/B test). The A/B test flip is captured and the toggle advanced here so the policy itself stays pure.
     const abTestFlip = this.abTest && this.protectCamera.hasFeature("Debug.Video.Stream.ABTest");
 
     this.abTest = !this.abTest;
@@ -696,7 +686,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
       abTestFlip: abTestFlip,
       bufferStarted: this.timeshift?.buffer.isStarted ?? false,
-      canUseBuffer: canUseLivestreamApi(this.protectCamera.ufp),
       hasRecordingDemand: this.hksv?.isRecording ?? false,
       hasRtspStream: this.protectCamera.hasRtspStream,
       isPackageCamera: isPackageCameraContext(this.protectCamera.accessory.context),
@@ -741,23 +730,6 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         channelProfile = null;
 
         break;
-      }
-
-      default: {
-
-        // "unavailable": a camera that can reach neither transport. It cannot use the timeshift buffer, and it has nothing to dial over RTSP either - a camera that CAN
-        // reach the livestream API always takes the buffer path instead, so this cell serves only cameras the API cannot reach. The policy's cause member picks the
-        // remedy, so nothing here re-derives the codec or capability facts the decision already weighed.
-        const errorMessage = (decision.cause === "av1") ?
-          "Unable to start video stream: FFmpeg does not currently support AV1-encoded RTSP streams, and this camera cannot use the timeshift buffer." :
-          "Unable to start video stream: this camera cannot use the timeshift buffer and none of its channels have a usable RTSP stream enabled. Enable at least one " +
-            "RTSP stream for this camera in the UniFi Protect webUI.";
-
-        this.log.error(errorMessage);
-        callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
-        this.disposePreparedSession(request.sessionID, sessionInfo);
-
-        return;
       }
     }
 

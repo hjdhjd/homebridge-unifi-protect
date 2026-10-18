@@ -1624,11 +1624,11 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
   // The camera's HKSV recording switch, looked up by its reserved subtype exactly as production acquires it.
   const recordingSwitch = (accessory: TestAccessory): TestService | undefined => accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_HKSV_RECORDING);
 
-  test("a third-party camera paired with an AI Port while running gains its motion sensor, then one rebuild carrying recording, the motion link, and reach " +
+  test("a third-party camera paired with an AI Port while running gains its motion sensor, then one rebuild carrying recording and the motion link " +
     "(fails without the leaf, fails with the leaf after the tamper leaf)", async () => {
 
-    // A third-party camera with no AI Port, reporting tamper detection with the setting on. It cannot back HKSV or reach the livestream API, so it constructs with no
-    // motion sensor and a controller built for neither.
+    // A third-party camera with no AI Port, reporting tamper detection with the setting on. It cannot back HKSV, so it constructs with no motion sensor and a
+    // controller built without eligibility.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasTamperDetection: true }, isThirdPartyCamera: true,
       smartDetectSettings: { enableTamperDetection: true } });
     const { accessory, camera, harness, store } = await build({ cameraConfig, mqtt: true });
@@ -1637,7 +1637,6 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
 
       assert.equal(motionSensor(accessory), undefined, "a camera that cannot back HKSV constructs with no motion sensor");
       assert.equal(camera.stream?.builtFor.hksvCapable, false, "the construction-built controller is built without HKSV eligibility");
-      assert.equal(camera.stream.builtFor.canUseLivestreamApi, false, "the construction-built controller is built without livestream-API reach");
       assert.equal(motionRegistrations(harness, "get") + motionRegistrations(harness, "set"), 0, "no motion MQTT is registered without the sensor");
 
       const churnBaseline = accessory.controllerEvents.length;
@@ -1668,7 +1667,6 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       assert.equal(harness.factory.createCalls.length - createBaseline, 1, "exactly one controller was built for the gain");
       assert.equal(harness.factory.createCalls.at(-1)?.motionSensorPresent, true, "the motion sensor stood when the rebuilt controller was built");
       assert.equal(camera.stream.builtFor.hksvCapable, true, "the rebuilt controller is built for HKSV eligibility");
-      assert.equal(camera.stream.builtFor.canUseLivestreamApi, true, "the rebuilt controller is built for livestream-API reach");
       assert.equal(countLines(harness.logEntries, "info", AI_PORT_GAIN, logBaseline), 1, "exactly one info line names the AI Port gain");
     } finally {
 
@@ -1801,7 +1799,6 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
         assert.deepEqual(churnSince(accessory, churnBaseline), [], "the withdrawal fired zero controller events");
         assert.equal(motionSensor(accessory), sensor, "the motion sensor remains");
         assert.equal(camera.stream.builtFor.hksvCapable, true, "the standing controller keeps its HKSV eligibility term");
-        assert.equal(camera.stream.builtFor.canUseLivestreamApi, true, "the standing controller keeps its reach term");
 
         // An unrelated setting change re-runs the chokepoint with no rising edge. The leaf narrates nothing, so the warning stays single; narrating the withdrawal in
         // the leaf repeats it here -> RED.
@@ -1877,27 +1874,34 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
     }
   });
 
-  test("a third-party camera with no RTSP channel and no delegate establishes its first controller on the AI Port gain, with the sensor in place", async () => {
+  test("a camera with no channel gains eligibility, then its channels arrive, and its first controller is built with the sensor in place", async () => {
 
-    // No channel has RTSP enabled, so the derivation of a camera that cannot reach the livestream API returns nothing and no delegate stands.
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS.map((channel) => ({ ...channel, isRtspEnabled: false })), isThirdPartyCamera: true });
+    // No channel exists yet, so the derivation returns nothing and no delegate stands while the gain composes the sensor.
+    const cameraConfig = makeCameraConfig({ channels: [], isThirdPartyCamera: true });
     const { accessory, camera, harness, store } = await build({ cameraConfig });
 
     try {
 
-      assert.equal(camera.stream, undefined, "no delegate stands for a camera that can reach neither transport");
+      assert.equal(camera.stream, undefined, "no delegate stands for a camera with no channel");
       assert.deepEqual(churnSince(accessory, 0), [], "no controller was ever registered");
 
       store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
 
       await settle();
 
+      assert.ok(motionSensor(accessory), "the gain created the motion sensor");
+      assert.equal(camera.stream, undefined, "the gain built no controller, since there is still nothing to advertise");
+
+      store.pushCameraPatch(cameraConfig.id, { channels: G2_PRO_CHANNELS });
+
+      await settle();
+
       const create = harness.factory.createCalls.at(-1);
 
       assert.ok(motionSensor(accessory), "the gain created the motion sensor");
-      assert.deepEqual(churnSince(accessory, 0), ["configure"], "the gain established the first controller: one configure and zero remove");
-      assert.ok(create, "the gain built a controller");
-      assert.equal(camera.stream, create.delegate, "the camera holds the delegate the gain built");
+      assert.deepEqual(churnSince(accessory, 0), ["configure"], "the channels established the first controller: one configure and zero remove");
+      assert.ok(create, "the channels built a controller");
+      assert.equal(camera.stream, create.delegate, "the camera holds the delegate the channels built");
       assert.equal(create.motionSensorPresent, true, "the motion sensor stood when the first controller was built");
       assert.equal(create.delegate.builtFor.hksvCapable, true, "the first controller is built for HKSV eligibility");
     } finally {

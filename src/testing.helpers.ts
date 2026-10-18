@@ -1545,7 +1545,7 @@ export class TestStreamingDelegate implements StreamingDelegate {
   public timeshift: StreamingDelegate["timeshift"];
 
   // The default identity, which no host stands behind, is the record with every term false: a delegate built for nothing, so any term a test raises is an appearance.
-  public constructor(builtFor: ControllerIdentity = { canUseLivestreamApi: false, hksvCapable: false, isDoorbell: false, twoWayAudio: false },
+  public constructor(builtFor: ControllerIdentity = { hksvCapable: false, isDoorbell: false, twoWayAudio: false },
     maxSourcePixels = Infinity) {
 
     this.builtFor = builtFor;

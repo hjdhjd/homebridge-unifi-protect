@@ -31,7 +31,6 @@ import { ProtectReservedNames } from "../../types.ts";
 import { RtspLivestreamSubscription } from "../../media/livestream.ts";
 import type { StreamQualityTier } from "../../options.ts";
 import type { StreamingCapability } from "./streaming.ts";
-import { canUseLivestreamApi } from "../../media/stream-source-policy.ts";
 import { capabilityReconcileAction } from "./capability-reconcile-policy.ts";
 import { mqttTopics } from "../../mqtt.ts";
 import { resolveLegacySelection } from "../../options-legacy.ts";
@@ -1382,6 +1381,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
      *
      * The quality pin is part of the need set even for a buffer-mode camera: the buffer-down resilience fallback dials the pinned channel BY NAME, so a pin naming a
      * channel the controller never enabled would be a hard live-view failure the moment the buffer blinks.
+     *
+     * Every camera follows this one rule, a third-party camera included: under the default configuration a buffer-mode camera needs no RTSP, so we enable none on its
+     * behalf, and its snapshots fall back from the buffer to the controller's snapshot API rather than to an RTSP stream.
      */
     const needsRtspTransport = !this.usesTimeshiftLivestream && (this.ufp.videoCodec !== "av1");
     const needsRtsp = needsRtspTransport || this.hasFeature("Debug.Video.Timeshift.UseRtsp") || Boolean(this.resolveChannelPin("Video.Rtsp.Only"));
@@ -1448,21 +1450,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       }
 
       nativeEntries.push(buildChannelProfile(channel, { rtspPort: this.nvr.ufp.ports.rtsps, urlHost: this.rtspHost }));
-    }
-
-    /* Nothing can serve this camera: it cannot reach the livestream API, and it has no usable RTSP stream to dial either, so it must not advertise itself to HomeKit at
-     * all. Every camera the API CAN reach advertises whenever a sane primary channel exists - its live views degrade to the buffer path when RTSP cannot serve them -
-     * which is why this terminal is the API-incapable population's alone.
-     *
-     * We evaluate it after the sanity pass so the answer agrees with the list we actually publish: "usable" means a channel that both has RTSP enabled and survived the
-     * dimension check, so a camera whose only RTSP-enabled channel is a dimension oddity is never misdiagnosed as an RTSP-configuration problem.
-     */
-    if(!canUseLivestreamApi(this.ufp) && !nativeEntries.some(entry => entry.channel.isRtspEnabled)) {
-
-      this.log.info("This camera cannot use the UniFi Protect livestream API and none of its channels have a usable RTSP stream enabled. " +
-        "Enable at least one RTSP stream in the UniFi Protect webUI or grant the plugin's account the full management role.");
-
-      return null;
     }
 
     // Synthesize the full advertised resolution list HomeKit consumes from the native entries. The list build is preference-free: the streaming-quality preference is a
@@ -1657,14 +1644,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     this.log.info(this.ufp.isThirdPartyCamera ? "This camera is paired with an AI Port and can now support HomeKit Secure Video." :
       "This camera is no longer managed by UniFi Access and can now support HomeKit Secure Video.");
-
-    // The gain can make a derivation possible that returned nothing before - a third-party camera with no RTSP-enabled channel streams through the livestream API once
-    // an AI Port gives it reach - so a camera holding no delegate re-runs the streaming reconcile, whose create-once gate builds the first controller with the sensor in
-    // place.
-    if(!this.stream) {
-
-      void this.acquireStreaming().reconcile();
-    }
 
     return true;
   }
@@ -1997,7 +1976,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // Wake the supervisor on every availability change, both directions. The offline edge stops an in-flight buffer through the honest terminated path, and the online
     // edge re-establishes a buffer an offline-at-startup reconcile could not - so this is deliberately NOT reachability-gated. The optional chain no-ops for a camera
-    // without a supervisor, and the reconcile's own coalescing makes any sweep-driven extra call a harmless no-op.
+    // whose streaming delegate has not been built yet, and the reconcile's own coalescing makes any sweep-driven extra call a harmless no-op.
     void this.stream?.timeshift?.reconcile();
   }
 
@@ -2200,16 +2179,14 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return capabilityReconcileAction({ attached: this.accessory.getService(this.hap.Service.MotionSensor) !== undefined, reported: this.isHksvCapable });
   }
 
-  // Whether buffer-backed livestreaming is enabled and this camera is capable of it - the streaming demand arm of the standing timeshift buffer. This composes the
-  // user's toggle with the shared livestream-API capability predicate, deliberately not isHksvCapable, whose meaning is motion-event capability for HomeKit Secure
-  // Video. Because it does not exclude Access-adopted Ubiquiti cameras, those cameras join the streaming arm and the toggle does real work for them. The one remaining
-  // provisional corner: a non-AiPort third-party camera stays excluded pending its own livestream-accessibility verification, and canUseLivestreamApi is the single
-  // definition to widen when that is settled. The capability read goes through the record non-throwing (fromRecord), so a camera whose record has vanished in the
-  // removal grace reports false rather than throwing on every consumer that reads it - the supervisor's reconcile pass, the parent's channel derivation, and the
-  // session-source decision - each of which reads it live.
+  // Whether buffer-backed livestreaming is enabled for this camera - the streaming demand arm of the standing timeshift buffer. The livestream API serves every adopted
+  // camera, so the user's toggle is the whole decision for a camera whose record is present; it is deliberately not isHksvCapable, whose meaning is motion-event
+  // capability for HomeKit Secure Video, so a camera with no recording arm still joins the streaming arm. A camera whose record has vanished in the removal grace
+  // reads false rather than demanding a buffer for a camera that is gone, on every consumer that reads it live - the supervisor's reconcile pass, the parent's channel
+  // derivation, and the session-source decision.
   public get usesTimeshiftLivestream(): boolean {
 
-    return this.hints.tsbStreaming && this.fromRecord(canUseLivestreamApi, false);
+    return this.hints.tsbStreaming && this.recordPresent;
   }
 
   // The active recording mode, read non-throwing through the record. An absent record (a camera in the removal grace) reports an empty mode - which matches none

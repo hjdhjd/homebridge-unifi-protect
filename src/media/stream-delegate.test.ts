@@ -5,8 +5,8 @@
  *
  * The rising edge is walked over every term of the identity, each term moved alone against an otherwise equal record, so a term the edge forgets reads as a miss. The
  * derivation is read term by term against the media host double, and both the production delegate and the stub factory are shown to capture exactly what the derivation
- * answers, so the identity a controller is built for and the identity the reconcile checks it against cannot drift apart. The samplerate table walks the doorbell and
- * capability axes. The recording audio format helpers are walked row by row: the format read from a description, the stand-in, the mapping between hertz and
+ * answers, so the identity a controller is built for and the identity the reconcile checks it against cannot drift apart. The samplerate table walks the doorbell
+ * axis. The recording audio format helpers are walked row by row: the format read from a description, the stand-in, the mapping between hertz and
  * HomeKit's recording rates in both directions, the copy-or-transcode match with each way it can fail, and the log rendering.
  */
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingSamplerate } from "homebridge-plugin-utils";
@@ -34,8 +34,8 @@ after(() => {
 
 // The identity with every term false, and the identity with every term true. Each is typed as the record, so a term the identity gains is a compile error here until
 // both literals carry it - which is what keeps the per-term walks below exhaustive.
-const NONE: ControllerIdentity = { canUseLivestreamApi: false, hksvCapable: false, isDoorbell: false, twoWayAudio: false };
-const ALL: ControllerIdentity = { canUseLivestreamApi: true, hksvCapable: true, isDoorbell: true, twoWayAudio: true };
+const NONE: ControllerIdentity = { hksvCapable: false, isDoorbell: false, twoWayAudio: false };
+const ALL: ControllerIdentity = { hksvCapable: true, isDoorbell: true, twoWayAudio: true };
 
 // Every term of the identity, read off the exhaustive literal above.
 const TERMS = Object.keys(NONE) as (keyof ControllerIdentity)[];
@@ -83,32 +83,26 @@ describe("controllerIdentityOf - the one derivation of the identity", () => {
 
     controllers.push(controller);
 
-    // A third-party camera with no AI Port, not a doorbell, without two-way audio, and not HKSV-capable reads as every term false.
-    const unreachable = makeCameraConfig({ channels: G2_PRO_CHANNELS, isThirdPartyCamera: true });
+    // A camera that is not a doorbell, without two-way audio, and not HKSV-capable reads as every term false.
+    const plain = makeCameraConfig({ channels: G2_PRO_CHANNELS });
 
-    host.ufp = unreachable;
+    host.ufp = plain;
 
     assert.deepEqual(controllerIdentityOf(host), NONE, "a camera with none of the capabilities reads every term false");
 
-    // The reach term follows the livestream-API predicate over the record, and only that: an AI Port pairing gives the third-party camera reach.
-    host.ufp = makeCameraConfig({ channels: G2_PRO_CHANNELS, isPairedWithAiPort: true, isThirdPartyCamera: true });
-
-    assert.deepEqual(controllerIdentityOf(host), { ...NONE, canUseLivestreamApi: true }, "livestream-API reach raises the reach term alone");
-
     // The eligibility term follows the host's isHksvCapable, and only that.
-    host.ufp = unreachable;
     host.isHksvCapable = true;
 
     assert.deepEqual(controllerIdentityOf(host), { ...NONE, hksvCapable: true }, "HKSV eligibility raises the eligibility term alone");
 
     // The doorbell term follows the record's featureFlags.isDoorbell, and only that.
     host.isHksvCapable = false;
-    host.ufp = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { isDoorbell: true }, isThirdPartyCamera: true });
+    host.ufp = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { isDoorbell: true } });
 
     assert.deepEqual(controllerIdentityOf(host), { ...NONE, isDoorbell: true }, "a doorbell raises the doorbell term alone");
 
     // The two-way audio term follows the camera's two-way audio hint, and only that.
-    host.ufp = unreachable;
+    host.ufp = plain;
     host.hints.twoWayAudio = true;
 
     assert.deepEqual(controllerIdentityOf(host), { ...NONE, twoWayAudio: true }, "the two-way audio hint raises the two-way audio term alone");
@@ -134,27 +128,16 @@ describe("controllerIdentityOf - the one derivation of the identity", () => {
   });
 });
 
-describe("streamingSamplerates - the doorbell and capability axes", () => {
+describe("streamingSamplerates - the doorbell axis", () => {
 
-  test("a doorbell advertises both 16 and 24 kHz in every population", () => {
+  test("a doorbell advertises both of HomeKit's streaming rates", () => {
 
-    assert.deepEqual(streamingSamplerates({ canUseLivestreamApi: true, isDoorbell: true }),
-      [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ]);
-    assert.deepEqual(streamingSamplerates({ canUseLivestreamApi: false, isDoorbell: true }),
-      [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ]);
+    assert.deepEqual(streamingSamplerates({ isDoorbell: true }), [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ]);
   });
 
-  // The capability, not the user's transport preference, is what decides: a camera that can reach the livestream API may serve any given session from the buffer
-  // whatever the toggle says, so it advertises only what every one of its sessions can actually deliver.
-  test("a non-doorbell that can reach the livestream API advertises just 16 kHz", () => {
+  test("every other camera advertises the lower streaming rate alone", () => {
 
-    assert.equal(streamingSamplerates({ canUseLivestreamApi: true, isDoorbell: false }), AudioStreamingSamplerate.KHZ_16);
-  });
-
-  test("a non-doorbell that cannot reach the livestream API is RTSP-served and advertises both 16 and 24 kHz", () => {
-
-    assert.deepEqual(streamingSamplerates({ canUseLivestreamApi: false, isDoorbell: false }),
-      [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ]);
+    assert.equal(streamingSamplerates({ isDoorbell: false }), AudioStreamingSamplerate.KHZ_16);
   });
 });
 

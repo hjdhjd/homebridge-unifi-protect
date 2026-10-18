@@ -155,7 +155,7 @@ export class TestCameraHost implements ProtectCameraHost {
   // The camera-narrowed Protect device projection; settable, default a G2 Pro config so featureFlags / videoCodec reads resolve to a real record.
   public ufp: Readonly<ProtectCameraConfig>;
 
-  // Whether buffer-backed livestreaming is enabled and this camera is capable of it - the streaming demand arm of the standing buffer. Settable so a test can steer the
+  // Whether buffer-backed livestreaming is enabled for this camera - the streaming demand arm of the standing buffer. Settable so a test can steer the
   // streaming arm on and off; defaults false.
   public usesTimeshiftLivestream = false;
   public videoCodecName = "h264";

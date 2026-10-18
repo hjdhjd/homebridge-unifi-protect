@@ -16,16 +16,11 @@ import type { LivestreamDescription } from "unifi-protect";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectRecordingDelegate } from "./record.ts";
 import type { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
-import { canUseLivestreamApi } from "./stream-source-policy.ts";
 
 // The identity a CameraController is built for: every live-volatile camera fact its constructor freezes into it. HAP fixes a controller's options at construction, so
 // a camera the controller reports a capability for only after adoption carries a controller built for the wrong identity; the live capability reconcile compares the
 // camera's current identity against this and rebuilds in place only when a term has appeared.
 export interface ControllerIdentity {
-
-  // Whether the camera could reach the livestream API when the controller was built, which decides its streaming sample rates and whether a timeshift supervisor
-  // stands behind it.
-  readonly canUseLivestreamApi: boolean;
 
   // Whether the camera could back HomeKit Secure Video when the controller was built, which decides its recording arm and its link to the motion sensor.
   readonly hksvCapable: boolean;
@@ -51,18 +46,14 @@ export function controllerCapabilityAppeared(built: ControllerIdentity, current:
 // are spelled once.
 export function controllerIdentityOf(host: ProtectCameraHost): ControllerIdentity {
 
-  return { canUseLivestreamApi: canUseLivestreamApi(host.ufp), hksvCapable: host.isHksvCapable, isDoorbell: host.ufp.featureFlags.isDoorbell,
-    twoWayAudio: host.hints.twoWayAudio };
+  return { hksvCapable: host.isHksvCapable, isDoorbell: host.ufp.featureFlags.isDoorbell, twoWayAudio: host.hints.twoWayAudio };
 }
 
 // The streaming audio sample rates a camera advertises to HomeKit, which picks one per session and has the live view's audio encoded at that rate. A doorbell offers
-// HomeKit both of its streaming rates to choose from, and so does a camera the livestream API cannot reach, whose sessions are served directly over RTSP. Every other
-// camera offers the lower rate alone. The capability - not the user's transport preference - is what decides: a camera that can reach the livestream API may serve any
-// given session from the buffer whatever the toggle says, and the single rate holds for every session it serves, from the buffer or from the RTSP fallback. A pure
-// helper, red-green testable per population.
-export function streamingSamplerates(input: { canUseLivestreamApi: boolean; isDoorbell: boolean }): AudioStreamingSamplerate | AudioStreamingSamplerate[] {
+// HomeKit both of its streaming rates to choose from, and every other camera the lower rate alone. A pure helper, red-green testable per population.
+export function streamingSamplerates(input: { isDoorbell: boolean }): AudioStreamingSamplerate | AudioStreamingSamplerate[] {
 
-  return (input.isDoorbell || !input.canUseLivestreamApi) ? [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16;
+  return input.isDoorbell ? [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16;
 }
 
 // The audio format a camera's livestream carries, as its init segment describes it: the codec, the channel count, and the sample rate in hertz.
@@ -178,9 +169,9 @@ export interface StreamingDelegate {
   // to reset - so a caller that pairs this with another teardown never needs to track whether it has already run.
   shutdown(): void;
 
-  // The camera's standing-buffer supervision interface: the timeshift supervisor that owns the standing buffer's lifecycle for a camera that can reach the livestream
-  // API, or null when the camera cannot. The controller-disconnect and camera-teardown paths reach through this to shut supervision down terminally, and the snapshot
-  // and livestream paths read the supervised buffer through it.
+  // The camera's standing-buffer supervision interface: the timeshift supervisor that owns the standing buffer's lifecycle, which stands for every camera and reads null
+  // in the test stub alone. The controller-disconnect and camera-teardown paths reach through this to shut supervision down terminally, and the snapshot and
+  // livestream paths read the supervised buffer through it.
   timeshift: Nullable<ProtectTimeshiftSupervisor>;
 }
 

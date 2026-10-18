@@ -10,14 +10,13 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveSessionSource } from "./stream-source-policy.ts";
 
-// The neutral session-source input: buffer-backed livestreaming off, no recording, buffer down, a plain camera on H.264 that can reach the livestream API and has an
-// RTSP-enabled stream to dial, no A/B flip. Each test overrides only the axes it exercises, so the single variable per cell is the input under test. The capability
-// defaults (canUseBuffer, hasRtspStream) are true because that is the ordinary camera every pre-existing cell below was written against, which is what makes those cells
-// the parity floor.
+// The neutral session-source input: buffer-backed livestreaming off, no recording, buffer down, a plain camera on H.264 with an RTSP-enabled stream to dial, no A/B
+// flip. Each test overrides only the axes it exercises, so the single variable per cell is the input under test. The hasRtspStream default is true because that is the
+// ordinary camera every pre-existing cell below was written against, which is what makes those cells the parity floor.
 function input(overrides: Partial<Parameters<typeof resolveSessionSource>[0]> = {}): Parameters<typeof resolveSessionSource>[0] {
 
-  return { abTestFlip: false, bufferStarted: false, canUseBuffer: true, hasRecordingDemand: false, hasRtspStream: true, isPackageCamera: false,
-    usesTimeshiftLivestream: false, videoCodec: "h264", ...overrides };
+  return { abTestFlip: false, bufferStarted: false, hasRecordingDemand: false, hasRtspStream: true, isPackageCamera: false, usesTimeshiftLivestream: false,
+    videoCodec: "h264", ...overrides };
 }
 
 describe("resolveSessionSource - the seed and the buffer-liveness fallback", () => {
@@ -144,32 +143,5 @@ describe("resolveSessionSource - the no-RTSP-stream grid (the camera can reach t
   test("the A/B flip off the buffer comes back to the buffer path when there is no RTSP stream to swap to", () => {
 
     assert.deepEqual(resolveSessionSource(input({ abTestFlip: true, hasRtspStream: false, usesTimeshiftLivestream: true })), { kick: true, source: "bufferDegraded" });
-  });
-});
-
-describe("resolveSessionSource - the unavailable terminal (the camera cannot reach the API)", () => {
-
-  test("no buffer and no RTSP stream is unavailable, and the cause names the RTSP remedy", () => {
-
-    assert.deepEqual(resolveSessionSource(input({ canUseBuffer: false, hasRtspStream: false, usesTimeshiftLivestream: false })),
-      { cause: "noRtspStream", kick: false, source: "unavailable" });
-  });
-
-  // AV1 wins the cause label when both hold: enabling an RTSP stream cannot help a camera FFmpeg could not carry that way regardless, so the remedy would mislead.
-  test("no buffer, no RTSP stream, and AV1 is unavailable with the AV1 cause", () => {
-
-    assert.deepEqual(resolveSessionSource(input({ canUseBuffer: false, hasRtspStream: false, usesTimeshiftLivestream: false, videoCodec: "av1" })),
-      { cause: "av1", kick: false, source: "unavailable" });
-  });
-
-  test("no buffer and AV1 is unavailable even with an RTSP stream available, since FFmpeg cannot carry AV1 that way", () => {
-
-    assert.deepEqual(resolveSessionSource(input({ canUseBuffer: false, usesTimeshiftLivestream: false, videoCodec: "av1" })),
-      { cause: "av1", kick: false, source: "unavailable" });
-  });
-
-  test("no buffer but an RTSP stream on H.264 dials RTSP exactly as it always has", () => {
-
-    assert.deepEqual(resolveSessionSource(input({ canUseBuffer: false, usesTimeshiftLivestream: false })), { kick: false, source: "rtsp" });
   });
 });

@@ -109,8 +109,8 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
   });
 
   // The streaming delegate: the one ctor here that composes rather than field-copies. It builds the real FfmpegOptions, decides its capability arms from the host's
-  // reads, and hands HAP a composed CameraControllerOptions. The arms are asserted separately because they answer different questions: the stub host is not a
-  // third-party camera, so the buffer-backed supervisor constructs, while it is not HKSV-capable, so no recording delegate does. The recorded options carrying the
+  // reads, and hands HAP a composed CameraControllerOptions. The arms are asserted separately because they answer different questions: the buffer-backed supervisor
+  // stands for every camera, while the stub host is not HKSV-capable, so no recording delegate does. The recorded options carrying the
   // delegate itself is the proof the composed object reached the controller intact rather than a coincidental non-null.
   test("ProtectStreamingDelegate constructs against the stub host with the real FfmpegOptions", () => {
 
@@ -123,12 +123,26 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
 
     assert.ok(cameraController instanceof TestCameraController, "the delegate constructed the hap camera controller");
     assert.equal(cameraController.options.delegate, stream, "the composed controller options carry the delegate itself");
-    assert.notEqual(stream.timeshift, null, "the buffer-backed supervisor constructed for a camera that is not third-party");
+    assert.notEqual(stream.timeshift, null, "the buffer-backed supervisor constructed, as it does for every camera");
     assert.equal(stream.hksv, null, "no recording delegate constructed for a host that is not HKSV-capable");
 
     // The macOS hardware-acceleration nudge is the only warn-level line construction can emit, and it requires a hostSystem beginning with "macOS." - the harness
     // reports a bare "macOS", so it stays silent. A warn here would mean the real FfmpegOptions reached something the stub profile does not model.
     assert.equal(logEntries.filter((entry) => entry.level === "warn").length, 0, "construction warned about nothing");
+  });
+
+  // The supervisor stands for every camera, a third-party camera with no AI Port included, while the recording delegate stays the HKSV-capable camera's alone.
+  test("ProtectStreamingDelegate against a third-party host without an AI Port builds the timeshift supervisor and no recording delegate", () => {
+
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+    host.ufp = makeCameraConfig({ channels: G2_PRO_CHANNELS, isThirdPartyCamera: true });
+
+    const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]);
+
+    assert.ok(stream.timeshift instanceof ProtectTimeshiftSupervisor, "the third-party camera's delegate stands its timeshift supervisor");
+    assert.equal(stream.hksv, null, "no recording delegate constructed for a host that is not HKSV-capable");
   });
 
   // The capable column of the same construction: a host that can back HKSV gets the recording delegate, the controller options carry the recording arm that delegate
@@ -173,7 +187,7 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
 
       assert.equal(stream.builtFor.hksvCapable, true, "the vacuity guard: the delegate built its recording arm");
       assert.deepEqual(stream.builtFor, controllerIdentityOf(host), "the identity is the derivation over the host, whatever the audio format");
-      assert.deepEqual(Object.keys(stream.builtFor).toSorted(), [ "canUseLivestreamApi", "hksvCapable", "isDoorbell", "twoWayAudio" ],
+      assert.deepEqual(Object.keys(stream.builtFor).toSorted(), [ "hksvCapable", "isDoorbell", "twoWayAudio" ],
         "the identity carries the same terms, none of them audio");
 
       return { codec: Array.isArray(codecs) ? codecs[0] : codecs, stream };

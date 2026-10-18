@@ -388,28 +388,24 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     assert.equal(factory.createCalls.length, 1, "the degraded arm stands the delegate up from the already-enabled channels");
   });
 
-  test("a camera that can reach neither the livestream API nor an RTSP stream declines to advertise", async () => {
+  test("a third-party camera with every channel RTSP-disabled stands its delegate up under default config, writing nothing and declining nothing", async () => {
 
-    const { factory, logEntries, projection } = built = await buildCamera({ channels: allDisabled(G2_PRO_CHANNELS), isThirdPartyCamera: true,
-      updateRejection: new ProtectAuthorizationError("forbidden") });
+    const { factory, logEntries, projection } = built = await buildCamera({ channels: allDisabled(G2_PRO_CHANNELS), isThirdPartyCamera: true });
 
-    assert.equal(projection.updateCalls.length, 1, "a camera that cannot use the API streams over RTSP, so the enable write was attempted");
-    assert.ok(loggedAt(logEntries, "warn", AUTH_WARN), "the failed write narrates the authorization warn");
-    assert.ok(loggedAt(logEntries, "info", "This camera cannot use the UniFi Protect livestream API and none of its channels have a usable RTSP stream enabled."),
-      "the terminal names both halves of what is missing, with the remedies for each");
-    assert.equal(factory.createCalls.length, 0, "nothing can serve this camera, so it stands up no delegate");
+    assert.equal(projection.updateCalls.length, 0, "nothing needs RTSP, so no enable write is attempted");
+    assert.equal(logCount(logEntries, "info", "none of its channels have a usable RTSP stream enabled"), 0, "no line declines to advertise the camera");
+    assert.equal(factory.createCalls.length, 1, "the third-party camera stands its delegate up, served through the livestream API");
   });
 
-  test("an API-capable camera with every channel RTSP-disabled stands its delegate up under default config - the headline inversion", async () => {
+  test("a camera with every channel RTSP-disabled stands its delegate up under default config - the headline inversion", async () => {
 
-    const { camera, factory, logEntries, projection } = built = await buildCamera({ channels: allDisabled(G2_PRO_CHANNELS) });
+    const { camera, factory, projection } = built = await buildCamera({ channels: allDisabled(G2_PRO_CHANNELS) });
 
     assert.equal(projection.updateCalls.length, 0, "nothing needs RTSP, so no write is attempted");
     assert.equal(factory.createCalls.length, 1, "the camera advertises and stands its delegate up with zero RTSP-enabled channels");
     assert.equal(camera.hasRtspStream, false, "the camera honestly reports that it has no RTSP stream to dial");
     assert.equal(camera.selectChannel(1920, 1080), null, "the direct-RTSP selector answers nothing, since nothing is enabled");
     assert.ok(camera.selectSubstrateChannel(), "the buffer substrate resolves anyway - the livestream API serves the channel regardless");
-    assert.equal(logCount(logEntries, "info", "cannot use the UniFi Protect livestream API"), 0, "no terminal fires for a camera the API can serve");
   });
 
   test("a toggle-off camera with every channel RTSP-disabled still advertises, its live views degrading to the buffer", async () => {
@@ -424,7 +420,6 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     assert.equal(factory.createCalls.length, 1, "the toggle-off camera advertises anyway");
     assert.equal(camera.hasRtspStream, false, "there is still nothing to dial directly");
     assert.ok(camera.selectSubstrateChannel(), "the buffer substrate resolves, so the buffer, HKSV, and snapshots all have a channel");
-    assert.equal(logCount(logEntries, "info", "cannot use the UniFi Protect livestream API"), 0, "no terminal fires - the API can serve this camera");
   });
 
   test("a later channels wake re-attempts the declined write - there is no failure latch", async () => {

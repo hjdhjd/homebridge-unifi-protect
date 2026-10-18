@@ -55,7 +55,7 @@ export interface TestCameraFeatureFlags {
  *                  defaults (a doorbell test sets isDoorbell, a package test adds hasPackageCamera); chimeDuration / enableNfc / isDark / lcdMessage: the
  *                  doorbell-adjacent fields its configure paths read; id / mac / name: optional identity overrides; isAdoptedByAccessApp: whether UniFi Access
  *                  has adopted the camera, the term that with the AI Port fields below decides HomeKit Secure Video eligibility (default false); isPairedWithAiPort /
- *                  isThirdPartyCamera: the livestream-API capability pair, overridable so a test can model a third-party camera with no AiPort (both default
+ *                  isThirdPartyCamera: the AI Port pair, overridable so a test can model a third-party camera with no AI Port (both default
  *                  to the first-party camera every other suite assumes); smartDetectSettings: the controller-side smart-detection settings, whose
  *                  enabled-type lists default to mirroring the advertised capability (see below); videoCodec: the codec string (default "h264"), overridable
  *                  to "av1" so the playlist filter's codec exclusion can be exercised.
@@ -103,8 +103,8 @@ export function makeCameraConfig(options: { accessDeviceMetadata?: { featureFlag
     isAdoptedByAccessApp: options.isAdoptedByAccessApp ?? false,
     isDark: options.isDark ?? false,
 
-    // The livestream-API capability pair, overridable so a test can model the one population that cannot reach the API: a third-party camera with no AiPort. Both
-    // default to the first-party camera every other suite assumes.
+    // The AI Port pair, overridable so a test can model a third-party camera with or without an AI Port, which with the Access term above decides the camera's HKSV
+    // eligibility. Both default to the first-party camera every other suite assumes.
     isPairedWithAiPort: options.isPairedWithAiPort ?? false,
     isThirdPartyCamera: options.isThirdPartyCamera ?? false,
     ispSettings: { icrCustomValue: 0, irLedMode: "off" },
