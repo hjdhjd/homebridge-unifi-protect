@@ -358,8 +358,12 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       // capability resting states (it is the adoption-or-restart path), distinct from the live observe reconciles the capability observers drive later.
       await Promise.all([ this.reconcileCapabilities("construct"), this.acquireStreaming().reconcile() ]);
 
-      // Configure our camera details.
-      this.configureCameraDetails();
+      // Configure our camera details when the reconcile registered no controller. A registration runs the pass itself through onControllerRegistered, so each initial
+      // value is written once; with no controller, an operating-mode service restored from the accessory cache stands alone, and the gate still rules on it.
+      if(!this.stream) {
+
+        this.configureCameraDetails();
+      }
 
       // Configure our NVR recording switches.
       this.configureNvrRecordingSwitch();
@@ -998,13 +1002,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // Configure a switch to mute doorbell ring events in HomeKit.
   private configureDoorbellMuteSwitch(): boolean {
 
-    // Validate whether we should have this service enabled, adding the switch to the camera if needed. The mute switch is created only beside a Doorbell service, so the
-    // verdict refuses creation while the camera carries none; a switch already present is left in place in that case, and the branch below still clears the muted state.
+    // Validate whether we should have this service enabled, adding the switch to the camera if needed. The mute switch exists only beside a Doorbell service, so the
+    // verdict removes it from a camera that carries none, and a camera without the switch holds no muted state.
     const hasDoorbell = !!this.accessory.getService(this.hap.Service.Doorbell);
     const { service } = this.validService({ name: this.accessoryName + " Doorbell Mute", serviceType: this.hap.Service.Switch,
-      subtype: ProtectReservedNames.SWITCH_DOORBELL_MUTE, validate: (hasService) => this.hasFeature("Doorbell.Mute") && (hasService || hasDoorbell) });
+      subtype: ProtectReservedNames.SWITCH_DOORBELL_MUTE, validate: this.hasFeature("Doorbell.Mute") && hasDoorbell });
 
-    if(!service || !hasDoorbell) {
+    if(!service) {
 
       delete this.accessory.context.doorbellMuted;
 
@@ -1454,6 +1458,17 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
   }
 
+  /* The camera family's registration HOST HOOK, called by the composed streaming capability directly after it registers this camera's CameraController. Registering a
+   * controller is what gives the accessory its operating-mode service: hap-nodejs reuses one restored from the accessory cache, or builds a fresh one carrying neither
+   * the status light nor night vision, on the first build, on a build the first derivation deferred, and on every rebuild. The camera-details pass runs here so that
+   * every operating-mode service a registration produces gets the gate's ruling and the handlers it binds. Public because the capability calls it across the
+   * composition boundary, and synchronous by contract, since it runs inside the create-once stretch, which yields nowhere.
+   */
+  public onControllerRegistered(): void {
+
+    this.configureCameraDetails();
+  }
+
   // Configure HomeKit Secure Video support.
   private configureHksv(): boolean {
 
@@ -1879,7 +1894,14 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     if(this.hints.nightVision) {
 
-      this.accessory.getService(this.hap.Service.CameraOperatingMode)?.updateCharacteristic(this.hap.Characteristic.NightVision, this.nightVision);
+      // Write only to a characteristic the camera-details gate kept. updateCharacteristic attaches an absent characteristic, so an unguarded write would re-create one
+      // the gate removed, with no handlers bound.
+      const service = this.accessory.getService(this.hap.Service.CameraOperatingMode);
+
+      if(service?.testCharacteristic(this.hap.Characteristic.NightVision)) {
+
+        service.updateCharacteristic(this.hap.Characteristic.NightVision, this.nightVision);
+      }
     }
 
     if(this.hasFeature("Device.NightVision.Dimmer")) {
@@ -1898,7 +1920,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     if(this.hints.ledStatus) {
 
-      this.accessory.getService(this.hap.Service.CameraOperatingMode)?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.statusLed);
+      // Write only to a characteristic the camera-details gate kept, so a push never re-creates one the gate removed.
+      const service = this.accessory.getService(this.hap.Service.CameraOperatingMode);
+
+      if(service?.testCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator)) {
+
+        service.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.statusLed);
+      }
     }
 
     if(this.hasFeature("Device.StatusLed.Switch")) {

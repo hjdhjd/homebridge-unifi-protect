@@ -146,12 +146,14 @@ export function resolveChannelRequest(input: { isTranscoding: boolean; requestHe
  * @param input.transcodeBitrate            - The user's configured transcode bitrate, in kbps; zero leaves HomeKit's request in place.
  * @param input.transcodeHighLatencyBitrate - The user's configured high-latency transcode bitrate, in kbps; zero leaves HomeKit's request in place.
  * @param input.useTsb                      - Whether this session rides the timeshift buffer's pooled fMP4 socket rather than direct RTSP.
+ * @param input.videoCodec                  - The camera's source video codec, carried in the transcode bag so FFmpeg's decoder and encoder read one pipeline description.
  *
  * @returns The resolved {@link VideoEncodingDecision}.
  */
 export function resolveVideoEncoding(input: { channelBitrate: number; channelFps: number; cpuGeneration: number; hostSystem: string; isHighLatency: boolean;
   isPackageCamera: boolean; isTranscoding: boolean; requestBitrate: number; requestFps: number; requestHeight: number; requestLevel: H264Level;
-  requestProfile: H264Profile; requestWidth: number; transcodeBitrate: number; transcodeHighLatencyBitrate: number; useTsb: boolean; }): VideoEncodingDecision {
+  requestProfile: H264Profile; requestWidth: number; transcodeBitrate: number; transcodeHighLatencyBitrate: number; useTsb: boolean;
+  videoCodec: string; }): VideoEncodingDecision {
 
   // 1. Set the initial bitrate we should use for this request based on what HomeKit is requesting.
   let targetBitrate = input.requestBitrate;
@@ -191,6 +193,7 @@ export function resolveVideoEncoding(input: { channelBitrate: number; channelFps
       fps: useInterpolationFilter ? input.channelFps : input.requestFps,
       height: input.requestHeight,
       idrInterval: HOMEKIT_IDR_INTERVAL,
+      inputCodec: input.videoCodec,
       inputFps: input.channelFps,
       level: input.requestLevel,
       profile: input.requestProfile,

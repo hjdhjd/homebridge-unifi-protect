@@ -267,6 +267,9 @@ export class ProtectSnapshot {
       return null;
     }
 
+    // The JPEG encode runs on the CPU, so we describe a software-encoded pipeline and the decoder hands its frames over in system memory for the crop and scale filters.
+    const decoderOptions = this.protectCamera.stream.ffmpegOptions.videoDecoder({ hardwareTranscoding: false, inputCodec: this.protectCamera.ufp.videoCodec });
+
     // Options we use to generate an image based on our MP4 input are:
     //
     // -hide_banner         Suppress printing the startup banner in FFmpeg.
@@ -278,8 +281,6 @@ export class ProtectSnapshot {
     // -fps_mode vfr        Ensure we deal with any variable frame rates that might occur.
     // -frames:v 1          Extract a single video frame for the output.
     // -q:v 2               Set the quality output of the JPEG output.
-    const decoderOptions = this.protectCamera.stream.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec);
-
     const commandLineOptions = [
 
       "-hide_banner",
@@ -299,9 +300,6 @@ export class ProtectSnapshot {
     // the crop coordinates (which use relative iw/ih multipliers) operate on the source resolution, and the subsequent scale+pad fits the cropped region into HomeKit's
     // requested dimensions.
     const filters: string[] = [];
-
-    // If hardware decoding produces GPU-resident frames, we need to transfer them to system memory before any CPU-based filters can operate on them.
-    filters.push(...this.protectCamera.stream.ffmpegOptions.hardwareDownloadFilters);
 
     // Apply the crop filter if configured. The crop coordinates use relative iw/ih multipliers, making them resolution-independent and safe to apply at any point in the
     // filter chain. We place it before scale so the aspect ratio calculations in scale+pad reflect the cropped region rather than the full frame.

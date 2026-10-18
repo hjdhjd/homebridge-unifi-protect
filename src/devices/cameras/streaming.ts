@@ -119,6 +119,10 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
     // Fire up the controller and inform HomeKit about it.
     this.accessory.configureController(this.#stream.controller);
 
+    // Tell the host its controller is registered, so it can configure the services the registration gave the accessory. The call is synchronous, like the rest of this
+    // stretch.
+    this.host.onControllerRegistered();
+
     // Kick the supervisor so the standing timeshift buffer establishes for this camera's streaming arm, independent of any HomeKit Secure Video recording demand.
     void this.#stream.timeshift?.reconcile();
   }

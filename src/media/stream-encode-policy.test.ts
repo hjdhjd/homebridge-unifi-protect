@@ -29,21 +29,21 @@ function channelInput(overrides: Partial<Parameters<typeof resolveChannelRequest
 }
 
 // The neutral encoding input: a copy-mode direct-RTSP session on a plain Linux host, HomeKit asking for 1920x1080@30 at 3000 kbps, fed by a 30 fps channel whose own
-// ceiling of 6000 kbps sits above the request, with no configured transcode bitrates. Every bitrate here is in kbps.
+// ceiling of 6000 kbps sits above the request, from an H.264 camera, with no configured transcode bitrates. Every bitrate here is in kbps.
 function encodingInput(overrides: Partial<Parameters<typeof resolveVideoEncoding>[0]> = {}): Parameters<typeof resolveVideoEncoding>[0] {
 
   return { channelBitrate: 6000, channelFps: 30, cpuGeneration: 0, hostSystem: "linux", isHighLatency: false, isPackageCamera: false, isTranscoding: false,
     requestBitrate: 3000, requestFps: 30, requestHeight: 1080, requestLevel: H264Level.LEVEL4_0, requestProfile: H264Profile.MAIN, requestWidth: 1920,
-    transcodeBitrate: 0, transcodeHighLatencyBitrate: 0, useTsb: false, ...overrides };
+    transcodeBitrate: 0, transcodeHighLatencyBitrate: 0, useTsb: false, videoCodec: "h264", ...overrides };
 }
 
-// The encoder-options bag the neutral encoding input is expected to produce once transcoding is on: HomeKit's request in full, the channel's frame rate as the declared
-// input rate, the HomeKit I-frame interval, and no filters. These are hand-written expectations, not a mirror of the policy - each test spreads the one field its axis
-// moves, so every assertion below stays a whole-result comparison.
+// The encoder-options bag the neutral encoding input is expected to produce once transcoding is on: HomeKit's request in full, the camera's H.264 source codec, the
+// channel's frame rate as the declared input rate, the HomeKit I-frame interval, and no filters. These are hand-written expectations, not a mirror of the policy - each
+// test spreads the one field its axis moves, so every assertion below stays a whole-result comparison.
 function transcodeBag(overrides: Partial<VideoEncoderOptions> = {}): VideoEncoderOptions {
 
-  return { bitrate: 3000, fps: 30, height: 1080, idrInterval: HOMEKIT_IDR_INTERVAL, inputFps: 30, level: H264Level.LEVEL4_0, profile: H264Profile.MAIN, width: 1920,
-    ...overrides };
+  return { bitrate: 3000, fps: 30, height: 1080, idrInterval: HOMEKIT_IDR_INTERVAL, inputCodec: "h264", inputFps: 30, level: H264Level.LEVEL4_0,
+    profile: H264Profile.MAIN, width: 1920, ...overrides };
 }
 
 describe("resolveTranscodeDecision - the circumstances that force a re-encode", () => {
@@ -160,6 +160,13 @@ describe("resolveVideoEncoding - the transcode bag", () => {
 
     assert.deepEqual(resolveVideoEncoding(encodingInput({ channelFps: 15, isTranscoding: true, requestFps: 30 })),
       { encoderOptions: transcodeBag({ inputFps: 15 }), mode: "transcode", targetBitrate: 3000 });
+  });
+
+  test("the camera's source codec is the input codec the transcode bag describes, and a copy's result is the same whatever the codec", () => {
+
+    assert.deepEqual(resolveVideoEncoding(encodingInput({ isTranscoding: true, videoCodec: "hevc" })),
+      { encoderOptions: transcodeBag({ inputCodec: "hevc" }), mode: "transcode", targetBitrate: 3000 });
+    assert.deepEqual(resolveVideoEncoding(encodingInput({ isTranscoding: false, videoCodec: "hevc" })), { mode: "copy", targetBitrate: 3000, transmux: false });
   });
 });
 

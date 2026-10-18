@@ -133,6 +133,15 @@ export class ProtectCameraPackage extends ProtectCamera {
     // Deliberately empty: the parent camera's watch speaks for the shared hardware.
   }
 
+  // The package camera configures neither the status light nor night vision when its controller registers, deliberately doing nothing here. Its controller carries a
+  // recording arm, so the registration gives the package accessory an operating-mode service too, but the status light and night vision are the parent camera's
+  // hardware, controlled from the parent's tile alone. The package's own streaming capability sends it the same notice the parent receives, so the inert override is
+  // what keeps them off the package's tile.
+  public override onControllerRegistered(): void {
+
+    // Deliberately empty: the parent camera's tile controls the shared hardware.
+  }
+
   // Seed the package camera's synthetic identity. Unlike a real device, the package camera carries no MAC of its own - it is reserved for real Protect devices - so we
   // seed the controller MAC and the parent's bare MAC as the packageCamera identity instead. Identity is re-derived every configure from the raw record, never preserved
   // across a context reset; the package is the one family whose identity is synthetic, which is why it overrides the base seeding.

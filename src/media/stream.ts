@@ -793,7 +793,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       requestWidth: request.video.width,
       transcodeBitrate: this.protectCamera.hints.transcodeBitrate,
       transcodeHighLatencyBitrate: this.protectCamera.hints.transcodeHighLatencyBitrate,
-      useTsb
+      useTsb,
+      videoCodec: this.protectCamera.ufp.videoCodec
     });
 
     // If we are streaming the package camera, and it's dark outside, activate the flashlight on the camera. We record the lit service on the session itself so the single
@@ -827,7 +828,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
     // -fflags +discardcorrupt          Discard any corrupt packets and continue rather than exit.
     // -err_detect ignore_err           Ignore decoding errors and continue rather than exit.
-    // [video decoder]                  The camera codec's input video decoder flags - hardware-accelerated where available, from the FFmpeg options helper.
+    // [video decoder]                  The input video decoder flags, built from the pipeline description the encoder reads so the two agree on where decoded frames
+    //                                  live, or from the camera's codec alone on a copy - hardware-accelerated where available, from the FFmpeg options helper.
     // -max_delay 500000                Set an upper limit on how much time FFmpeg can take in demuxing packets, in microseconds.
     // -flags low_delay                 Tell FFmpeg to optimize for low delay / realtime decoding.
     // -probesize number                How many bytes should be analyzed for stream information.
@@ -837,7 +839,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       "-nostats",
       "-fflags", "+discardcorrupt",
       "-err_detect", "ignore_err",
-      ...this.ffmpegOptions.videoDecoder(this.protectCamera.ufp.videoCodec),
+      ...this.ffmpegOptions.videoDecoder((encoding.mode === "transcode") ? encoding.encoderOptions : { inputCodec: this.protectCamera.ufp.videoCodec }),
       "-max_delay", "500000",
       "-flags", "low_delay",
       "-probesize", this.probesize.toString()
