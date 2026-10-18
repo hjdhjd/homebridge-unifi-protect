@@ -14,7 +14,7 @@
  * homebridge-plugin-utils'. The cross-cutting core - the HAP double, the state store, and the streaming-delegate stub - lives in the root harness this file imports
  * from.
  */
-import type { Camera, Chime, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig } from "unifi-protect";
+import type { Camera, Chime, ProtectCameraConfig, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig } from "unifi-protect";
 import { Characteristic, Service, TestAccessory, TestCameraController, TestStreamingDelegateFactory } from "../testing.helpers.ts";
 import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { NvrPhase, ProtectNvr } from "./nvr.ts";
@@ -146,6 +146,7 @@ export class TestProtectNvr {
 
   public readonly client: {
 
+    readonly cameras: readonly { config: ProtectCameraConfig }[];
     readonly chimes: readonly Chime[];
     connection: { isHealthy: boolean };
     controllerName: string | null;
@@ -603,6 +604,13 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   const platformConfig: ProtectOptions = { controllers: [], debugAll: false, options: userOptions, ringDelay: 0, verboseFfmpeg: false, videoProcessor: "ffmpeg" };
   const platformFeatureOptions = new FeatureOptions(featureOptionCategories, featureOptions, [...legacyOptions.engineOptions]);
   const client = {
+
+    // The controller-wide camera projections, read through the store double's CURRENT state, mirroring the production client.cameras array the M3U playlist composes
+    // its catalog from. A getter closing over options.store so a pushCameraPatch changes what the next playlist request reads, exactly as the live projection does.
+    get cameras(): readonly { config: ProtectCameraConfig }[] {
+
+      return [...options.store.snapshot().cameras.values()].map((config) => ({ config }));
+    },
 
     // The HELD chime projections, exposed as the production client.chimes array the doorbell's setChimeVolume filters by cameraIds and writes through. A plain held
     // property (not a store-rebuild getter like liveviews / ringtones below): the volume write and the test's assertion / rejection lever must see the SAME instance, so

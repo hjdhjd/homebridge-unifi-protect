@@ -10,7 +10,7 @@ import type { Camera, CollectionSelectors, DeviceCollectionKey, LivestreamRecove
 import { DEVICE_COLLECTION_KEYS, ProtectClient, deviceSelectors, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, MqttClient, Nullable } from "homebridge-plugin-utils";
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnostics.ts";
-import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
+import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, ProtectDevices, ProtectProjectionMap } from "../types.ts";
 import { canTransition, countActiveRecordingViews, createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected,
   shouldResumeFromInducedReboot } from "./nvr-policy.ts";
@@ -347,7 +347,7 @@ export class ProtectNvr {
       // The current phase is not a reliable classification proxy here (the controller has returned), so the quiet/loud value latched at the interruption edge - not
       // this.phase - decides the level. Consume drains the entry; a never-recovered episode is reclaimed by forgetCamera on the camera's removal.
       const quiet = this.livestreamEpisodes.consume(payload.key);
-      const recoveredAfter = formatSeconds(Math.max(1, Math.round(payload.downtimeMs / 1000)));
+      const recoveredAfter = formatSeconds(Math.max(1, payload.downtimeMs / 1000));
 
       // Mirror the interruption edge: the per-camera recovery of a reboot's tail (induced or recently observed) is debug, since the library narrates the controller-level
       // recovery; a genuine single-camera drop stays warn.
@@ -415,7 +415,7 @@ export class ProtectNvr {
   }
 
   // Whether the terminal shutdown signal has fired - the plugin is tearing down and no deferred wake may act against a disposed client. The single predicate this
-  // root's post-await bails consult (a late-resolving connect, the disabled-controller settle sleep), read through a method so each caller re-reads the live signal
+  // root's post-await bails consult (connect()'s, after its retry and after a late-resolving client), read through a method so each caller re-reads the live signal
   // rather than a stale snapshot an earlier bail on the same path could have pinned.
   #isShuttingDown(): boolean {
 
@@ -486,8 +486,8 @@ export class ProtectNvr {
    * phase===running excludes induced disruptions, connection.isHealthy is the unifi-protect library's authoritative reachability fact (it closes the gate promptly on
    * a socket-dropping outage - reboot, network loss, TCP RST - where the symptom-rate health model alone would drift back to healthy during a quiet outage, so we
    * must read the connection fact directly), and health.state===healthy excludes a reachable-but-stressed controller. The hasFeature("Device") conjunct means a
-   * feature-disabled controller never reaches good-state, so the stability sweep never arms during the disabled-controller startup path (login's sleep window). A
-   * library throttle makes connection.isHealthy false, since it derives the throttled state, so a throttle conservatively resets the clock.
+   * feature-disabled controller never reaches good-state: it returns from login() with its phase still running, so this conjunct is what keeps the sweep unarmed for
+   * the life of the process. A library throttle makes connection.isHealthy false, since it derives the throttled state, so a throttle conservatively resets the clock.
    *
    * Each of these facts has its own trigger: transition() moves phase, the health stateChange handler moves health, and the connection observe loop moves reachability.
    * Every trigger calls here rather than assembling the conjunction itself, so the conjunction has exactly one definition.
@@ -742,18 +742,8 @@ export class ProtectNvr {
 
       this.log.info("Disabling this UniFi Protect controller in HomeKit.");
 
-      // Let's sleep for thirty seconds to give all the accessories a chance to load before disabling everything. Homebridge doesn't have a good mechanism to notify us
-      // when all the cached accessories are loaded at startup.
-      await this.platform.clock.delay(PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY);
-
-      // A teardown that landed during the settle sleep must not run a removal sweep against a disposed platform - bail before touching any accessory.
-      if(this.#isShuttingDown()) {
-
-        return;
-      }
-
-      // Unregister all the accessories for this controller from Homebridge that may have been restored already. Any additional ones will be automatically caught when
-      // they are restored.
+      // Unregister all the accessories for this controller from Homebridge. Homebridge restores every cached accessory before it signals that launching has finished,
+      // and we log in only after that signal, so the platform's accessory list is complete when we get here...the sweep runs at once, and none of ours arrive later.
       for(const accessory of this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac)) {
 
         this.removeHomeKitDevice(accessory);

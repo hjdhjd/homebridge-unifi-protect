@@ -140,10 +140,6 @@ export const PROTECT_NVR_REBOOT_INTERVAL = 6;
 // Minimum interval, in hours, allowed for scheduled NVR reboots.
 export const PROTECT_NVR_REBOOT_MIN_INTERVAL = 1;
 
-// Settle delay, in milliseconds, before a globally-disabled controller unregisters its cached accessories. A named thirty-second settle window gives all the
-// accessories a chance to finish loading at startup before we tear them down.
-export const PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY = 30000;
-
 // Grace period, in milliseconds, to confirm a reboot command actually took effect. A genuine reboot drops the controller's realtime connection within seconds, so 60 s
 // is generous headroom over the real drop latency yet far below the recovery track's first probe. This is a "did the command take effect" latency, NOT a recovery
 // deadline: if, after this grace, the connection is still perfectly healthy, the controller never restarted (a silent no-op accept) and we resume normal monitoring.

@@ -5,19 +5,20 @@
  * This module owns the controller's optional M3U playlist publisher, split along the policy/mechanism boundary into two exported functions. buildPlaylist is the
  * pure content decision - the SSOT of what the playlist contains (the header, the codec/RTSP filter, the name sort, the per-camera #EXTINF guide block, the plain-RTSP
  * URL line, and the package-camera entry) - composed server-free as a string so the whole format and ordering surface is exhaustively unit-testable with constructed
- * camera configs and no TCP port. servePlaylist is the thin I/O shell: it stands up the HTTP server, wires the request/error/listening handlers, and binds a one-shot
- * teardown to plugin shutdown so a Homebridge reload (a SHUTDOWN that is not a process exit) releases the port instead of leaking it across the restart.
+ * camera configs and no TCP port. servePlaylist is the thin I/O shell, and the shell itself is homebridge-plugin-utils' HttpListener: the listener owns the bind, the
+ * port-in-use retry, the request body read, the teardown on the controller's lifetime signal, and every lifecycle line under its label, while this module owns the
+ * port, the one catch-all route, the body that route answers, and the empty-catalog line.
  *
  * The leaf references the controller (ProtectNvr) by TYPE only and is constructed by no one - servePlaylist(nvr) is invoked from the NVR's login() through an
  * already-held reference, so this module adds no value-import edge to nvr.ts and the device/controller value-import graph stays a cycle-free DAG.
  */
-import { formatErrorMessage, onAbort } from "homebridge-plugin-utils";
+import { HTTP_LISTENER_ANY_PATH, HttpListener } from "homebridge-plugin-utils";
 import { isPackageChannel, rtspUrl } from "../media/resolution.ts";
+import type { Nullable } from "homebridge-plugin-utils";
 import { PROTECT_M3U_PLAYLIST_PORT } from "../settings.ts";
 import type { ProtectCameraConfig } from "unifi-protect";
 import type { ProtectNvr } from "./nvr.ts";
 import { describeDeviceModel } from "../devices/device-descriptor.ts";
-import http from "node:http";
 import util from "node:util";
 
 // Compose the M3U playlist body for the supplied camera configs. Pure string composition - host and rtspPort are read from the live NVR projection by the caller and
@@ -91,22 +92,47 @@ export function buildPlaylist(cameras: readonly ProtectCameraConfig[], host: str
   return parts.join("");
 }
 
-// Create a web service to publish an M3U playlist of Protect camera livestreams. This is the thin I/O shell around buildPlaylist: it stands up the HTTP server, wires the
-// request/error/listening handlers, and binds a one-shot shutdown teardown to the NVR's lifetime signal so a plugin reload releases the port.
-export function servePlaylist(nvr: ProtectNvr): void {
+/* Publish an M3U playlist of Protect camera livestreams over HTTP. This is the thin I/O shell around buildPlaylist, built on homebridge-plugin-utils' HttpListener,
+ * which binds the port, retries it on the platform clock while another process holds it, reads each request's body, tears itself down when the controller's lifetime
+ * signal fires, and logs every lifecycle line under its label. We own the port, the one catch-all route, the body it answers, and the empty-catalog line. The listener
+ * is returned so a caller can read its bound port, or null when the controller is already shutting down.
+ */
+export function servePlaylist(nvr: ProtectNvr): Nullable<HttpListener> {
 
   const port = nvr.getFeatureNumber("Nvr.Service.Playlist") ?? PROTECT_M3U_PLAYLIST_PORT;
-  const server = http.createServer();
 
-  // The pending EADDRINUSE retry, if one is armed on the platform's clock. We keep its handle so the shutdown teardown can cancel it and no retry can re-listen the
-  // port after teardown.
-  let retryTimer: Disposable | undefined;
+  // A controller that is already shutting down publishes nothing. We check before constructing the listener because a listener whose lifetime has ended refuses a
+  // route, and that refusal would throw into the controller's login.
+  if(nvr.signal.aborted) {
+
+    return null;
+  }
+
+  let listener: HttpListener;
+
+  /* The listener refuses a port outside 0 to 65535 at construction, the one refusal the options we hand it can raise. We report it in our own words, naming the
+   * setting a user can correct, and answer null so the controller's startup continues without its playlist. Any other throw is a defect and propagates.
+   */
+  try {
+
+    listener = new HttpListener({ clock: nvr.platform.clock, label: "M3U playlist publisher", log: nvr.log, port: port, signal: nvr.signal });
+  } catch(error) {
+
+    if(!(error instanceof TypeError)) {
+
+      throw error;
+    }
+
+    nvr.log.error("Unable to publish the M3U playlist. The configured port must be a whole number from 0 to 65535.");
+
+    return null;
+  }
 
   // The once-per-run latch for the empty-catalog narration, so a player polling the playlist does not fill the log with the same line.
   let warnedEmptyPlaylist = false;
 
-  // Respond to requests for a Protect camera playlist, reading the host and RTSP port from the live NVR projection at request time.
-  server.on("request", (_request, response) => {
+  // Answer every path and method with the playlist, reading the host, the RTSP port, and the camera list from the live NVR projection at request time.
+  listener.route(HTTP_LISTENER_ANY_PATH, () => {
 
     const body = buildPlaylist(nvr.client.cameras.map(projection => projection.config), nvr.ufp.host, nvr.ufp.ports.rtsp);
 
@@ -121,65 +147,8 @@ export function servePlaylist(nvr: ProtectNvr): void {
     }
 
     // Set the right MIME type for M3U playlists.
-    response.writeHead(200, { "Content-Type": "application/x-mpegURL" });
-    response.write(body);
-    response.end();
+    return { body: body, headers: { "Content-Type": "application/x-mpegURL" }, status: 200 };
   });
 
-  // Handle errors when they occur.
-  server.on("error", (error) => {
-
-    // Already shutting down: do not arm a retry. listen() returns synchronously and the EADDRINUSE error fires a tick later, possibly AFTER the one-shot teardown ran -
-    // a retry armed then would be a live 5s timer nothing can cancel. The EADDRINUSE arm is the only place a timer is created, so this one guard closes it.
-    if(nvr.signal.aborted) {
-
-      return;
-    }
-
-    // Explicitly handle address in use errors, given their relatively common nature. Everything else, we log and abandon.
-    if((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
-
-      nvr.log.error("The address and port we are attempting to use is already in use by something else. Will retry again shortly.");
-
-      // We wait 5 seconds before retrying, a short enough delay to recover quickly from a transient port conflict (for example, a prior instance of this server still
-      // releasing the port during a restart) without hammering the port with retries.
-      retryTimer = nvr.platform.clock.schedule(() => {
-
-        server.close();
-        server.listen(port);
-      }, 5000);
-
-      return;
-    }
-
-    nvr.log.error("The M3U playlist publisher encountered an error and has stopped: %s.", formatErrorMessage(error));
-    server.close();
-  });
-
-  // Let users know we're up and running.
-  server.on("listening", () => {
-
-    nvr.log.info("Publishing an M3U playlist of Protect camera livestream URLs on port %s.", port);
-  });
-
-  // Tear the server down on plugin shutdown (a SHUTDOWN that is not a process exit would otherwise leak the port) and cancel any pending EADDRINUSE retry. onAbort is
-  // homebridge-plugin-utils' SSOT for this: it registers the one-shot teardown AND runs it inline if the signal is ALREADY aborted - the pre-aborted case servePlaylist
-  // genuinely hits, since it runs from async login() which can race a SHUTDOWN. Pairing onAbort with disposing the retry handle means no path re-listens or leaks a timer
-  // after abort.
-  onAbort(nvr.signal, () => {
-
-    retryTimer?.[Symbol.dispose]();
-
-    server.close();
-  });
-
-  // If we were already shutting down, onAbort just tore the (never-listened) server down inline above; do not listen. homebridge-plugin-utils sanctions this onAbort +
-  // if-aborted-return pairing; server.close() on a never-listened server is a safe no-op.
-  if(nvr.signal.aborted) {
-
-    return;
-  }
-
-  // Listen on the port we've configured.
-  server.listen(port);
+  return listener;
 }
