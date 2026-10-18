@@ -23,14 +23,13 @@ import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts
 import { Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
-import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
+import { logCount, settle } from "homebridge-plugin-utils/testing";
 import type { Camera } from "unifi-protect";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
 import type { TestAccessory } from "../../testing.helpers.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
@@ -39,13 +38,6 @@ import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): ProtectCamera {
 
   return new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
-}
-
-// The count of log lines at the given level whose rendered text contains the given fragment. The harness records what the logger was called with, so the match runs
-// against the rendered line rather than the format string, which is what makes a fragment carrying a substituted value match at all.
-function countLogs(entries: readonly TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
-
-  return entries.filter((entry) => (entry.level === level) && formatLogEntry(entry).includes(fragment)).length;
 }
 
 describe("live-attach reclassification (suite C)", () => {
@@ -99,7 +91,7 @@ describe("live-attach reclassification (suite C)", () => {
     assert.equal(mqtt?.subscriptions.filter((subscription) => subscription.topic.endsWith("/doorbell/set")).length, 1, "the ring-trigger MQTT registered exactly once");
 
     // Exactly one user-facing promotion INFO.
-    assert.equal(countLogs(logEntries, "info", "now reports this camera as a doorbell"), 1, "the promotion logged exactly one INFO line");
+    assert.equal(logCount(logEntries, "info", "now reports this camera as a doorbell"), 1, "the promotion logged exactly one INFO line");
 
     controller.abort();
   });
@@ -224,7 +216,7 @@ describe("live-attach reclassification (suite C)", () => {
     await settle();
 
     assert.equal(camera.ufp.featureFlags.isDoorbell, false, "the vacuity guard: the drain frame reads the doorbell false");
-    assert.equal(countLogs(logEntries, "warn", withdrawal), 0, "the drain frame raised no doorbell withdrawal");
+    assert.equal(logCount(logEntries, "warn", withdrawal), 0, "the drain frame raised no doorbell withdrawal");
     assert.ok(camera.doorbell, "the capability remains attached across the drain frame");
     assert.ok(accessory.getService(Service.Doorbell), "the Doorbell service remains across the drain frame");
 
@@ -237,7 +229,7 @@ describe("live-attach reclassification (suite C)", () => {
 
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", withdrawal), 1, "the genuine demotion raised exactly one doorbell withdrawal");
+    assert.equal(logCount(logEntries, "warn", withdrawal), 1, "the genuine demotion raised exactly one doorbell withdrawal");
     assert.ok(accessory.getService(Service.Doorbell), "the Doorbell service remains after the demotion warning");
 
     camera.cleanup();

@@ -12,13 +12,13 @@
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestStreamingDelegate, makeTimeshiftSupervisorDouble } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
+import { logCount, settle } from "homebridge-plugin-utils/testing";
 import { ProtectSnapshot } from "./snapshot.ts";
 import type { SnapshotSource } from "./timeshift.ts";
 import type { StreamingDelegate } from "./stream-delegate.ts";
 import type { TestCameraHost } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestCameraHost } from "./testing.helpers.ts";
-import { settle } from "homebridge-plugin-utils/testing";
 
 // Every host this suite builds shares its makeTestNvr AbortController. Aborting them in teardown releases the harness signals.
 const controllers: AbortController[] = [];
@@ -30,12 +30,6 @@ after(() => {
     controller.abort();
   }
 });
-
-// The count of log lines at a level whose first format string contains the given fragment.
-function countLogs(entries: readonly TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
-
-  return entries.filter((entry) => (entry.level === level) && entry.message.includes(fragment)).length;
-}
 
 // Build a ProtectSnapshot over a camera host whose timeshift buffer's snapshotSource is steered to the given decline kind, and whose RTSP and controller sources decline
 // without spawning FFmpeg (no channel to select, the controller command rejects). The whole acquisition chain therefore runs spawn-free. selectCalls counts the RTSP
@@ -86,7 +80,7 @@ describe("ProtectSnapshot timeshift freshness", () => {
     await settle();
 
     assert.equal(image, null, "the stale buffer served nothing, and no source produced an image to cache");
-    assert.ok(countLogs(logEntries, "debug", "timeshift buffer is stale") >= 1, "the stale decline was noted at debug");
+    assert.ok(logCount(logEntries, "debug", "timeshift buffer is stale") >= 1, "the stale decline was noted at debug");
     assert.ok(selectCalls.count > 0, "the chain moved past the stale buffer and selected the RTSP source");
   });
 
@@ -100,7 +94,7 @@ describe("ProtectSnapshot timeshift freshness", () => {
     await settle();
 
     assert.equal(image, null, "the empty buffer served nothing, and no source produced an image to cache");
-    assert.equal(countLogs(logEntries, "debug", "timeshift buffer is stale"), 0, "an empty buffer declines silently - no staleness is claimed");
+    assert.equal(logCount(logEntries, "debug", "timeshift buffer is stale"), 0, "an empty buffer declines silently - no staleness is claimed");
     assert.ok(selectCalls.count > 0, "the chain moved past the empty buffer and selected the RTSP source");
   });
 });
@@ -165,14 +159,14 @@ describe("ProtectSnapshot cache window", () => {
     const cached = await snapshot.getSnapshot();
 
     assert.equal(cached?.toString(), "cached-snapshot", "a failed acquisition serves the cached snapshot while it is inside the cache window");
-    assert.equal(countLogs(logEntries, "warn", "using the most recent cached snapshot"), 1, "the cache fallback is reported");
+    assert.equal(logCount(logEntries, "warn", "using the most recent cached snapshot"), 1, "the cache fallback is reported");
 
     clock.advance(1);
 
     const expired = await snapshot.getSnapshot();
 
     assert.equal(expired, null, "a failed acquisition serves nothing once the cached snapshot has aged past the window");
-    assert.equal(countLogs(logEntries, "error", "Unable to retrieve a snapshot."), 1, "the failure with no usable cache is reported");
+    assert.equal(logCount(logEntries, "error", "Unable to retrieve a snapshot."), 1, "the failure with no usable cache is reported");
     assert.equal(controllerCalls, 3, "every acquisition reached the controller source before falling back");
   });
 });

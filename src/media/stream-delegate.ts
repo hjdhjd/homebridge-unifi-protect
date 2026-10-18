@@ -34,8 +34,8 @@ export interface ControllerIdentity {
 
 // True when current carries a term that built lacked - the additive-eager, subtractive-conservative rising edge over a controller identity. A term appearing (false to
 // true) warrants an in-place controller rebuild; a term reading false (a transient incomplete-bootstrap drain, a settled withdrawal) never does, so the symmetric "the
-// identities differ" comparison - which would rebuild on the all-false reconnect drain - is deliberately not what this expresses. The edge runs over the record's own
-// keys, so a term the identity gains joins it with no edit here.
+// identities differ" comparison - which would rebuild on the all-false drain a deep re-adopt delivers - is deliberately not what this expresses. The edge runs over the
+// record's own keys, so a term the identity gains joins it with no edit here.
 export function controllerCapabilityAppeared(built: ControllerIdentity, current: ControllerIdentity): boolean {
 
   return (Object.keys(current) as (keyof ControllerIdentity)[]).some((term) => current[term] && !built[term]);
@@ -50,7 +50,7 @@ export function controllerIdentityOf(host: ProtectCameraHost): ControllerIdentit
 }
 
 // The streaming audio sample rates a camera advertises to HomeKit, which picks one per session and has the live view's audio encoded at that rate. A doorbell offers
-// HomeKit both of its streaming rates to choose from, and every other camera the lower rate alone. A pure helper, red-green testable per population.
+// HomeKit 16 and 24 kHz to choose from, and every other camera 16 kHz alone. A pure helper, red-green testable per population.
 export function streamingSamplerates(input: { isDoorbell: boolean }): AudioStreamingSamplerate | AudioStreamingSamplerate[] {
 
   return input.isDoorbell ? [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16;
@@ -64,10 +64,10 @@ export interface LivestreamAudioFormat {
   sampleRate: number;
 }
 
-/* The audio format HomeKit Secure Video is told a camera records at when the camera's own stream could not be read before its controller was built. It is the format
- * unifi-protect's own captures read from first-party cameras, the G6 Pro Entry doorbell included, so it is one value for every camera. It stands in only for a stream
- * that could not be read: the camera record carries no audio format of its own, so the stream is the one source, and a recording whose stream turns out to differ
- * is transcoded to this format rather than mislabeled.
+/* The audio format HomeKit Secure Video is told a camera records at when the camera's own stream gives it none to advertise: a stream not read before the controller
+ * was built, or one at a rate HomeKit has no recording member for. It is the format unifi-protect's own captures read from first-party cameras, the G6 Pro Entry
+ * doorbell included, so it is one value for every camera. It stands in only for those streams: the camera record carries no audio format of its own, so the stream is
+ * the one source, and a recording whose stream turns out to differ is transcoded to this format rather than mislabeled.
  */
 export const RECORDING_AUDIO_STAND_IN: { format: LivestreamAudioFormat; samplerate: AudioRecordingSamplerate } = {
 
@@ -110,6 +110,28 @@ export function recordingSamplerateOf(hz: number): AudioRecordingSamplerate | nu
 export function sampleRateHzOf(samplerate: AudioRecordingSamplerate): number {
 
   return RECORDING_SAMPLERATE_HZ[samplerate];
+}
+
+/**
+ * Compute the recording audio format HomeKit Secure Video is told a camera records at, from the format its stream carries. This is the one place a stream's format
+ * becomes what HomeKit is told: AAC-LC, because that is the codec every advertisement HBUP ships names; one channel, because every advertisement is mono and a stereo
+ * stream is transcoded to it; the stream's own rate only when HomeKit has a recording member for it; and the stand-in for a stream not read or a rate HomeKit cannot
+ * express. The controller is built from it and the supervisor's restart hint compares against it, so the two never disagree.
+ *
+ * @param format - The stream's audio format, or null when its audio could not be read.
+ *
+ * @returns The advertised format, with the HomeKit recording sample rate that names its rate.
+ */
+export function recordingAdvertisementOf(format: LivestreamAudioFormat | null): { format: LivestreamAudioFormat; samplerate: AudioRecordingSamplerate } {
+
+  const member = format ? recordingSamplerateOf(format.sampleRate) : null;
+
+  if(member === null) {
+
+    return RECORDING_AUDIO_STAND_IN;
+  }
+
+  return { format: { channels: 1, codec: "aac", sampleRate: sampleRateHzOf(member) }, samplerate: member };
 }
 
 /**

@@ -21,9 +21,8 @@ import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.hel
 import { ProtectClient, ProtectLivestreamUnavailableError } from "unifi-protect";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { after, describe, test } from "node:test";
-import { makeControllableLivestreamDouble, makeKeyframeFragment, makeNonKeyframeFragment, makeTestCameraHost } from "./testing.helpers.ts";
+import { makeChannelProfile, makeControllableLivestreamDouble, makeKeyframeFragment, makeNonKeyframeFragment, makeTestCameraHost } from "./testing.helpers.ts";
 import { AMCREST_INIT_SEGMENT } from "../camera.fixtures.ts";
-import type { ChannelProfile } from "./resolution.ts";
 import { PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "../settings.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import type { Segment } from "unifi-protect";
@@ -47,21 +46,6 @@ after(() => {
     controller.abort();
   }
 });
-
-// Build a minimal-but-truthy ChannelProfile from the host's first G2 Pro channel. start() only forwards this to the host's livestream() interface (which the controllable
-// double ignores), so the profile needs only to type-check. We guard the indexed access because host.ufp.channels[0] widens to ProtectCameraChannelConfig | undefined
-// under noUncheckedIndexedAccess.
-function makeChannelProfile(host: TestCameraHost): ChannelProfile {
-
-  const channel = host.ufp.channels[0];
-
-  if(!channel) {
-
-    throw new Error("The G2 Pro channel fixture is missing its first channel.");
-  }
-
-  return { channel, name: channel.name, resolution: [ 1920, 1080, 30 ], url: "rtsps://test" };
-}
 
 // Build one media Segment around a fragment's bytes. processSegment reads only type, discontinuity, and data; moof/mdat are type-required, so we supply the fragment's
 // own. The optional discontinuity flag marks the first media after a reconnect (the unifi-protect discontinuity:true), which the timeshift's discontinuity gate keys on.

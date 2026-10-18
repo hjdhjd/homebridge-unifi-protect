@@ -23,6 +23,9 @@ import { PROTECT_PROBESIZE_OVERRIDE_MAX, PROTECT_PROBESIZE_OVERRIDE_PERMANENT_TH
 import { RECORDING_AUDIO_STAND_IN, controllerIdentityOf } from "./stream-delegate.ts";
 import { Service, TestCameraController } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
+import { formatLogEntry, logCount } from "homebridge-plugin-utils/testing";
+import { makeChannelProfile, makeControllableLivestreamDouble, makeTestCameraHost } from "./testing.helpers.ts";
+import type { ChannelProfile } from "./resolution.ts";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
 import type { LivestreamAudioFormat } from "./stream-delegate.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
@@ -31,9 +34,7 @@ import { ProtectStreamingDelegate } from "./stream.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import assert from "node:assert/strict";
-import { formatLogEntry } from "homebridge-plugin-utils/testing";
 import { makeCameraConfig } from "../devices/testing.helpers.ts";
-import { makeTestCameraHost } from "./testing.helpers.ts";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting it in teardown releases the harness signal so a leaked observer (none here, the
 // field-copy ctors spawn none) could never outlive the suite. The field-copy ctors are pure field-copies, so construction floats no async machinery and needs no
@@ -170,11 +171,11 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
 
   /* The advertised recording audio format is the camera's own, read from its livestream by the derivation, in one channel, or the whole stand-in when the stream was not
    * read or its rate has no HomeKit recording member. The advertisement is frozen into the controller, so each row reads it straight off the recorded controller
-   * options, beside the format the delegate keeps for the supervisor's comparison. The controller identity carries no audio term, so the format moves no rebuild.
+   * options. The controller identity carries no audio term, so the format moves no rebuild.
    */
   test("the recording codec advertises the derived audio format in one channel, or the stand-in, and the identity carries no audio term", () => {
 
-    const advertise = (options: { audioFormat: LivestreamAudioFormat | null; isDoorbell?: boolean }): { codec: unknown; stream: ProtectStreamingDelegate } => {
+    const advertise = (options: { audioFormat: LivestreamAudioFormat | null; isDoorbell?: boolean }): unknown => {
 
       const { accessory, controller, host } = makeTestCameraHost();
 
@@ -191,36 +192,99 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
       assert.deepEqual(Object.keys(stream.builtFor).toSorted(), [ "hksvCapable", "isDoorbell", "twoWayAudio" ],
         "the identity carries the same terms, none of them audio");
 
-      return { codec: Array.isArray(codecs) ? codecs[0] : codecs, stream };
+      return Array.isArray(codecs) ? codecs[0] : codecs;
     };
 
     const mono = (sampleRate: number): LivestreamAudioFormat => ({ channels: 1, codec: "aac", sampleRate });
 
-    assert.deepEqual(advertise({ audioFormat: mono(8000) }).codec, { audioChannels: 1, samplerate: AudioRecordingSamplerate.KHZ_8, type: AudioRecordingCodecType.AAC_LC },
+    assert.deepEqual(advertise({ audioFormat: mono(8000) }), { audioChannels: 1, samplerate: AudioRecordingSamplerate.KHZ_8, type: AudioRecordingCodecType.AAC_LC },
       "an 8000 Hz mono stream advertises the 8 kHz recording rate");
-    assert.deepEqual(advertise({ audioFormat: mono(48000) }).codec, { audioChannels: 1, samplerate: AudioRecordingSamplerate.KHZ_48,
+    assert.deepEqual(advertise({ audioFormat: mono(48000) }), { audioChannels: 1, samplerate: AudioRecordingSamplerate.KHZ_48,
       type: AudioRecordingCodecType.AAC_LC }, "a 48000 Hz mono stream advertises the 48 kHz recording rate");
 
     const stereo = advertise({ audioFormat: { channels: 2, codec: "aac", sampleRate: 16000 } });
 
-    assert.deepEqual(stereo.codec, { audioChannels: 1, samplerate: AudioRecordingSamplerate.KHZ_16, type: AudioRecordingCodecType.AAC_LC },
+    assert.deepEqual(stereo, { audioChannels: 1, samplerate: AudioRecordingSamplerate.KHZ_16, type: AudioRecordingCodecType.AAC_LC },
       "a stereo stream advertises its rate in one channel");
-    assert.deepEqual(stereo.stream.advertisedAudioFormat, mono(16000), "the delegate keeps the advertised format, in one channel, for the supervisor's comparison");
 
     for(const isDoorbell of [ false, true ]) {
 
       const unread = advertise({ audioFormat: null, isDoorbell });
 
-      assert.deepEqual(unread.codec, { audioChannels: 1, samplerate: RECORDING_AUDIO_STAND_IN.samplerate, type: AudioRecordingCodecType.AAC_LC },
+      assert.deepEqual(unread, { audioChannels: 1, samplerate: RECORDING_AUDIO_STAND_IN.samplerate, type: AudioRecordingCodecType.AAC_LC },
         "a stream not read advertises the stand-in, " + (isDoorbell ? "doorbell" : "camera") + " alike");
-      assert.deepEqual(unread.stream.advertisedAudioFormat, RECORDING_AUDIO_STAND_IN.format, "the kept format is the stand-in's");
     }
 
     const unmapped = advertise({ audioFormat: mono(22050) });
 
-    assert.deepEqual(unmapped.codec, { audioChannels: 1, samplerate: RECORDING_AUDIO_STAND_IN.samplerate, type: AudioRecordingCodecType.AAC_LC },
+    assert.deepEqual(unmapped, { audioChannels: 1, samplerate: RECORDING_AUDIO_STAND_IN.samplerate, type: AudioRecordingCodecType.AAC_LC },
       "a 22050 Hz stream, a rate HomeKit has no recording member for, advertises the whole stand-in");
-    assert.deepEqual(unmapped.stream.advertisedAudioFormat, RECORDING_AUDIO_STAND_IN.format, "the kept format is the whole stand-in, not the stream's rate");
+  });
+
+  /* The streaming delegate hands its timeshift supervisor the advertisement its controller is built from. A supervisor built by hand holds an advertisement of the
+   * row's own choosing, so only a supervisor the delegate builds shows what the delegate hands over. Every case expecting no hint runs on a stream where a particular
+   * wrong hand-off would earn the hint and the computed advertisement earns none. Stereo AAC at 48 kHz tells a raw hand-off and the stand-in apart: its second channel
+   * makes the raw stream format differ from the one-channel advertisement, and its 48 kHz rate makes the 16 kHz stand-in differ from it. A 48 kHz Opus stream tells
+   * apart a hand-off that passes the stream's codec through, because every advertisement names AAC-LC whatever the stream carries. A 22050 Hz stream tells apart a
+   * hand-off that passes the stream's rate through, because HomeKit has no recording member for that rate and the stream advertises the whole stand-in. The Opus and
+   * 22050 Hz delegates run on the streams they were derived from, as a camera's own delegate does. A delegate whose stream could not be read runs on a stream at the
+   * stand-in's format, which tells apart a hand-off that treats the unread path differently from the computed advertisement, because an unread stream advertises the
+   * stand-in and a buffer at that format computes it. A delegate built from 8 kHz mono against the stereo stream earns the hint once, which proves the arrangement can
+   * see the hint at all, and the same delegate on an 8 kHz stream earns none, which tells apart a hand-off that is right only at 48 kHz and on the stand-in path.
+   */
+  test("the streaming delegate hands its timeshift supervisor the recording advertisement its controller is built from", async () => {
+
+    const stereo: LivestreamAudioFormat = { channels: 2, codec: "aac", sampleRate: 48000 };
+    const opus: LivestreamAudioFormat = { channels: 1, codec: "opus", sampleRate: 48000 };
+    const unmapped: LivestreamAudioFormat = { channels: 1, codec: "aac", sampleRate: 22050 };
+    const mono8k: LivestreamAudioFormat = { channels: 1, codec: "aac", sampleRate: 8000 };
+
+    // Build a delegate from the derived format on a host whose substrate stream carries the given stream format, the stereo one unless a case names another, run a
+    // buffer start through the delegate's own supervisor, and count the restart hints that start narrates. The delegate's shutdown ends its streams and tuning but not
+    // its supervisor, so each is shut down in turn.
+    const hintsFor = async ({ derived, stream = stereo }: { derived: LivestreamAudioFormat | null; stream?: LivestreamAudioFormat }): Promise<number> => {
+
+      const { accessory, controller, host, logEntries } = makeTestCameraHost();
+
+      controllers.push(controller);
+      accessory.addService(Service.MotionSensor, "Test Camera");
+      host.isHksvCapable = true;
+      host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+      host.usesTimeshiftLivestream = true;
+      host.livestreamSubscriptions = [makeControllableLivestreamDouble({ description: { tracks: [{ ...stream, id: 2, kind: "audio" }] } })];
+
+      const delegate = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]], { audioFormat: derived, probe: null });
+
+      host.stream = delegate;
+
+      const supervisor = delegate.timeshift;
+
+      assert.ok(supervisor, "the delegate built its own timeshift supervisor");
+
+      await supervisor.reconcile();
+
+      assert.deepEqual(supervisor.buffer.audioFormat, stream, "the vacuity guard: the delegate's supervisor runs its buffer on the arranged stream");
+
+      const hints = logCount(logEntries, "info", "restart HBUP to let HomeKit learn the new format");
+
+      supervisor.shutdown();
+      delegate.shutdown();
+
+      return hints;
+    };
+
+    assert.equal(await hintsFor({ derived: stereo }), 0,
+      "a delegate built from the stereo 48 kHz stream advertises what that stream computes, so its start earns no hint");
+    assert.equal(await hintsFor({ derived: mono8k }), 1,
+      "a delegate built from 8 kHz mono advertises 8 kHz, so its start on the 48 kHz stream earns the hint once");
+    assert.equal(await hintsFor({ derived: mono8k, stream: mono8k }), 0,
+      "a delegate built from 8 kHz mono advertises 8 kHz, so its start on an 8 kHz stream earns no hint");
+    assert.equal(await hintsFor({ derived: opus, stream: opus }), 0,
+      "a delegate built from a 48 kHz Opus stream advertises 48 kHz AAC-LC, so its start on that stream earns no hint");
+    assert.equal(await hintsFor({ derived: unmapped, stream: unmapped }), 0,
+      "a delegate built from a 22050 Hz stream advertises the stand-in, so its start on that stream earns no hint");
+    assert.equal(await hintsFor({ derived: null, stream: RECORDING_AUDIO_STAND_IN.format }), 0,
+      "a delegate whose stream could not be read advertises the stand-in, so its start on a stream at the stand-in's format earns no hint");
   });
 
   // Shutdown ends this camera's probesize self-tuning along with its streams. The distinguishing assertion is the IMMEDIATE post-shutdown read: a shutdown that leaves

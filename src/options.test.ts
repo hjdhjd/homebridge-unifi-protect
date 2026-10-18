@@ -403,7 +403,7 @@ describe("the settings page scoping of the motion surface", () => {
     const category = (name: string): unknown => featureOptionCategories.find((entry) => entry.name === name)?.meta;
 
     assert.deepEqual(category("Motion"), { featureByModel: { camera: ["hasMotionDetection"], sensor: ["motion"] }, modelKey: [ "camera", "light", "sensor" ] },
-      "the Motion category shows for a camera Protect exposes a motion sensor for, and for lights and motion sensors as before");
+      "the Motion category shows for a camera Protect exposes a motion sensor for, and for lights and motion sensors");
     assert.deepEqual(category("Video.HKSV"), { featureByModel: { camera: ["hasMotionDetection"] }, modelKey: ["camera"] },
       "the HKSV category shows for a camera Protect exposes a motion sensor for");
     assert.deepEqual(optionEntry("Log", "HKSV")?.meta, { hasCameraFeature: ["hasMotionDetection"], modelKey: ["camera"] },

@@ -4,7 +4,7 @@
  */
 import { CoalescingTask, HbpuAbortError, formatBps, formatErrorMessage } from "homebridge-plugin-utils";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
-import { RECORDING_AUDIO_STAND_IN, describeAudioFormat } from "./stream-delegate.ts";
+import { RECORDING_AUDIO_STAND_IN, describeAudioFormat, recordingAdvertisementOf } from "./stream-delegate.ts";
 import type { CameraRecordingConfiguration } from "homebridge";
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamAudioFormat } from "./stream-delegate.ts";
@@ -54,7 +54,8 @@ export class ProtectTimeshiftSupervisor {
   // The subscription the camera's derivation opened to read its recording audio format, with the channel profile it was opened on, held until the first reconcile pass
   // takes it. That pass hands it to the buffer when it serves the entry the pass wants and disposes it otherwise, and shutdown disposes it when no pass ever took it.
   private adopted: Nullable<{ profile: ChannelProfile; subscription: LivestreamSubscription }>;
-  // The recording audio format this camera's controller advertises to HomeKit Secure Video, which a buffer start compares its stream's format against.
+  // The advertisement this camera's controller was built with, the recording audio format HomeKit Secure Video was told. A buffer start compares the advertisement
+  // its stream would compute against it.
   private readonly advertised: LivestreamAudioFormat;
   public readonly buffer: ProtectTimeshiftBuffer;
   // The deferral episode in flight. Opened when the deferral edge fires and closed only when the resolution actually narrates (recording has re-established) or the
@@ -68,8 +69,8 @@ export class ProtectTimeshiftSupervisor {
   private demand: RecordingDemand;
   // Whether the current recording episode has already logged its HKSV configuration acknowledgment; reset on the disable edge so the next enable re-acknowledges.
   private hasAcknowledgedRecording: boolean;
-  // Whether the stream's audio format differing from the advertised one has already been narrated. A start whose format matches again resets it, so each transition
-  // away from the advertised format is said once rather than on every start.
+  // Whether a stream whose advertisement differs from the controller's has already been narrated. A start whose stream would advertise the controller's format again
+  // resets it, so each transition away from that format is said once rather than on every start.
   private hasReportedAudioFormatChange: boolean;
   // The once-per-episode latch for the "no valid stream profile" selection failure. Under the streaming arm the reconcile is kicked frequently (activation,
   // availability, and the live-view stream-source kick), so an unresolvable selection would otherwise re-log on every kick. The latch suppresses repeats; it clears
@@ -210,10 +211,11 @@ export class ProtectTimeshiftSupervisor {
    * alone. On a coalesced pass (the buffer already running) no await separates the state check from this call, so the window is real only when a fresh start preceded
    * it; firing unconditionally keeps the call site simple. The test suite overrides it to land exactly-timed events inside the window.
    *
-   * What it does in production is compare the running stream's audio format with the format the controller advertises to HomeKit Secure Video. HAP froze that
-   * advertisement when the controller was built, so a stream whose format changes after a reconnect or a controller firmware update keeps recording correctly - every
-   * recording transcodes its audio to the selected format - but HomeKit only learns the new format at a restart, which is what the line says, once per transition away
-   * from the advertised format. A buffer that died in the settle window has no format to compare, and a camera with no recording arm has nothing to narrate.
+   * What it does in production is say when a restart would advertise something else, comparing the advertisement the running stream would compute against the one
+   * the controller was built with. HAP froze that advertisement when the controller was built, so a stream whose format changes after a reconnect or a controller
+   * firmware update keeps recording correctly - every recording transcodes its audio to the selected format - but HomeKit only learns the new format at a restart,
+   * which is what the line says, once per transition away from the advertised format. A buffer that died in the settle window has no format to compare, and a camera
+   * with no recording arm has nothing to narrate.
    */
   protected onStartSettled(): void {
 
@@ -224,7 +226,9 @@ export class ProtectTimeshiftSupervisor {
       return;
     }
 
-    const matches = (current.codec === this.advertised.codec) && (current.sampleRate === this.advertised.sampleRate) && (current.channels === this.advertised.channels);
+    const expected = recordingAdvertisementOf(current).format;
+    const matches = (expected.codec === this.advertised.codec) && (expected.sampleRate === this.advertised.sampleRate) &&
+      (expected.channels === this.advertised.channels);
 
     if(matches) {
 

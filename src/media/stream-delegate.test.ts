@@ -6,12 +6,12 @@
  * The rising edge is walked over every term of the identity, each term moved alone against an otherwise equal record, so a term the edge forgets reads as a miss. The
  * derivation is read term by term against the media host double, and both the production delegate and the stub factory are shown to capture exactly what the derivation
  * answers, so the identity a controller is built for and the identity the reconcile checks it against cannot drift apart. The samplerate table walks the doorbell
- * axis. The recording audio format helpers are walked row by row: the format read from a description, the stand-in, the mapping between hertz and
- * HomeKit's recording rates in both directions, the copy-or-transcode match with each way it can fail, and the log rendering.
+ * axis. The recording audio format helpers are walked row by row: the format read from a description, the stand-in, the mapping between hertz and HomeKit's
+ * recording rates in both directions, the advertisement a stream's format becomes, the copy-or-transcode match with each way it can fail, and the log rendering.
  */
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingSamplerate } from "homebridge-plugin-utils";
-import { RECORDING_AUDIO_STAND_IN, controllerCapabilityAppeared, controllerIdentityOf, describeAudioFormat, livestreamAudioFormat, recordingAudioMatches,
-  recordingSamplerateOf, sampleRateHzOf, streamingSamplerates } from "./stream-delegate.ts";
+import { RECORDING_AUDIO_STAND_IN, controllerCapabilityAppeared, controllerIdentityOf, describeAudioFormat, livestreamAudioFormat, recordingAdvertisementOf,
+  recordingAudioMatches, recordingSamplerateOf, sampleRateHzOf, streamingSamplerates } from "./stream-delegate.ts";
 import { after, describe, test } from "node:test";
 import type { ControllerIdentity } from "./stream-delegate.ts";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
@@ -130,12 +130,12 @@ describe("controllerIdentityOf - the one derivation of the identity", () => {
 
 describe("streamingSamplerates - the doorbell axis", () => {
 
-  test("a doorbell advertises both of HomeKit's streaming rates", () => {
+  test("a doorbell advertises the 16 and 24 kHz streaming rates", () => {
 
     assert.deepEqual(streamingSamplerates({ isDoorbell: true }), [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ]);
   });
 
-  test("every other camera advertises the lower streaming rate alone", () => {
+  test("every other camera advertises the 16 kHz streaming rate alone", () => {
 
     assert.equal(streamingSamplerates({ isDoorbell: false }), AudioStreamingSamplerate.KHZ_16);
   });
@@ -184,6 +184,20 @@ describe("the recording audio format helpers", () => {
     assert.equal(recordingSamplerateOf(22050), null, "22050 Hz has no recording rate");
   });
 
+  test("recordingAdvertisementOf advertises AAC-LC in one channel at the stream's rate, and the whole stand-in for a stream not read or a rate HomeKit cannot express",
+    () => {
+
+      assert.deepEqual(recordingAdvertisementOf({ channels: 1, codec: "aac", sampleRate: 8000 }), { format: { channels: 1, codec: "aac", sampleRate: 8000 },
+        samplerate: AudioRecordingSamplerate.KHZ_8 }, "an 8000 Hz mono stream advertises itself at the 8 kHz recording rate");
+      assert.deepEqual(recordingAdvertisementOf({ channels: 2, codec: "aac", sampleRate: 16000 }), { format: { channels: 1, codec: "aac", sampleRate: 16000 },
+        samplerate: AudioRecordingSamplerate.KHZ_16 }, "a stereo stream advertises its rate in one channel");
+      assert.deepEqual(recordingAdvertisementOf({ channels: 2, codec: "opus", sampleRate: 48000 }), { format: { channels: 1, codec: "aac", sampleRate: 48000 },
+        samplerate: AudioRecordingSamplerate.KHZ_48 }, "an Opus stream advertises AAC at its rate in one channel");
+      assert.deepEqual(recordingAdvertisementOf({ channels: 1, codec: "aac", sampleRate: 22050 }), RECORDING_AUDIO_STAND_IN,
+        "a 22050 Hz stream, a rate HomeKit has no recording member for, advertises the whole stand-in");
+      assert.deepEqual(recordingAdvertisementOf(null), RECORDING_AUDIO_STAND_IN, "a stream whose audio was not read advertises the stand-in");
+    });
+
   test("recordingAudioMatches holds only for an AAC stream at the selected AAC-LC rate and channel count", () => {
 
     const format = { channels: 1, codec: "aac", sampleRate: 16000 } as const;
@@ -199,9 +213,12 @@ describe("the recording audio format helpers", () => {
     assert.equal(recordingAudioMatches(null, selected(AudioRecordingSamplerate.KHZ_16)), false, "a stream whose audio was not read does not");
   });
 
-  test("describeAudioFormat renders the rate and the channels for a log line", () => {
+  test("describeAudioFormat renders the rate and the channels for a log line, naming the codec only for Opus", () => {
 
     assert.equal(describeAudioFormat(RECORDING_AUDIO_STAND_IN.format), "16 kHz mono");
     assert.equal(describeAudioFormat({ channels: 1, codec: "aac", sampleRate: 8000 }), "8 kHz mono");
+    assert.equal(describeAudioFormat({ channels: 2, codec: "aac", sampleRate: 16000 }), "16 kHz stereo", "a two-channel stream renders as stereo");
+    assert.equal(describeAudioFormat({ channels: 2, codec: "opus", sampleRate: 48000 }), "48 kHz stereo Opus",
+      "an Opus stream names its codec, so formats that differ by codec alone read differently");
   });
 });

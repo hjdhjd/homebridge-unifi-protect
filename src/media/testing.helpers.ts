@@ -239,6 +239,24 @@ export class TestCameraHost implements ProtectCameraHost {
   }
 }
 
+/* Build a ChannelProfile over one of the host's real channels, so the channel's id and fps reach the code under test exactly as production composes them. A media test
+ * hands it wherever that code takes a channel profile, the host's substrate selector and a buffer's start among them. The index picks the channel, the first by
+ * default, so a test about a restart can steer the selection onto a different stream than the one already running. The indexed access is guarded because
+ * host.ufp.channels[index] widens to ProtectCameraChannelConfig | undefined under noUncheckedIndexedAccess, and a fixture lacking the requested channel throws rather
+ * than handing back a profile with no channel behind it.
+ */
+export function makeChannelProfile(host: TestCameraHost, index = 0): ChannelProfile {
+
+  const channel = host.ufp.channels[index];
+
+  if(!channel) {
+
+    throw new Error("The G2 Pro channel fixture is missing the requested channel.");
+  }
+
+  return { channel, name: channel.name, resolution: [ 1920, 1080, 30 ], url: "rtsps://test" };
+}
+
 // Synthesize a genuine fMP4 media fragment on the published fMP4 builders so the production isKeyframe TRUN-flag parse runs against REAL bytes on the REAL path - no
 // isKeyframe injection point, so the test exercises the actual fMP4 keyframe coupling rather than a test-only divergence. The fragment is moof>traf>trun with a
 // first_sample_flags-bearing trun (the builder sets the data_offset and first_sample_flags TRUN flags, sample_count 1, data_offset 0). The ONLY difference between a

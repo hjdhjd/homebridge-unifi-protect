@@ -386,10 +386,11 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     })();
 
     // Attach the doorbell capability when the controller already reports this camera as a doorbell. This runs at the END of configureDevice's synchronous body, after
-    // the IIFE statement: the IIFE's synchronous prefix has already kicked off the streaming reconcile, while its tail (the trigger and mute switch) runs on later
-    // microtasks. The capability's configure synchronously stands up the Doorbell service (through configureDoorbellService), so a real doorbell's service exists before
-    // that microtask tail reaches the mute-switch gate; a plain camera's Doorbell service is stood up by the trigger, which the tail now runs ahead of the mute switch.
-    // Either way the mute switch sees a present (or correctly absent) service. A camera the controller does not report as a doorbell attaches nothing here.
+    // the IIFE statement: the IIFE's synchronous prefix has already kicked off the capability and streaming reconciles, while the switches (the trigger and mute switch)
+    // are configured from the capability reconcile's continuation on later microtasks. The capability's configure synchronously stands up the Doorbell service (through
+    // configureDoorbellService), so a real doorbell's service exists before that continuation reaches the mute-switch gate; a plain camera's Doorbell service is stood
+    // up by the trigger, which the continuation runs ahead of the mute switch. Either way the mute switch sees a present (or correctly absent) service. A camera the
+    // controller does not report as a doorbell attaches nothing here.
     this.reconcileDoorbellCapability("construct");
 
     return true;
@@ -424,10 +425,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   /* Reconcile this camera's doorbell capability against the controller's live state - the single chokepoint the construction-time arm and the always-armed isDoorbell
    * observer both route through, driven by the pure capabilityReconcileAction over (attached, reported). A promotion composes the capability onto the running
    * instance in place; the one HAP object that cannot change in place (the CameraController) is rebuilt by the streaming capability's controller-identity reconcile,
-   * not here, since doorbell-ness is a term of the controller identity that reconcile watches. The source tag separates the two attach contexts: at
-   * construction the normal flow (the pending IIFE building the stream with the now-true flag, the IIFE tail running mute/trigger, configureMqtt registering ring) covers
-   * the camera-side wiring, so the construct arm does only the capability compose; a live promotion ("observe") must additionally re-run that camera-side wiring because
-   * the construction flow already ran with the flag false.
+   * not here, since doorbell-ness is a term of the controller identity that reconcile watches. The source tag tells the attach contexts apart: at construction the
+   * normal flow (the pending IIFE building the stream with the now-true flag, the capability reconcile's continuation configuring the trigger and mute switch,
+   * configureMqtt registering ring) covers the camera-side wiring, so the construct arm does only the capability compose; a live promotion ("observe") must
+   * additionally re-run that camera-side wiring because the construction flow already ran with the flag false.
    */
   private reconcileDoorbellCapability(source: ReconcileSource): void {
 
@@ -472,11 +473,11 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
   /* Compose the doorbell capability onto this live camera and, for a genuine live promotion, re-run the camera-side doorbell wiring the construction flow would have run
    * had the flag been true at adoption. The construct arm does only the capability compose: the normal construction flow covers everything else. The observe arm, a
-   * promotion of a running plain camera, additionally: re-runs the mute switch and trigger (the construction IIFE tail already ran them while the flag was false, and the
-   * Doorbell service now exists); registers the ring-trigger MQTT (a late promotion the construction configureMqtt could not have registered); and narrates the promotion
-   * once. The late-doorbell controller rebuild lives in the streaming capability's controller-identity reconcile, driven by the featureFlags observer, so this method
-   * only composes the capability: an isDoorbell change also wakes that observer, and that reconcile rebuilds the streaming delegate when a term of its controller
-   * identity has appeared, single-sourcing that rebuild across every late input.
+   * promotion of a running plain camera, additionally: re-runs the mute switch and trigger (construction already configured them from the capability reconcile's
+   * continuation while the flag was false, and the Doorbell service now exists); registers the ring-trigger MQTT (a late promotion the construction configureMqtt could
+   * not have registered); and narrates the promotion once. The late-doorbell controller rebuild lives in the streaming capability's controller-identity reconcile,
+   * driven by the featureFlags observer, so this method only composes the capability: an isDoorbell change also wakes that observer, and that reconcile rebuilds the
+   * streaming delegate when a term of its controller identity has appeared, single-sourcing that rebuild across every late input.
    */
   private attachDoorbellCapability(source: ReconcileSource): void {
 
@@ -492,8 +493,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       return;
     }
 
-    // Re-run the camera's doorbell-adjacent configures now that the Doorbell service exists (the construction IIFE tail ran them while the flag was false).
-    // acquireService is safe to call more than once, so a re-run that finds the service in place is harmless.
+    // Re-run the camera's doorbell-adjacent configures now that the Doorbell service exists (construction configured them from the capability reconcile's continuation
+    // while the flag was false). acquireService is safe to call more than once, so a re-run that finds the service in place is harmless.
     this.configureDoorbellMuteSwitch();
     this.configureDoorbellTrigger();
 
@@ -1497,9 +1498,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
    *
    * It runs only when every term holds: the camera can back HomeKit Secure Video, since the recording arm exists exactly when it can; no delegate stands yet, since a
    * re-derive with a controller in place cannot move the advertisement; the camera is reachable; and the buffer's channel would be fed by the livestream API rather than
-   * the RTSP-debug adapter, which encodes to the advertised format by construction. The channel is the one the buffer selects, through the same pure selection, so the
-   * probe opens the stream the buffer later wants. An unreachable camera, or a stream that does not establish, advertises the stand-in and says so once; any other
-   * unmet term advertises the stand-in silently.
+   * the RTSP-debug adapter, which encodes to the advertised format by construction. A controller rebuild clears the delegate before it re-derives, so a rebuild probes
+   * again and the rebuilt controller advertises the stream as it is then, the one path short of a restart on which HomeKit learns a changed format. The channel is the
+   * one the buffer selects, through the same pure selection, so the probe opens the stream the buffer later wants. An unreachable camera, or a stream that does not
+   * establish, advertises the stand-in and says so once; any other unmet term advertises the stand-in silently.
    *
    * The subscription that read the format is handed on rather than released, because the pool tears a session down when its last subscriber leaves: the delegate's
    * buffer adopts it at its first supervisor pass, so one stream opens rather than two, and it carries the same stall urgency the buffer gives its own subscription for

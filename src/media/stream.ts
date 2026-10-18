@@ -10,11 +10,11 @@ import { AudioRecordingCodecType, AudioStreamingCodecType, AudioStreamingSampler
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { Clock, HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
-import type { ControllerIdentity, LivestreamAudioFormat, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
+import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_PROBESIZE_OVERRIDE_MAX,
   PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectReservedNames, isPackageCameraContext } from "../types.ts";
-import { RECORDING_AUDIO_STAND_IN, controllerIdentityOf, recordingSamplerateOf, streamingSamplerates } from "./stream-delegate.ts";
+import { controllerIdentityOf, recordingAdvertisementOf, streamingSamplerates } from "./stream-delegate.ts";
 import { resolveChannelRequest, resolveTranscodeDecision, resolveVideoEncoding } from "./stream-encode-policy.ts";
 import type { AdvertisedStreams } from "../devices/cameras/camera.ts";
 import type { ChannelProfile } from "./resolution.ts";
@@ -185,10 +185,6 @@ class ProbesizeSelfTune {
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate, StreamingDelegate {
 
-  // The recording audio format this delegate's CameraController advertises to HomeKit Secure Video: the camera's own livestream format as the derivation read it, in
-  // one channel, or the stand-in when the stream could not be read or carries a rate HomeKit has no recording member for. The supervisor compares the buffer's format
-  // against it.
-  public readonly advertisedAudioFormat: LivestreamAudioFormat;
   // The controller identity the CameraController was built for, captured at construction through the one derivation the live capability reconcile also reads, from
   // the same live-volatile camera facts the options below freeze. The reconcile reads this off this.stream to detect a stale controller (a camera the controller
   // reports a capability for only after adoption) and rebuilds only when a term has appeared.
@@ -216,13 +212,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   constructor(protectCamera: ProtectCameraHost, resolutions: Resolution[], derived: Pick<AdvertisedStreams, "audioFormat" | "probe"> = { audioFormat: null,
     probe: null }) {
 
-    // The recording audio format we advertise: the camera's own, in one channel because every advertisement we ship is mono and a stereo stream is transcoded to it,
-    // or the whole stand-in when the stream was not read or its rate has no HomeKit recording member.
-    const samplerate = derived.audioFormat ? recordingSamplerateOf(derived.audioFormat.sampleRate) : null;
-    const advertised = (derived.audioFormat && (samplerate !== null)) ? { format: { ...derived.audioFormat, channels: 1 }, samplerate: samplerate } :
-      RECORDING_AUDIO_STAND_IN;
+    // The recording audio format we advertise, computed from the stream the derivation read by the one helper the supervisor's restart hint also compares through.
+    const advertised = recordingAdvertisementOf(derived.audioFormat);
 
-    this.advertisedAudioFormat = advertised.format;
     this.builtFor = controllerIdentityOf(protectCamera);
     this.hap = protectCamera.api.hap;
     this.hksv = null;
@@ -291,8 +283,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
               {
 
                 // The advertised recording format is the camera's own, read from its livestream before this controller was built, so a recording copies its audio
-                // untouched whenever the stream matches. The stand-in takes its place only where the stream could not be read, and a recording whose stream differs from
-                // what HomeKit selected is transcoded to it rather than mislabeled.
+                // untouched whenever the stream matches. The stand-in takes its place where the stream could not be read or carries a rate HomeKit cannot express, and a
+                // recording whose stream differs from what HomeKit selected is transcoded to it rather than mislabeled.
                 audioChannels: 1,
                 samplerate: advertised.samplerate,
                 type: AudioRecordingCodecType.AAC_LC
@@ -346,8 +338,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
               audioChannels: 1,
 
-              // The samplerate helper hands HomeKit both of its streaming rates to choose from for a doorbell and the lower rate alone for every other camera. This
-              // surface is constructor-frozen, so doorbell-ness is sampled at construction here and is a term of the controller identity for exactly that reason.
+              // The samplerate helper hands HomeKit 16 and 24 kHz to choose from for a doorbell and 16 kHz alone for every other camera. This surface is
+              // constructor-frozen, so doorbell-ness is sampled at construction here and is a term of the controller identity for exactly that reason.
               samplerate: streamingSamplerates({ isDoorbell: this.protectCamera.ufp.featureFlags.isDoorbell }),
               type: AudioStreamingCodecType.AAC_ELD
             }

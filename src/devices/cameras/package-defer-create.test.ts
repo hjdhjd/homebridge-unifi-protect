@@ -14,7 +14,7 @@ import { Service, TestStateStore, makeProtectState, makeTestAccessory } from "..
 import type { TestAccessory, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { after, before, describe, test } from "node:test";
-import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
+import { formatLogEntry, logCount, settle } from "homebridge-plugin-utils/testing";
 import type { Camera } from "unifi-protect";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
@@ -47,7 +47,7 @@ describe("package camera defer-create (BC1)", () => {
   // Count the user-facing deferral narrations logged so far.
   function deferralLineCount(): number {
 
-    return logEntries.filter((entry) => (entry.level === "info") && formatLogEntry(entry).includes(DEFERRAL_FRAGMENT)).length;
+    return logCount(logEntries, "info", DEFERRAL_FRAGMENT);
   }
 
   // The package camera's accessory, asserted live.

@@ -16,14 +16,16 @@ import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.hel
 import { PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { TestStreamingDelegate, makeRecordingDelegateDouble } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
-import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
-import { makeControllableLivestreamDouble, makeTestCameraHost } from "./testing.helpers.ts";
+import { formatLogEntry, logCount, settle } from "homebridge-plugin-utils/testing";
+import { makeChannelProfile, makeControllableLivestreamDouble, makeTestCameraHost } from "./testing.helpers.ts";
 import type { CameraRecordingConfiguration } from "homebridge";
 import type { ChannelProfile } from "./resolution.ts";
+import type { LivestreamAudioFormat } from "./stream-delegate.ts";
 import type { LivestreamDescription } from "unifi-protect";
 import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
+import { RECORDING_AUDIO_STAND_IN } from "./stream-delegate.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
@@ -40,34 +42,11 @@ after(() => {
   }
 });
 
-// The count of INFO/WARN log lines whose first format string contains the given fragment - the harness records the raw parameters, so we match the message template. The
-// enable-ack re-acknowledgment test counts occurrences (not a boolean .some()), because a boolean would pass after the FIRST enable regardless of whether the second
-// re-acknowledged - the count distinguishes the per-enable acknowledgment behavior.
-function countLogs(entries: readonly TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
-
-  return entries.filter((entry) => (entry.level === level) && entry.message.includes(fragment)).length;
-}
-
 // A minimal-but-truthy recording configuration cast to the HAP type at this single boundary - the same harness discipline the sibling suites use. The reconcile path
 // reads only videoCodec.resolution (channel selection) and videoCodec.parameters.bitRate (the enable-ack config log).
 function makeRecordingConfig(): CameraRecordingConfiguration {
 
   return { prebufferLength: 4000, videoCodec: { parameters: { bitRate: 2000 }, resolution: [ 1920, 1080, 30 ] } } as unknown as CameraRecordingConfiguration;
-}
-
-// A ChannelProfile resolved from a real G2 Pro channel, so the channel's id and fps reach the reconciler exactly as production composes them. The index picks the
-// channel, the first by default, so a restart row can steer the selection onto a different stream. We guard the indexed access because host.ufp.channels[index]
-// widens to ProtectCameraChannelConfig | undefined under noUncheckedIndexedAccess.
-function makeChannelProfile(host: TestCameraHost, index = 0): ChannelProfile {
-
-  const channel = host.ufp.channels[index];
-
-  if(!channel) {
-
-    throw new Error("The G2 Pro channel fixture is missing the requested channel.");
-  }
-
-  return { channel, name: channel.name, resolution: [ 1920, 1080, 30 ], url: "rtsps://test" };
 }
 
 // The arranged supervisor and its consuming delegate, plus the handles a test asserts against: logEntries captures the narration, host exposes the recorded call logs
@@ -157,8 +136,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "an organic deferral logs at warn");
-    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 0, "an organic deferral does not log at debug");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 1, "an organic deferral logs at warn");
+    assert.equal(logCount(logEntries, "debug", "deferred until the camera is online"), 0, "an organic deferral does not log at debug");
   });
 
   // Deferred while EXPECTED, through the induced half. The same offline deferral, but the controller is rebooting because we asked it to: the reconcile head drops the
@@ -174,8 +153,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "an expected deferral logs at debug");
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 0, "an expected deferral does not log at warn");
+    assert.equal(logCount(logEntries, "debug", "deferred until the camera is online"), 1, "an expected deferral logs at debug");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 0, "an expected deferral does not log at warn");
   });
 
   // Deferred while EXPECTED, through the settling-tail half - the reclassification this classification exists for. The controller has already finished rebooting and
@@ -191,8 +170,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "a deferral inside the reboot's settling tail logs at debug");
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 0, "a deferral inside the reboot's settling tail does not log at warn");
+    assert.equal(logCount(logEntries, "debug", "deferred until the camera is online"), 1, "a deferral inside the reboot's settling tail logs at debug");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 0, "a deferral inside the reboot's settling tail does not log at warn");
   });
 
   // The settling tail's far edge. The same running-phase deferral, but the observed reboot is older than the window, so the tail does not explain this camera and the
@@ -207,8 +186,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "a deferral past the reboot's settling tail logs at warn");
-    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 0, "a deferral past the reboot's settling tail does not log at debug");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 1, "a deferral past the reboot's settling tail logs at warn");
+    assert.equal(logCount(logEntries, "debug", "deferred until the camera is online"), 0, "a deferral past the reboot's settling tail does not log at debug");
   });
 
   // Resolution while ORGANIC. A recording deferred at the running phase, then the camera returns and the timeshift actually starts: the successful-start path announces
@@ -222,7 +201,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral was logged");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral was logged");
 
     // The camera returns; the reconcile now reaches the successful-start path and announces the resumption.
     host.isReachable = true;
@@ -230,8 +209,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 1, "an organic resumption announces at warn");
-    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "an organic resumption does not announce at debug");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 1, "an organic resumption announces at warn");
+    assert.equal(logCount(logEntries, "debug", "has started now that the camera is online"), 0, "an organic resumption does not announce at debug");
   });
 
   // Resolution while EXPECTED - the latch-not-phase proof. A recording deferred while the controller was rebooting (captured origin: expected), then the camera returns
@@ -248,7 +227,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "the expected deferral was logged at debug");
+    assert.equal(logCount(logEntries, "debug", "deferred until the camera is online"), 1, "the expected deferral was logged at debug");
 
     // The controller has finished rebooting (phase back to running) and the camera is online again. A fresh classification read here would call the recovery organic;
     // the captured latch must keep it expected.
@@ -258,8 +237,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 1, "the expected resumption announces at debug from the captured origin");
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0,
+    assert.equal(logCount(logEntries, "debug", "has started now that the camera is online"), 1, "the expected resumption announces at debug from the captured origin");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 0,
       "the expected resumption does not announce at warn (a fresh classification read would)");
   });
 
@@ -275,7 +254,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the deferral was logged");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 1, "the deferral was logged");
 
     // The camera becomes reachable, but starve the buffer so the start fails (whenEstablished resolves false on the segment-less double) - the reconcile takes the
     // start-failure early return and never reaches the successful-start path.
@@ -285,8 +264,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "no resumption is announced at warn when the start fails");
-    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "no resumption is announced at debug when the start fails");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 0, "no resumption is announced at warn when the start fails");
+    assert.equal(logCount(logEntries, "debug", "has started now that the camera is online"), 0, "no resumption is announced at debug when the start fails");
   });
 
   // The deferred-offline resumption must survive a FAILED first post-online start and still fire on the pass that actually re-establishes. A recording is deferred
@@ -301,7 +280,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the deferral was logged");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 1, "the deferral was logged");
 
     // The camera becomes reachable, but starve the buffer so the first start fails (whenEstablished resolves false on the segment-less double).
     host.isReachable = true;
@@ -310,7 +289,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "no resumption is announced while the first start fails");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 0, "no resumption is announced while the first start fails");
 
     // The buffer re-fills and the second start succeeds. The resumption fires on THIS real restart, even though the edge-detect input was cleared by the failing pass.
     host.livestreamMediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
@@ -318,7 +297,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 1, "the resumption fires on the real restart after the earlier failure");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 1, "the resumption fires on the real restart after the earlier failure");
   });
 
   // Classification stability across a CONTINUOUS offline. The origin is captured once, at the open edge, and a phase change while the camera stays offline never
@@ -332,7 +311,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral opened at warn");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral opened at warn");
 
     // The controller starts an induced reboot while the camera is STILL offline. The camera never came back, so no open edge fires and the episode keeps its origin.
     nvr.phase = "rebooting";
@@ -340,8 +319,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the continuous offline did not re-log the deferral at warn");
-    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 0, "the continuous offline did not re-log the deferral at debug");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 1, "the continuous offline did not re-log the deferral at warn");
+    assert.equal(logCount(logEntries, "debug", "deferred until the camera is online"), 0, "the continuous offline did not re-log the deferral at debug");
 
     // The controller finishes rebooting and the camera returns, so the buffer starts and the resolution narrates against the origin captured at the open edge.
     nvr.phase = "running";
@@ -350,8 +329,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 1, "the resolution kept the origin the episode opened with");
-    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "no mid-episode reclassification moved the resolution to debug");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 1, "the resolution kept the origin the episode opened with");
+    assert.equal(logCount(logEntries, "debug", "has started now that the camera is online"), 0, "no mid-episode reclassification moved the resolution to debug");
   });
 
   // A flicker RE-OPENS the episode, and the last classification wins. The camera comes back but the start fails, clearing the edge-detect input without resolving
@@ -365,7 +344,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral opened at warn");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral opened at warn");
 
     // The camera returns, but a starved buffer fails the start: nothing resolves, and the edge-detect input clears.
     host.isReachable = true;
@@ -381,8 +360,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 1, "the re-open logged its own deferral line at the new level");
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the re-open did not repeat the original level's line");
+    assert.equal(logCount(logEntries, "debug", "deferred until the camera is online"), 1, "the re-open logged its own deferral line at the new level");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 1, "the re-open did not repeat the original level's line");
 
     // The reboot completes and the camera returns to a fillable buffer, so the start succeeds and the resolution narrates.
     nvr.phase = "running";
@@ -392,15 +371,15 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 1, "the resolution narrated once at the last captured origin");
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "the overwritten origin did not also narrate");
+    assert.equal(logCount(logEntries, "debug", "has started now that the camera is online"), 1, "the resolution narrated once at the last captured origin");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 0, "the overwritten origin did not also narrate");
 
     // A further kick against the running buffer must narrate nothing: the resolution closed the episode.
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 1, "a kick after the resolution did not narrate a second time at debug");
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "a kick after the resolution did not narrate at warn either");
+    assert.equal(logCount(logEntries, "debug", "has started now that the camera is online"), 1, "a kick after the resolution did not narrate a second time at debug");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 0, "a kick after the resolution did not narrate at warn either");
   });
 
   // The re-log is per RE-OPEN, not per level change: a flicker whose classification is unchanged still logs a second deferral line, because the open edge is what
@@ -413,7 +392,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral opened at warn");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 1, "the organic deferral opened at warn");
 
     // The camera returns, but a starved buffer fails the start: nothing resolves, and the edge-detect input clears.
     host.isReachable = true;
@@ -428,8 +407,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 2, "the re-open logged a second deferral line at the same level");
-    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 0, "the unchanged classification never dropped a line to debug");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 2, "the re-open logged a second deferral line at the same level");
+    assert.equal(logCount(logEntries, "debug", "deferred until the camera is online"), 0, "the unchanged classification never dropped a line to debug");
 
     // The camera returns to a fillable buffer, so the start succeeds and the single resolution narrates.
     host.isReachable = true;
@@ -438,8 +417,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 1, "the two deferral lines resolved with a single resumption");
-    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "the resumption did not also narrate at debug");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 1, "the two deferral lines resolved with a single resumption");
+    assert.equal(logCount(logEntries, "debug", "has started now that the camera is online"), 0, "the resumption did not also narrate at debug");
   });
 
   // Negative control for the demand-disable reset, asserted on the FIELD. A recording is deferred offline (a resolution becomes owed), then disabled. The disable edge
@@ -534,9 +513,9 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     await settle();
 
     assert.equal(supervisor.pendingResolution, false, "the episode stayed closed once the suspended pass resumed");
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "the retired episode narrated no resolution at warn");
-    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "the retired episode narrated no resolution at debug");
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the declined start acknowledged no recording configuration");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 0, "the retired episode narrated no resolution at warn");
+    assert.equal(logCount(logEntries, "debug", "has started now that the camera is online"), 0, "the retired episode narrated no resolution at debug");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 0, "the declined start acknowledged no recording configuration");
   });
 
   // A reconcile asked after shutdown runs no pass, and the order of the arrangement is what makes that observable. The supervisor is shut down first, and only then
@@ -608,8 +587,8 @@ describe("timeshift supervisor never-rejecting reconcile", () => {
     }
 
     assert.equal(floats.length, 0, "the throwing pass did not float an unhandled rejection through the reconcile chokepoint");
-    assert.ok(countLogs(logEntries, "warn", "deferred until the camera is online") >= 1, "the deferral bookkeeping ran before the throw - the deferral warn fired");
-    assert.equal(countLogs(logEntries, "error", "could not be updated and will be retried"), 1, "the caught failure logged exactly one retry line");
+    assert.ok(logCount(logEntries, "warn", "deferred until the camera is online") >= 1, "the deferral bookkeeping ran before the throw - the deferral warn fired");
+    assert.equal(logCount(logEntries, "error", "could not be updated and will be retried"), 1, "the caught failure logged exactly one retry line");
 
     // The next request still runs a pass and the deferral field the throwing pass set is intact: bring the camera back online and a fresh reconcile recovers, firing
     // the resumption that consults that very field.
@@ -618,7 +597,7 @@ describe("timeshift supervisor never-rejecting reconcile", () => {
     await supervisor.reconcile();
     await settle();
 
-    assert.ok(countLogs(logEntries, "warn", "has started now that the camera is online") >= 1,
+    assert.ok(logCount(logEntries, "warn", "has started now that the camera is online") >= 1,
       "the resumption fires on recovery, proving the throwing pass had already updated the deferral bookkeeping before it threw");
   });
 });
@@ -668,7 +647,7 @@ describe("timeshift supervisor narration liveness guard", () => {
     await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
     await settle();
 
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 1, "the deferral episode opened while offline");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 1, "the deferral episode opened while offline");
 
     // Phase 1: the camera returns. The first start succeeds on the one queued double, but the death lands inside the settle window before the pass narrates. The death
     // re-arms a follow-up pass, which falls back to the starved parking double and fails to re-establish, so nothing narrates at all.
@@ -679,9 +658,9 @@ describe("timeshift supervisor narration liveness guard", () => {
     await supervisor.reconcile();
     await settle();
 
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the phantom acknowledgment was suppressed for the buffer that died in the window");
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "the phantom deferral resolution was suppressed at warn");
-    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "the phantom deferral resolution was suppressed at debug");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 0, "the phantom acknowledgment was suppressed for the buffer that died in the window");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 0, "the phantom deferral resolution was suppressed at warn");
+    assert.equal(logCount(logEntries, "debug", "has started now that the camera is online"), 0, "the phantom deferral resolution was suppressed at debug");
     assert.equal(supervisor.buffer.isStarted, false, "the starved follow-up pass could not re-establish, so the buffer is stopped");
     assert.equal(host.livestreamCalls.length, 2, "the death bought exactly one further pass, which made the second livestream call");
 
@@ -692,8 +671,8 @@ describe("timeshift supervisor narration liveness guard", () => {
     await supervisor.reconcile();
     await settle();
 
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "the acknowledgment latch survived the phantom and fires once on the honest retry");
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 1, "the deferral resolution survived and fires once on the honest retry");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 1, "the acknowledgment latch survived the phantom and fires once on the honest retry");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 1, "the deferral resolution survived and fires once on the honest retry");
     assert.equal(supervisor.buffer.isStarted, true, "the honest retry re-established the buffer");
   });
 });
@@ -711,27 +690,27 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
 
     // The arrange already armed recording once (updateRecordingActive(true) reached the reconcile's successful-start path), so the first enable acknowledged exactly
     // once - the relocation is behavior-preserving for the first enable.
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "the first enable acknowledged the configuration exactly once");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 1, "the first enable acknowledged the configuration exactly once");
 
     // A redundant reconcile WHILE STILL ENABLED (no disable) must NOT re-acknowledge: the timeshift is already running on the desired channel, so the reconcile reaches
     // the shared acknowledgment gate with the flag already set and does not re-acknowledge. This is what proves "once per episode" rather than "once per reconcile".
     await delegate.configureTimeshifting();
     await settle();
 
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "a redundant reconcile within the same enable episode did not re-acknowledge");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 1, "a redundant reconcile within the same enable episode did not re-acknowledge");
 
     // Disable ends the episode: the "Disabling..." transition log fires and the acknowledgment flag is reset.
     delegate.updateRecordingActive(false);
 
-    assert.ok(countLogs(logEntries, "info", "Disabling HomeKit Secure Video event recording.") >= 1, "the disable logged its transition");
+    assert.ok(logCount(logEntries, "info", "Disabling HomeKit Secure Video event recording.") >= 1, "the disable logged its transition");
 
     // Re-enable starts a fresh episode: the reconcile re-establishes the buffer (the segment-yielding double re-yields on the second start) and reaches the
-    // successful-start path again, so the acknowledgment fires a SECOND time. countLogs === 2 is false against the un-reset flag (which would log only the first enable,
+    // successful-start path again, so the acknowledgment fires a SECOND time. logCount === 2 is false against the un-reset flag (which would log only the first enable,
     // leaving the count at 1) and true after the reset - the distinguishing assertion.
     delegate.updateRecordingActive(true);
     await settle();
 
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 2, "the re-enable re-acknowledged the configuration, so the ack fired on each enable");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 2, "the re-enable re-acknowledged the configuration, so the ack fired on each enable");
   });
 
   /* The disable race. A start can be suspended across its await while HomeKit turns recording off underneath it, and the pass that resumes still holds the demand it
@@ -765,7 +744,7 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
     await settle();
 
     assert.equal(supervisor.buffer.isStarted, false, "the start is held in flight, so the pass is suspended before its narration");
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "nothing has been acknowledged yet - the buffer is not up");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 0, "nothing has been acknowledged yet - the buffer is not up");
 
     // HomeKit disables recording while that pass is held. The demand write is synchronous, so it lands before the pass can resume.
     void supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: false });
@@ -787,13 +766,13 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
 
     const { logEntries, supervisor } = await arrangeDisableRace();
 
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the pass acknowledged nothing for a recording that had already been disabled");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 0, "the pass acknowledged nothing for a recording that had already been disabled");
 
     // A genuine enable afterwards. It re-establishes through the segment-yielding double and reaches the same commit point, this time with a live demand.
     await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
     await settle();
 
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "the next genuine enable acknowledged exactly once, so the raced pass had left nothing latched");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 1, "the next genuine enable acknowledged exactly once, so the raced pass had left nothing latched");
   });
 
   // The same window, read through the buffer's state once the passes the disable joined have settled. The raced start committed a running buffer, and only the
@@ -815,7 +794,7 @@ describe("timeshift supervisor demand-edge episode resets", () => {
 
     const { logEntries, supervisor } = await arrangeEnabledDelegate();
 
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "the initial enable acknowledged once");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 1, "the initial enable acknowledged once");
 
     const config = makeRecordingConfig();
 
@@ -826,7 +805,7 @@ describe("timeshift supervisor demand-edge episode resets", () => {
     await settle();
 
     // Exactly one more acknowledgment: the flap closed the old episode on the disable edge and re-acknowledged once on the enable's successful restart.
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 2, "the flap re-acknowledged exactly once");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 2, "the flap re-acknowledged exactly once");
     assert.equal(supervisor.buffer.isStarted, true, "the flap settled with the buffer running");
   });
 });
@@ -962,13 +941,13 @@ describe("timeshift supervisor shutdown", () => {
     await settle();
 
     assert.equal(stoppedEmits, 0, "no teardown was reported because none happened - shutdown's stop found no committed subscription");
-    assert.equal(countLogs(logEntries, "debug", "Timeshift buffer stopped."), 0, "no pass stopped a running buffer, since the commit never landed");
+    assert.equal(logCount(logEntries, "debug", "Timeshift buffer stopped."), 0, "no pass stopped a running buffer, since the commit never landed");
     assert.equal(double.disposed, true, "the declined start disposed the subscription it opened");
     assert.equal(supervisor.buffer.isStarted, false, "the buffer never started");
     assert.equal(supervisor.buffer.channelProfile, null, "no channel profile committed");
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the shutdown-raced start emitted no acknowledgment");
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "no deferral resolution narrated at warn");
-    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "no deferral resolution narrated at debug");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 0, "the shutdown-raced start emitted no acknowledgment");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 0, "no deferral resolution narrated at warn");
+    assert.equal(logCount(logEntries, "debug", "has started now that the camera is online"), 0, "no deferral resolution narrated at debug");
   });
 
   // A follow-up queued before a shutdown does not run after it. The in-flight race's arrangement holds a start on a deferred establishment, and a reconcile asked
@@ -1046,9 +1025,9 @@ describe("timeshift supervisor shutdown", () => {
     await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
     await settle();
 
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the settle-window shutdown emitted no acknowledgment");
-    assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "no deferral resolution narrated at warn");
-    assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "no deferral resolution narrated at debug");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 0, "the settle-window shutdown emitted no acknowledgment");
+    assert.equal(logCount(logEntries, "warn", "has started now that the camera is online"), 0, "no deferral resolution narrated at warn");
+    assert.equal(logCount(logEntries, "debug", "has started now that the camera is online"), 0, "no deferral resolution narrated at debug");
     assert.equal(supervisor.buffer.isStarted, false, "the shutdown stopped the committed buffer before the guard read it");
     assert.equal(double.disposed, true, "the shutdown's stop disposed the committed subscription");
     assert.equal(stoppedEmits, 1, "the committed subscription was released exactly once");
@@ -1185,8 +1164,8 @@ describe("timeshift supervisor streaming arm", () => {
     await settle();
 
     assert.equal(supervisor.buffer.isStarted, true, "the streaming arm started the standing buffer");
-    assert.equal(countLogs(logEntries, "debug", "Timeshift buffer started for livestreaming."), 1, "a streaming-only start narrates at debug");
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "a streaming-only start emits no HKSV acknowledgment");
+    assert.equal(logCount(logEntries, "debug", "Timeshift buffer started for livestreaming."), 1, "a streaming-only start narrates at debug");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 0, "a streaming-only start emits no HKSV acknowledgment");
   });
 
   // A streaming-only camera going offline is already covered by the controller/camera narration, so its deferral is silent: the deferral block stays gated on the
@@ -1201,8 +1180,8 @@ describe("timeshift supervisor streaming arm", () => {
     await settle();
 
     assert.equal(supervisor.buffer.isStarted, false, "the offline camera did not start the buffer");
-    assert.equal(countLogs(logEntries, "warn", "deferred until the camera is online"), 0, "a streaming-only offline does not defer at warn");
-    assert.equal(countLogs(logEntries, "debug", "deferred until the camera is online"), 0, "a streaming-only offline does not defer at debug");
+    assert.equal(logCount(logEntries, "warn", "deferred until the camera is online"), 0, "a streaming-only offline does not defer at warn");
+    assert.equal(logCount(logEntries, "debug", "deferred until the camera is online"), 0, "a streaming-only offline does not defer at debug");
   });
 
   // The standing-buffer common case: the streaming arm has the buffer already running when the recording arm enables. The acknowledgment must still fire exactly once,
@@ -1215,14 +1194,14 @@ describe("timeshift supervisor streaming arm", () => {
     await settle();
 
     assert.equal(supervisor.buffer.isStarted, true, "the streaming arm left the buffer running");
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "no acknowledgment before recording enables");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 0, "no acknowledgment before recording enables");
 
     // Enable recording against the already-running buffer: the reconcile finds it already on the desired channel and acknowledges on the shared path.
     await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
     await settle();
 
     assert.equal(supervisor.buffer.isStarted, true, "the buffer is running after the recording arm enabled");
-    assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "the enable acknowledged exactly once on the already-running path");
+    assert.equal(logCount(logEntries, "info", "HKSV:"), 1, "the enable acknowledged exactly once on the already-running path");
   });
 
   // A running buffer restarted onto a different stream goes through one start. The restart stops the running buffer before it opens the new stream, and the stopped
@@ -1258,7 +1237,7 @@ describe("timeshift supervisor streaming arm", () => {
       "exactly one double the host handed out is still undisposed");
     assert.equal(supervisor.buffer.isStarted, true, "the restarted buffer is running");
     assert.equal(supervisor.buffer.channelProfile?.channel.id, otherProfile.channel.id, "the buffer runs on the new channel");
-    assert.equal(countLogs(logEntries, "debug", "Timeshift buffer started for livestreaming."), 2, "the restart wrote the started line once more, twice in all");
+    assert.equal(logCount(logEntries, "debug", "Timeshift buffer started for livestreaming."), 2, "the restart wrote the started line once more, twice in all");
   });
 
   // A restart whose new start fails is retried at once, and the retry can succeed. The restart's stop asks for a reconcile from inside the pass, and the pass that
@@ -1295,8 +1274,9 @@ describe("timeshift supervisor streaming arm", () => {
   });
 });
 
-// The rendered HKSV acknowledgment line at info level, or undefined when none fired. The hardware marker is a substituted %s argument, so the marker assertions match
-// against the RENDERED line rather than the format string countLogs keys on, since a countLogs check on the marker passes vacuously in both directions.
+// The rendered HKSV acknowledgment line at info level, or undefined when none fired. The hardware marker is a substituted %s argument, so only the rendered line carries
+// it, and the marker assertions read that line itself rather than a count of the marker, because a count of zero cannot tell an acknowledgment without the marker from
+// no acknowledgment at all.
 function hksvAckLine(entries: readonly TestLogEntry[]): string | undefined {
 
   const entry = entries.find((candidate) => (candidate.level === "info") && formatLogEntry(candidate).includes("HKSV:"));
@@ -1432,19 +1412,19 @@ describe("timeshift supervisor selection failure", () => {
     await supervisor.reconcile();
     await settle();
 
-    assert.equal(countLogs(logEntries, "error", "no valid video stream profile was found"), 1, "the selection failure reported once");
+    assert.equal(logCount(logEntries, "error", "no valid video stream profile was found"), 1, "the selection failure reported once");
 
     // A repeat kick with the failure unresolved must not re-report - the once-per-episode latch holds.
     await supervisor.reconcile();
     await settle();
 
-    assert.equal(countLogs(logEntries, "error", "no valid video stream profile was found"), 1, "a repeat kick did not re-report the still-unresolved failure");
+    assert.equal(logCount(logEntries, "error", "no valid video stream profile was found"), 1, "a repeat kick did not re-report the still-unresolved failure");
 
     // A pushed demand change re-arms the report.
     await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
     await settle();
 
-    assert.equal(countLogs(logEntries, "error", "no valid video stream profile was found"), 2, "a demand change re-armed the report");
+    assert.equal(logCount(logEntries, "error", "no valid video stream profile was found"), 2, "a demand change re-armed the report");
   });
 });
 
@@ -1550,11 +1530,16 @@ describe("the supervisor's audio-format narration at a buffer start", () => {
   const ADVERTISED = { channels: 1, codec: "aac", sampleRate: 16000 } as const;
   const RESTART_HINT = "restart HBUP to let HomeKit learn the new format";
 
-  // A description carrying one AAC track at the given rate in one channel.
-  const describedAt = (sampleRate: number): LivestreamDescription => ({ tracks: [{ channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate }] });
+  // A stream format carrying AAC at the given rate in one channel.
+  const mono = (sampleRate: number): LivestreamAudioFormat => ({ channels: 1, codec: "aac", sampleRate });
 
-  // A camera with a recording arm under the streaming arm's demand, whose successive buffer starts run on subscriptions carrying the given descriptions in order.
-  function arrangeNarration(rates: number[]): { logEntries: readonly TestLogEntry[]; supervisor: ProtectTimeshiftSupervisor } {
+  // A description carrying one audio track in the given format.
+  const describedAs = (format: LivestreamAudioFormat): LivestreamDescription => ({ tracks: [{ ...format, id: 2, kind: "audio" }] });
+
+  // A camera under the streaming arm's demand, with a recording arm unless a row withdraws it, whose controller was built with the given advertisement, the 16 kHz
+  // mono one unless a row names another, and whose successive buffer starts run on subscriptions carrying the given stream formats in order.
+  function arrangeNarration({ advertised = ADVERTISED, formats, recording = true }: { advertised?: LivestreamAudioFormat; formats: LivestreamAudioFormat[];
+    recording?: boolean; }): { logEntries: readonly TestLogEntry[]; supervisor: ProtectTimeshiftSupervisor } {
 
     const { controller, host, logEntries } = makeTestCameraHost();
 
@@ -1562,13 +1547,17 @@ describe("the supervisor's audio-format narration at a buffer start", () => {
 
     const stream = new TestStreamingDelegate();
 
-    stream.hksv = makeRecordingDelegateDouble() as unknown as TestStreamingDelegate["hksv"];
+    if(recording) {
+
+      stream.hksv = makeRecordingDelegateDouble() as unknown as TestStreamingDelegate["hksv"];
+    }
+
     host.stream = stream;
     host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
     host.usesTimeshiftLivestream = true;
-    host.livestreamSubscriptions = rates.map((rate) => makeControllableLivestreamDouble({ description: describedAt(rate) }));
+    host.livestreamSubscriptions = formats.map((format) => makeControllableLivestreamDouble({ description: describedAs(format) }));
 
-    return { logEntries, supervisor: new ProtectTimeshiftSupervisor(host, { adopt: null, advertised: ADVERTISED }) };
+    return { logEntries, supervisor: new ProtectTimeshiftSupervisor(host, { adopt: null, advertised }) };
   }
 
   // Stop the running buffer, which asks for the re-establishing pass itself, and let that pass start the buffer on the next subscription.
@@ -1581,37 +1570,101 @@ describe("the supervisor's audio-format narration at a buffer start", () => {
   test("a start whose format differs logs the restart hint once, a restart on the same format logs nothing more, and a return to the advertised one resets it",
     async () => {
 
-      const { logEntries, supervisor } = arrangeNarration([ 8000, 8000, 16000, 8000 ]);
+      const { logEntries, supervisor } = arrangeNarration({ formats: [ mono(8000), mono(8000), mono(16000), mono(8000) ] });
 
       await supervisor.reconcile();
 
-      assert.equal(countLogs(logEntries, "info", RESTART_HINT), 1, "the differing format was narrated once at the first start");
+      assert.equal(logCount(logEntries, "info", RESTART_HINT), 1, "the differing format was narrated once at the first start");
       assert.ok(logEntries.some((entry) => formatLogEntry(entry).includes("now 8 kHz mono, while HomeKit Secure Video records at 16 kHz mono")),
         "the line names the stream's format and the advertised one");
 
       await restart(supervisor);
 
-      assert.equal(countLogs(logEntries, "info", RESTART_HINT), 1, "a restart on the same differing format narrated nothing more");
+      assert.equal(logCount(logEntries, "info", RESTART_HINT), 1, "a restart on the same differing format narrated nothing more");
 
       await restart(supervisor);
 
-      assert.equal(countLogs(logEntries, "info", RESTART_HINT), 1, "a restart back on the advertised format narrated nothing");
+      assert.equal(logCount(logEntries, "info", RESTART_HINT), 1, "a restart back on the advertised format narrated nothing");
 
       await restart(supervisor);
 
-      assert.equal(countLogs(logEntries, "info", RESTART_HINT), 2, "the return to the advertised format reset the latch, so the next change is narrated again");
+      assert.equal(logCount(logEntries, "info", RESTART_HINT), 2, "the return to the advertised format reset the latch, so the next change is narrated again");
 
       supervisor.shutdown();
     });
 
   test("a start whose format matches the advertised one never logs the hint", async () => {
 
-    const { logEntries, supervisor } = arrangeNarration([ 16000, 16000 ]);
+    const { logEntries, supervisor } = arrangeNarration({ formats: [ mono(16000), mono(16000) ] });
 
     await supervisor.reconcile();
     await restart(supervisor);
 
-    assert.equal(countLogs(logEntries, "info", RESTART_HINT), 0, "a matching format is never narrated");
+    assert.equal(logCount(logEntries, "info", RESTART_HINT), 0, "a matching format is never narrated");
+
+    supervisor.shutdown();
+  });
+
+  // The hint compares the advertisement a restart would compute from the running stream against the one the controller was built with, so a stream that differs only
+  // in what every advertisement normalizes away earns no hint. A stereo stream advertises its rate in one channel, so at the advertised rate a restart would tell
+  // HomeKit exactly what it already holds.
+  test("a stereo stream at the advertised rate never logs the hint", async () => {
+
+    const stereo: LivestreamAudioFormat = { channels: 2, codec: "aac", sampleRate: 16000 };
+    const { logEntries, supervisor } = arrangeNarration({ formats: [stereo] });
+
+    await supervisor.reconcile();
+
+    assert.deepEqual(supervisor.buffer.audioFormat, stereo, "the vacuity guard: the buffer runs on the stereo stream");
+    assert.equal(logCount(logEntries, "info", RESTART_HINT), 0, "a stereo stream at the advertised rate is never narrated");
+
+    supervisor.shutdown();
+  });
+
+  // An Opus stream advertises AAC-LC at its own rate in one channel, so a controller built from a 48 kHz Opus stream holds 48 kHz mono, and the same stream earns no
+  // hint. The stream moving to a rate HomeKit has another recording member for is a change a restart would advertise, so it is said once.
+  test("an Opus stream at the advertised rate never logs the hint, and the same stream moving to 8 kHz AAC logs it once", async () => {
+
+    const opus: LivestreamAudioFormat = { channels: 1, codec: "opus", sampleRate: 48000 };
+    const { logEntries, supervisor } = arrangeNarration({ advertised: mono(48000), formats: [ opus, mono(8000) ] });
+
+    await supervisor.reconcile();
+
+    assert.deepEqual(supervisor.buffer.audioFormat, opus, "the vacuity guard: the buffer runs on the Opus stream");
+    assert.equal(logCount(logEntries, "info", RESTART_HINT), 0, "an Opus stream at the advertised rate is never narrated");
+
+    await restart(supervisor);
+
+    assert.equal(logCount(logEntries, "info", RESTART_HINT), 1, "the move to 8 kHz AAC was narrated once");
+    assert.ok(logEntries.some((entry) => formatLogEntry(entry).includes("now 8 kHz mono, while HomeKit Secure Video records at 48 kHz mono.")),
+      "the line names the stream's format and the advertisement HomeKit holds");
+
+    supervisor.shutdown();
+  });
+
+  // A stream at a rate HomeKit has no recording member for advertises the whole stand-in, so against a controller built with the stand-in a restart would change
+  // nothing and the stream earns no hint.
+  test("a stream at a rate HomeKit cannot express never logs the hint against the stand-in", async () => {
+
+    const { logEntries, supervisor } = arrangeNarration({ advertised: RECORDING_AUDIO_STAND_IN.format, formats: [mono(22050)] });
+
+    await supervisor.reconcile();
+
+    assert.deepEqual(supervisor.buffer.audioFormat, mono(22050), "the vacuity guard: the buffer runs on the 22050 Hz stream");
+    assert.equal(logCount(logEntries, "info", RESTART_HINT), 0, "a stream whose rate HomeKit cannot express is never narrated against the stand-in");
+
+    supervisor.shutdown();
+  });
+
+  // The hint speaks about HomeKit Secure Video, so a camera with no recording arm has nothing to narrate, even when its stream would earn another advertisement.
+  test("a camera with no recording arm never logs the hint, though its stream differs from the advertised format", async () => {
+
+    const { logEntries, supervisor } = arrangeNarration({ formats: [mono(8000)], recording: false });
+
+    await supervisor.reconcile();
+
+    assert.deepEqual(supervisor.buffer.audioFormat, mono(8000), "the vacuity guard: the buffer runs on a stream whose advertisement differs");
+    assert.equal(logCount(logEntries, "info", RESTART_HINT), 0, "a camera with no recording arm is never narrated");
 
     supervisor.shutdown();
   });

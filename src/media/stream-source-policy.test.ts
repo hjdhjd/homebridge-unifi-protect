@@ -86,17 +86,17 @@ describe("resolveSessionSource - the AV1 codec constraint", () => {
       { kick: false, source: "buffer" });
   });
 
-  // The AV1 floor cell. An AV1 camera with the toggle off and nothing recording has no buffer CLAIM, but it can still reach the livestream API - so it degrades to the
-  // buffer path rather than erroring, which is the whole point of treating the toggle as a transport preference. The kick is a deliberate no-op when no standing-buffer
-  // demand exists; the supervisor's own shouldRun still answers that question.
-  test("AV1 with the toggle off and no recording degrades to the buffer path wherever the API is reachable", () => {
+  // The AV1 floor cell. An AV1 camera with the toggle off and nothing recording has no buffer CLAIM, yet it degrades to the buffer path rather than erroring, which is
+  // the whole point of treating the toggle as a transport preference. The kick is a deliberate no-op when no standing-buffer demand exists; the supervisor's own
+  // shouldRun still answers that question.
+  test("AV1 with the toggle off and no recording degrades to the buffer path", () => {
 
     assert.deepEqual(resolveSessionSource(input({ hasRecordingDemand: false, usesTimeshiftLivestream: false, videoCodec: "av1" })),
       { kick: true, source: "bufferDegraded" });
   });
 });
 
-describe("resolveSessionSource - the no-RTSP-stream grid (the camera can reach the API)", () => {
+describe("resolveSessionSource - the no-RTSP-stream grid", () => {
 
   test("the toggle on with the buffer running adopts the buffer, RTSP state irrelevant", () => {
 
@@ -114,8 +114,8 @@ describe("resolveSessionSource - the no-RTSP-stream grid (the camera can reach t
       { kick: true, source: "bufferDegraded" });
   });
 
-  // The floor cell for the ordinary no-RTSP camera: the user asked for direct RTSP, nothing is recording, and there is no RTSP stream to dial. The camera can still
-  // reach the livestream API, so its live views come from the buffer path rather than failing - the whole point of treating the toggle as a preference.
+  // The floor cell for the ordinary no-RTSP camera: the user asked for direct RTSP, nothing is recording, and there is no RTSP stream to dial. Its live views come from
+  // the buffer path rather than failing - the whole point of treating the toggle as a preference.
   test("the toggle off with no RTSP stream degrades to the buffer path rather than failing", () => {
 
     assert.deepEqual(resolveSessionSource(input({ hasRtspStream: false, usesTimeshiftLivestream: false })), { kick: true, source: "bufferDegraded" });

@@ -19,9 +19,9 @@ import type { CameraRecordingConfiguration, RecordingPacket } from "homebridge";
 import type { LivestreamDescription, LivestreamInit, LivestreamSubscriptionState, Segment } from "unifi-protect";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import type { TestClock, TestLogEntry, TestRecordingProcessInit } from "homebridge-plugin-utils/testing";
-import { TestRecordingProcess, TestRecordingProcessFactory, settle } from "homebridge-plugin-utils/testing";
+import { TestRecordingProcess, TestRecordingProcessFactory, logCount, settle } from "homebridge-plugin-utils/testing";
 import { after, describe, test } from "node:test";
-import { makeLivestreamSubscriptionDouble, makeTestCameraHost } from "./testing.helpers.ts";
+import { makeChannelProfile, makeLivestreamSubscriptionDouble, makeTestCameraHost } from "./testing.helpers.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
@@ -48,14 +48,6 @@ after(() => {
   }
 });
 
-// The count of INFO/WARN log lines whose first format string contains the given fragment - the harness records the raw parameters, so we match the message template. The
-// enable-ack re-acknowledgment test counts occurrences (not a boolean .some()), because a boolean would pass after the FIRST enable regardless of whether the second
-// re-acknowledged - the count tells apart the per-enable acknowledgment behavior.
-function countLogs(entries: readonly TestLogEntry[], level: TestLogEntry["level"], fragment: string): number {
-
-  return entries.filter((entry) => (entry.level === level) && entry.message.includes(fragment)).length;
-}
-
 // The audio codec HomeKit selects for a recording: AAC-LC, one channel, at the rate this suite's default recording selects. A row about the copy-or-transcode
 // decision passes its own.
 const SELECTED_AUDIO = { audioChannels: 1, bitrate: 0, samplerate: AudioRecordingSamplerate.KHZ_16, type: AudioRecordingCodecType.AAC_LC };
@@ -75,20 +67,6 @@ function makeRecordingConfig(audioCodec: { audioChannels?: number; bitrate: numb
 function describedWith(audio: { channels: number; codec: "aac" | "opus"; sampleRate: number }): LivestreamDescription {
 
   return { tracks: [ { codec: "h264", height: 1080, id: 1, kind: "video", level: 40, profile: 77, width: 1920 }, { ...audio, id: 2, kind: "audio" } ] };
-}
-
-// A ChannelProfile resolved from a real G2 Pro channel, so the channel's id and fps reach the recording-process init exactly as production composes them. We guard the
-// indexed access because host.ufp.channels[0] widens to ProtectCameraChannelConfig | undefined under noUncheckedIndexedAccess.
-function makeChannelProfile(host: TestCameraHost): ChannelProfile {
-
-  const channel = host.ufp.channels[0];
-
-  if(!channel) {
-
-    throw new Error("The G2 Pro channel fixture is missing its first channel.");
-  }
-
-  return { channel, name: channel.name, resolution: [ 1920, 1080, 30 ], url: "rtsps://test" };
 }
 
 // A test-local recording-process factory that hands back a FRESH configured TestRecordingProcess per create call, in sequence, recording every create.
@@ -368,7 +346,7 @@ describe("recording delegate transmit-path behavior", () => {
       packets.push(packet);
     }
 
-    assert.equal(countLogs(logEntries, "error", "the livestream connection is not ready"), 1,
+    assert.equal(logCount(logEntries, "error", "the livestream connection is not ready"), 1,
       "the attempt declined at the transmit gate, not at one of the gates ahead of it");
     assert.equal(reconcileSpy.mock.callCount(), 1, "the genuine teardown was reported once and asked supervision to re-establish the buffer once");
     assert.equal(packets.length, 1, "the event declined with the single end-of-stream marker");
@@ -650,7 +628,7 @@ describe("recording delegate transmit-path behavior", () => {
     delegate.timeshift.emit("segment", Buffer.from("live"), "live");
     delegate.acknowledgeStream();
 
-    assert.equal(countLogs(logEntries, "warn", "while the camera was still streaming"), 1);
+    assert.equal(logCount(logEntries, "warn", "while the camera was still streaming"), 1);
   });
 
   // Test I - the starved source stays calm. The same timed-out recording, but no fresh segment arrives before the close: the source has gone quiet, so the only
@@ -667,7 +645,7 @@ describe("recording delegate transmit-path behavior", () => {
     // No fresh segment arrives - the source quieted - so the last arrival is the now-stale transmit-start one.
     delegate.acknowledgeStream();
 
-    assert.equal(countLogs(logEntries, "warn", "while the camera was still streaming"), 0);
+    assert.equal(logCount(logEntries, "warn", "while the camera was still streaming"), 0);
   });
 
   // Test J - a recording that did not time out is unaffected. Even with a fresh arrival right before the close, a recording the watchdog did NOT reap (isTimedOut
@@ -685,7 +663,7 @@ describe("recording delegate transmit-path behavior", () => {
     delegate.timeshift.emit("segment", Buffer.from("live"), "live");
     delegate.acknowledgeStream();
 
-    assert.equal(countLogs(logEntries, "warn", "while the camera was still streaming"), 0);
+    assert.equal(logCount(logEntries, "warn", "while the camera was still streaming"), 0);
   });
 });
 

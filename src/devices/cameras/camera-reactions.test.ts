@@ -37,6 +37,7 @@ import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestRecordingDispatch, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
+import { logCount, settle } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import { PROTECT_NVR_REBOOT_RECENCY_MS } from "../../settings.ts";
 import type { ProtectAccessory } from "../../types.ts";
@@ -47,7 +48,6 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
-import { settle } from "homebridge-plugin-utils/testing";
 
 // Confine the lone partial-config cast here, mirroring makeCameraConfig's single-confined-cast discipline: pushCameraPatch's patch is typed as a Partial of the full wire
 // record, whose nested setting objects (smartDetectSettings, ispSettings, ledSettings, recordingSettings) carry many fields the camera's reactions never read. A test
@@ -918,7 +918,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
     // presence, because the behavior under assertion is "exactly once per outage" - a boolean would pass the moment the first line landed, whatever followed it.
     function countWarns(entries: readonly TestLogEntry[], fragment: string): number {
 
-      return entries.filter((entry) => (entry.level === "warn") && entry.message.includes(fragment)).length;
+      return logCount(entries, "warn", fragment);
     }
 
     const ABSENCE_LINE = "has not come back online since the controller rebooted";

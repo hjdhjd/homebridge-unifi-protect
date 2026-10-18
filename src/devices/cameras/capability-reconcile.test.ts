@@ -30,7 +30,7 @@ import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts
 import type { TestAccessory, TestService } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
-import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
+import { formatLogEntry, logCount, settle } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
@@ -993,11 +993,11 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
     const { logEntries, nvr } = buildTestNvr({ store, userOptions: ["Enable.Device.NightVision.Dimmer"] });
     const accessory = makeTestAccessory("Test Camera", "uuid:night-vision-dimmer-7");
 
-    // Count the captured "Enabling night vision dimmer." INFO entries. A COUNT (filter / length), not a boolean .some() helper: the construct-time entry persists in the
+    // Count the captured "Enabling night vision dimmer." INFO entries. A COUNT through logCount, not the boolean loggedAt: the construct-time entry persists in the
     // buffer, so a boolean could not tell a once-logged dimmer from a twice-logged one.
     const enablingLogCount = (): number => {
 
-      return logEntries.filter((entry) => (entry.level === "info") && formatLogEntry(entry).includes("Enabling night vision dimmer.")).length;
+      return logCount(logEntries, "info", "Enabling night vision dimmer.");
     };
 
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
@@ -1619,7 +1619,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
   // The count of log lines at one level carrying a fragment, read from a baseline index on so each assertion windows exactly the push it is about.
   const countLines = (entries: readonly TestLogEntry[], level: TestLogEntry["level"], fragment: string, from = 0): number => {
 
-    return entries.slice(from).filter((entry) => (entry.level === level) && formatLogEntry(entry).includes(fragment)).length;
+    return logCount(entries.slice(from), level, fragment);
   };
 
   // The controller events an accessory logged from a baseline on, by kind.
@@ -2294,7 +2294,7 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     // twice-narrated one.
     const summaryLogCount = (): number => {
 
-      return logEntries.filter((entry) => (entry.level === "info") && formatLogEntry(entry).includes("Smart motion contact sensor")).length;
+      return logCount(logEntries, "info", "Smart motion contact sensor");
     };
 
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));

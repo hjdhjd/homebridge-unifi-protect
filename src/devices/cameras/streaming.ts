@@ -169,8 +169,8 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
     }
 
     // Rebuild the controller in place only when a frozen term has appeared since it was built - the additive-eager, subtractive-conservative rising edge. A term
-    // reading false (the all-false featureFlags drain a camera delivers on every reconnect, a settled withdrawal) never rebuilds, so a routine reconnect never flickers
-    // the controller (an HKSV reset and a stream interruption).
+    // reading false (the all-false featureFlags drain a deep re-adopt delivers, a settled withdrawal) never rebuilds, so a deep re-adopt never flickers the controller
+    // (an HKSV reset and a stream interruption).
     if(!controllerCapabilityAppeared(this.#stream.builtFor, controllerIdentityOf(this.host))) {
 
       return;
@@ -181,12 +181,13 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
 
   /* Rebuild the delegate and its CameraController in place - the one HAP object the capability reconcile cannot mutate, since every surface its controller identity
    * decides is constructor-frozen. The teardown's removeController runs synchronously; clearing the field re-opens the create-once gate; reconcile's create half lands
-   * as soon as the host's derivation resolves, so remove-before-configure ordering holds and exactly one removeController plus one configureController fire here. The
-   * HomeKit consequences of a reclassification - the HKSV factory reset (removeController) and the supported-config hash change - land at exactly this transition. The
-   * tail can resolve on a later microtask, since the parent's derivation may await a write-through update, so the create half's construction gate is what prevents a
-   * re-register when the accessory is removed, or controller shutdown begins, inside that window. The re-create goes through the host's own derivation, so each camera
-   * view rebuilds from the surface it actually advertises, reading every term of its identity live. (It inherits the benign fire-and-forget
-   * updateRecordingActive(false) call in #teardown below, which issues that write without awaiting it.)
+   * as soon as the host's derivation resolves, a derivation that waits on the recording audio probe for a camera that can back HomeKit Secure Video, so
+   * remove-before-configure ordering holds and exactly one removeController plus one configureController fire here. The HomeKit consequences of a reclassification -
+   * the HKSV factory reset (removeController) and the supported-config hash change - land at exactly this transition. The tail can resolve on a later microtask, since
+   * the parent's derivation may await a write-through update, so the create half's construction gate is what prevents a re-register when the accessory is removed, or
+   * controller shutdown begins, inside that window. The re-create goes through the host's own derivation, so each camera view rebuilds from the surface it actually
+   * advertises, reading every term of its identity live. (It inherits the benign fire-and-forget updateRecordingActive(false) call in #teardown below, which issues
+   * that write without awaiting it.)
    */
   #rebuild(): void {
 

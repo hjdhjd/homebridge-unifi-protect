@@ -21,12 +21,11 @@ import type { CameraRecordingConfiguration, RecordingPacket } from "homebridge";
 import { Characteristic, Service, TestStreamingDelegate } from "../testing.helpers.ts";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { after, describe, test } from "node:test";
+import { makeChannelProfile, makeTestCameraHost } from "./testing.helpers.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
-import type { TestCameraHost } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
-import { makeTestCameraHost } from "./testing.helpers.ts";
 import { settle } from "homebridge-plugin-utils/testing";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting it in teardown releases the harness signal so a leaked observer (none here, the
@@ -60,20 +59,6 @@ async function drainRecordingStream(delegate: ProtectRecordingDelegate, streamId
 function makeRecordingConfig(): CameraRecordingConfiguration {
 
   return { prebufferLength: 4000, videoCodec: { parameters: { bitRate: 2000 } } } as unknown as CameraRecordingConfiguration;
-}
-
-// A ChannelProfile resolved from the host's first real channel, so the buffer starts against a genuine profile. Guarded because host.ufp.channels[0] widens to
-// ProtectCameraChannelConfig | undefined under noUncheckedIndexedAccess.
-function makeChannelProfile(host: TestCameraHost): ChannelProfile {
-
-  const channel = host.ufp.channels[0];
-
-  if(!channel) {
-
-    throw new Error("The camera channel fixture is missing its first channel.");
-  }
-
-  return { channel, name: channel.name, resolution: [ 1920, 1080, 30 ], url: "rtsps://test" };
 }
 
 describe("recording delegate decline-path behavior", () => {

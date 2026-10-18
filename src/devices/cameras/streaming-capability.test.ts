@@ -17,7 +17,7 @@ import type { TestAccessory, TestRecordingDelegate, TestStreamingDelegate, TestS
 import type { TestCameraFeatureFlags, TestLivestreamSubscription } from "../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
-import { assertNoUnhandledRejections, expectAt, settle } from "homebridge-plugin-utils/testing";
+import { assertNoUnhandledRejections, expectAt, logCount, settle } from "homebridge-plugin-utils/testing";
 import type { Camera } from "unifi-protect";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
@@ -311,7 +311,7 @@ describe("the derivation's recording-audio probe", () => {
   }
 
   // The number of times the camera said its stream could not be read.
-  const standInLines = (entries: readonly TestLogEntry[]): number => entries.filter((entry) => (entry.level === "info") && entry.message.includes(STAND_IN_LINE)).length;
+  const standInLines = (entries: readonly TestLogEntry[]): number => logCount(entries, "info", STAND_IN_LINE);
 
   // The subscriptions the probe opened that nothing has disposed.
   const live = (projection: TestCameraProjection): TestLivestreamSubscription[] => projection.livestreamCalls.map((call) => call.subscription).
@@ -392,6 +392,26 @@ describe("the derivation's recording-audio probe", () => {
     assert.equal(projection.livestreamCalls.length, 0, "an unreachable camera opens no livestream");
     assert.equal(expectAt(factory.createCalls, 0, "the delegate").audioFormat, null, "the factory was handed no format, so the stand-in is advertised");
     assert.equal(standInLines(logEntries), 1, "the stand-in line was said once, though the derivation ran again");
+  });
+
+  // Two derivations that both reach the stand-in path say the line once. The controller has begun shutting down, so the construction gate declines each build and no
+  // delegate ever stands to turn the second derivation away ahead of the reachability term.
+  test("two derivations that both reach the stand-in path before any delegate exists say the stand-in line once", async () => {
+
+    const { camera, factory, logEntries, projection } = constructCamera({ configure: (_projection, nvr) => {
+
+      nvr.client.connection.isHealthy = false;
+      nvr.phase = "shuttingDown";
+    } });
+
+    await settle();
+    await camera.streaming?.reconcile();
+
+    assert.equal(camera.isHksvCapable, true, "the vacuity guard: the camera can back HomeKit Secure Video, so each derivation reaches the probe");
+    assert.equal(camera.stream, undefined, "the vacuity guard: the construction gate declined every build, so no delegate stands");
+    assert.equal(factory.createCalls.length, 0, "nothing was built");
+    assert.equal(projection.livestreamCalls.length, 0, "an unreachable camera opens no livestream");
+    assert.equal(standInLines(logEntries), 1, "the stand-in line was said once, though each derivation reached the stand-in path");
   });
 
   test("a stream that does not establish is released and advertises the stand-in with one line", async () => {
@@ -480,14 +500,26 @@ describe("the derivation's recording-audio probe", () => {
     assert.equal(live(projection).length, 0, "the declined build's probe was released");
   });
 
-  test("a camera removed while its probe waits throws nothing, says nothing, builds nothing, and leaves no live subscription", async () => {
+  /* A camera removed while its probe waits has nothing left to configure. The operating-mode service is seeded with the camera details the way a restart restores it
+   * from the accessory cache, so a camera-details pass run against the vanished record would act on it, and the row reads that each was left as it was.
+   */
+  test("a camera removed while its probe waits throws nothing, says nothing, builds nothing, leaves its cached camera details untouched, and leaves no live " +
+    "subscription", async () => {
 
     await assertNoUnhandledRejections(async () => {
 
       const gate = Promise.withResolvers<undefined>();
-      const { cameraId, factory, logEntries, projection, store } = constructCamera({ configure: (projection) => {
+      const details = [ Characteristic.CameraOperatingModeIndicator, Characteristic.NightVision ];
+      const { accessory, cameraId, factory, logEntries, projection, store } = constructCamera({ configure: (projection, _nvr, accessory) => {
 
         projection.livestreamGate = gate.promise;
+
+        const seeded = accessory.addService(Service.CameraOperatingMode, "Driveway");
+
+        for(const characteristic of details) {
+
+          seeded.getCharacteristic(characteristic);
+        }
       } });
 
       await settle();
@@ -500,6 +532,16 @@ describe("the derivation's recording-audio probe", () => {
       assert.equal(live(projection).length, 0, "the removed camera's probe was released");
       assert.equal(factory.createCalls.length, 0, "nothing was built for the removed camera");
       assert.equal(standInLines(logEntries), 0, "nothing was said");
+
+      const operatingMode = accessory.getService(Service.CameraOperatingMode);
+
+      assert.ok(operatingMode, "the seeded operating-mode service is on the accessory");
+
+      for(const characteristic of details) {
+
+        assert.equal(operatingMode.testCharacteristic(characteristic), true, "a cached camera detail is still on the service");
+        assert.deepEqual(operatingMode.getCharacteristic(characteristic).writes, [], "a cached camera detail was never written");
+      }
     });
   });
 

@@ -158,9 +158,9 @@ describe("package camera remove-on-false (BC2)", () => {
   /* The controller's drain frame against a real withdrawal. A deep re-adopt delivers the whole featureFlags block with every flag false before the real values follow,
    * so the package camera reads absent alongside every other flag and the reconcile has to read the block as no reading: nothing is scheduled, so with the grace
    * disabled the package camera is still live afterward. Once the real values land, a genuine withdrawal - hasPackageCamera false beside a microphone the block still
-   * reports - detaches it as it always has.
+   * reports - detaches it.
    */
-  test("the drain frame schedules no removal, while a withdrawal beside a true flag detaches the package camera as before", async () => {
+  test("the drain frame schedules no removal, while a withdrawal beside a true flag detaches the package camera", async () => {
 
     const harness = await makeFamily({ hasMic: true, userOptions: ["Disable.Nvr.DelayDeviceRemoval"] });
     const { doorbell, logEntries, store } = harness;
