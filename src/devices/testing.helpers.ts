@@ -17,6 +17,7 @@ import type { PlaySpeakerOptions, ProtectAirQualityThresholdSettings, ProtectCam
   ProtectViewerConfig, Sensor } from "unifi-protect";
 import { FIXTURE_HOST } from "../camera.fixtures.ts";
 import type { Nullable } from "homebridge-plugin-utils";
+import type { ProtectConfigurePass } from "./device.ts";
 import { ProtectDevice } from "./device.ts";
 import type { TestStateStore } from "../testing.helpers.ts";
 
@@ -1189,22 +1190,22 @@ export class TestBaseDevice extends ProtectDevice<Sensor> {
   }
 
   // Public window onto the base configureMotionSensor (the motion sensor service plus the motion switch / trigger and the motion get/set MQTT interface).
-  public configureMotionSensorFor(isEnabled = true, isInitialized = false): boolean {
+  public configureMotionSensorFor(pass: ProtectConfigurePass = {}): boolean {
 
-    return this.configureMotionSensor(isEnabled, isInitialized);
+    return this.configureMotionSensor(pass);
   }
 
   // Public window onto the base configureOccupancySensor (the occupancy service plus its StatusActive / OccupancyDetected characteristics and the occupancy MQTT get).
-  public configureOccupancySensorFor(isEnabled = true, isInitialized = false): boolean {
+  public configureOccupancySensorFor(pass: ProtectConfigurePass = {}): boolean {
 
-    return this.configureOccupancySensor(isEnabled, isInitialized);
+    return this.configureOccupancySensor(pass);
   }
 
   // Public window onto the base configureStatusLedSwitch (the Device.StatusLed.Switch accessory: its On onGet/onSet reading and writing the status indicator light
   // through setStatusLed -> statusLedCommand -> device.update({ ledSettings })). Its deep tests live in device-statusled.test.ts.
-  public configureStatusLedSwitchFor(isEnabled = true): boolean {
+  public configureStatusLedSwitchFor(pass: Pick<ProtectConfigurePass, "enabled"> = {}): boolean {
 
-    return this.configureStatusLedSwitch(isEnabled);
+    return this.configureStatusLedSwitch(pass);
   }
 
   // Public window onto the base configureInfo (the AccessoryInformation Manufacturer / Model / SerialNumber / FirmwareRevision writes via setInfo, plus the

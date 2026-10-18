@@ -319,6 +319,23 @@ describe("the legacy fob translation", () => {
     assert.deepEqual(analysis.engineOptions, [ "Enable.Fob.Buttons=arm,night,disarm,right,left",
       "Enable.Fob.Buttons." + CAMERA + "=arm,night,disarm,right" ], "the fob's scope composes its own subtraction on top of the global one");
   });
+
+  /* A fob scope earns an entry exactly when its selection differs, entry by entry, from what it inherits. The scope's list and the one it inherits are the same length
+   * here and neither is empty, because those are the only shapes where the comparison reads the entries at all: a length mismatch or an empty pair answers without
+   * looking at a single member.
+   * The first configuration restates the global selection at the fob's scope, and the second trades one inherited button for another at the same length.
+   */
+  test("a fob scope that restates what it inherits composes nothing, and one that trades a button for another composes its own selection", () => {
+
+    const restated = analyzeLegacyFeatureOptions([ "Disable.Fob.Button.Panic", "Disable.Fob.Button.Panic." + CAMERA ]);
+
+    assert.deepEqual(restated.engineOptions, ["Enable.Fob.Buttons=arm,night,disarm,right,left"], "the restated scope composes no entry of its own");
+
+    const traded = analyzeLegacyFeatureOptions([ "Disable.Fob.Button.Panic", "Disable.Fob.Button.Left." + CAMERA, "Enable.Fob.Button.Panic." + CAMERA ]);
+
+    assert.deepEqual(traded.engineOptions, [ "Enable.Fob.Buttons=arm,night,disarm,right,left", "Enable.Fob.Buttons." + CAMERA + "=arm,night,disarm,panic,right" ],
+      "the scope whose selection differs at the same length composes its own entry");
+  });
 });
 
 describe("the legacy relay translation", () => {

@@ -173,7 +173,7 @@ describe("harness growth: MQTT recording double and the family builder", () => {
     await mqtt.publish("74ACB9000001/motion", "true");
     mqtt.subscribeGet("74ACB9000001/motion", "motion", () => "false", { signal });
 
-    assert.deepEqual(mqtt.published, [{ payload: "true", topic: "74ACB9000001/motion" }], "publishes are recorded");
+    assert.deepEqual(mqtt.published, [{ payload: "true", retain: false, topic: "74ACB9000001/motion" }], "publishes are recorded");
     assert.equal(mqtt.subscriptions.length, 1, "subscription registrations are recorded");
     assert.equal(mqtt.subscriptions[0]?.init?.signal, signal, "the per-subscription init options - including the lifetime signal - are recorded");
 

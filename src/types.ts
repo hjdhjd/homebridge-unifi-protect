@@ -5,6 +5,7 @@
 
 import type { Camera, Chime, DeviceCollectionKey, Fob, Light, Relay, Sensor, Viewer } from "unifi-protect";
 import type { CharacteristicValue, PlatformAccessory, PlatformConfig } from "homebridge";
+import type { AcquireServiceOptions } from "homebridge-plugin-utils";
 import type { ProtectCamera } from "./devices/cameras/camera.ts";
 import type { ProtectChime } from "./devices/chime.ts";
 import type { ProtectFob } from "./devices/fob.ts";
@@ -100,6 +101,11 @@ export type ProtectPersistedContextState = Partial<Pick<ProtectAccessoryContext,
 // A Protect accessory: a homebridge PlatformAccessory whose context is our typed ProtectAccessoryContext. This alias is the single name threaded through every accessory
 // field, parameter, and creation site, so the context contract lives in exactly one place.
 export type ProtectAccessory = PlatformAccessory<ProtectAccessoryContext>;
+
+// The options the service wrappers on a device and on a capability take: the library's own acquire or validate options, less the accessory the wrapper supplies and
+// with the name optional, since the wrapper defaults it to the owner's accessory name. Every other field, its type, and its documentation stay the library's own, so
+// the wrappers accept exactly what the library does and nothing is restated here.
+export type ProtectServiceOptions<O extends Pick<AcquireServiceOptions, "accessory" | "name">> = Omit<O, "accessory" | "name"> & Partial<Pick<O, "name">>;
 
 /* The package-camera identity suffixes. A doorbell's package camera is a synthetic HomeKit accessory derived from its parent doorbell, and its identity is carried in two
  * distinct representations that must never be conflated: a protocol marker and a user-visible label are different jobs for different strings, so each gets its own

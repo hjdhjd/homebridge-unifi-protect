@@ -276,7 +276,7 @@ describe("real ProtectRelay construction and behavior", () => {
 
     assert.deepEqual(relayProjection.toggleCalls, [ { outputId: 0 }, { outputId: 0 } ], "the on tap and the off tap each issued a toggle");
     assert.deepEqual(mqtt.published.filter((entry) => entry.topic === relayConfig.mac + "/relay/1"),
-      [ { payload: "true", topic: relayConfig.mac + "/relay/1" }, { payload: "false", topic: relayConfig.mac + "/relay/1" } ],
+      [ { payload: "true", retain: false, topic: relayConfig.mac + "/relay/1" }, { payload: "false", retain: false, topic: relayConfig.mac + "/relay/1" } ],
       "each accepted tap published its desired state on the 1-based output topic");
 
     // The first broadcast (on, from the first toggle) lands, then the second (off, from the second toggle).

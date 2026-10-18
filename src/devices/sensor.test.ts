@@ -605,7 +605,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
   test("a tamperingDetectedAt push wakes its observer and fans StatusTampered across every state-bearing service", async () => {
 
-    // Build with two enabled state-bearing services (humidity + temperature) so updateTamperState's fan-out is non-vacuous - it must write more than one service.
+    // Build with two enabled state-bearing services (humidity + temperature) so the tamper observer's sweep is non-vacuous - it must write more than one service.
     const built = buildSensor({ humidityEnabled: true, temperatureEnabled: true });
 
     await settle();
@@ -704,7 +704,7 @@ describe("real ProtectSensor construction and family behavior", () => {
   test("re-running the reconcile does not register a second leak GET handler (the once-guard holds across config churn)", async () => {
 
     // subscribeGet accumulates a handler on every call rather than replacing one (homebridge-plugin-utils), so the leak GET registration is once-guarded behind
-    // isInitialized. A re-run of updateDevice - driven here by a non-leak config push that wakes the whole-record sensor.config observer - must NOT register a second
+    // initialized. A re-run of updateDevice - driven here by a non-leak config push that wakes the whole-record sensor.config observer - must NOT register a second
     // leak GET. The TestMqttClient records every subscribeGet, so a duplicate is directly countable.
     const built = buildSensor({ leakChannelNames: ["internal"], mountType: "leak" });
     const mac = built.projection.config.mac;
@@ -717,13 +717,36 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.equal(leakGetCount(), 1, "the internal leak GET registered exactly once at construction");
 
-    // A settings-only push wakes the whole-record sensor.config observer, which re-runs updateDevice() (isInitialized defaults true). The once-guard must suppress a
-    // second registration.
+    // A settings-only push wakes the whole-record sensor.config observer, which re-runs updateDevice with initialized true. The once-guard must suppress a second
+    // registration.
     built.store.pushSensorPatch("test-sensor-1", { temperatureSettings: { highThreshold: 0, isEnabled: true, lowThreshold: 0, margin: 0 } });
 
     await settle();
 
-    assert.equal(leakGetCount(), 1, "the re-run did NOT register a second internal leak GET - the isInitialized once-guard holds");
+    assert.equal(leakGetCount(), 1, "the re-run did NOT register a second internal leak GET - the initialized once-guard holds");
+
+    built.sensor.cleanup();
+  });
+
+  test("a leak sensor restored from the accessory cache registers its channel's GET at construction", async () => {
+
+    // The restart case: Homebridge restores the leak sensor from its accessory cache, so the gate keeps the service rather than attaching it. Construction is the first
+    // configure pass, so it registers the channel's GET whether the gate keeps the service or attaches it...a construction that ran as a later pass would register
+    // nothing for a kept channel, and the restored sensor would answer no MQTT get.
+    const seeded = makeTestAccessory("Cached Leak Sensor", "uuid:cached-leak-sensor");
+    const cached = new Service.LeakSensor("Cached Leak", ProtectReservedNames.LEAKSENSOR_INTERNAL);
+
+    seeded.addService(cached);
+
+    const built = buildSensor({ leakChannelNames: ["internal"], mountType: "leak" }, { accessory: seeded });
+    const mac = built.projection.config.mac;
+
+    await settle();
+
+    assert.equal(seeded.getServiceById(Service.LeakSensor, ProtectReservedNames.LEAKSENSOR_INTERNAL), cached,
+      "the gate kept the restored leak sensor rather than building a new one");
+    assert.equal(built.mqtt.subscriptions.filter((subscription) => (subscription.kind === "get") && (subscription.topic === mac + "/leak/get")).length, 1,
+      "the restored channel registered its leak GET once, at construction");
 
     built.sensor.cleanup();
   });
@@ -749,9 +772,9 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.ok(built.mqtt.unsubscribes.filter((entry) => entry.topic === "leak-external/get").length > unsubBaseline,
       "the disabled external channel unsubscribed its leak GET on the topic tail");
 
-    // Push the external flag back ON. The leak-policy leaf re-enables the channel, and the created-probe re-registers its GET rather than leaving it dead until a
-    // restart. The untouched internal channel must NOT re-register - a forbidden onServiceCreate closure-flip would leak the reset into the sibling and double-register
-    // its GET.
+    // Push the external flag back ON. The leak-policy leaf re-enables the channel, and the attached transition its gate answers re-registers its GET rather than leaving
+    // it dead until a restart. The untouched internal channel must NOT re-register - its own gate answers kept, and a pass-wide reset shared across the loop would leak
+    // into the sibling and double-register its GET.
     const mac = built.projection.config.mac;
     const externalGets = (): number => built.mqtt.subscriptions.filter((entry) => (entry.kind === "get") && (entry.topic === (mac + "/leak-external/get"))).length;
     const internalGets = (): number => built.mqtt.subscriptions.filter((entry) => (entry.kind === "get") && (entry.topic === (mac + "/leak/get"))).length;
@@ -942,6 +965,34 @@ describe("real ProtectSensor construction and family behavior", () => {
     await settle();
 
     assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "a subsequent alarm value landed on the newly-created glass-break service");
+
+    built.sensor.cleanup();
+  });
+
+  test("an alarm-sound contact restored from the accessory cache answers a pull from the live alarm state on the first pass", async () => {
+
+    // The restart case: Homebridge restores the contact from its accessory cache with no handlers and a detection the controller has since cleared, so the gate keeps
+    // the service rather than attaching it. Construction is the first configure pass, so it binds the read-through and seeds the value whatever the gate answers...a
+    // construction that ran as a later pass would bind nothing on a kept service, and the pull would answer the stale cached detection.
+    const seeded = makeTestAccessory("Cached Alarm Sensor", "uuid:cached-alarm-sensor");
+    const cached = new Service.ContactSensor("Cached Alarm Sound", ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
+
+    seeded.addService(cached);
+    cached.updateCharacteristic(Characteristic.ContactSensorState, true);
+
+    const built = buildSensor({ alarmEnabled: true }, { accessory: seeded });
+
+    await settle();
+
+    assert.equal(seeded.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND), cached,
+      "the gate kept the restored contact rather than building a new one");
+    assert.equal(await cached.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), false, "a pull answers the live clear state, not the cached detection");
+
+    // Overwrite the cached value once more, so only a bound read-through, and not the seed write alone, can answer the live state.
+    cached.getCharacteristic(Characteristic.ContactSensorState).updateValue(true);
+
+    assert.equal(await cached.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), false,
+      "the read-through answers the live clear state over a re-planted cached detection");
 
     built.sensor.cleanup();
   });
@@ -1419,6 +1470,30 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
+  test("an unreachable device still writes a metric that reports a new value", async () => {
+
+    // Reachability guards only the removal: a metric that carries a value is the sensor speaking, whatever the device's reachability reads. The pushed value differs
+    // from the held reading, so a hold that also swallowed reported values leaves the old reading in place and fails here.
+    const built = buildSensor({ airQuality: { aqi: { status: "neutral", value: 42 }, pm2p5: { status: "neutral", value: 3 } } });
+
+    await settle();
+
+    const service = built.accessory.getService(Service.AirQualitySensor);
+
+    assert.ok(service, "the service exists before the device goes offline");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ aqi: { status: "neutral", value: 42 }, pm2p5: { status: "neutral", value: 7 } }),
+      state: "DISCONNECTED" });
+
+    await settle();
+
+    assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, false, "the device is genuinely unreachable for this pass");
+    assert.equal(service.getCharacteristic(Characteristic.PM2_5Density).value, 7, "the reported density was written while the device was unreachable");
+    assert.equal(service.getCharacteristic(Characteristic.PM2_5Density).writes.at(-1), 7, "the write log's latest entry is the newly reported value");
+
+    built.sensor.cleanup();
+  });
+
   test("the vape sensor appears only with all three of its conjuncts, each one falsifying on its own", () => {
 
     // A falsifying row per conjunct, each with the other two satisfied, so no single condition can be carrying the gate: the user's option, the controller's own vape
@@ -1629,6 +1704,54 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideDetected).value, true, "crossing the configured threshold raised the alert");
     assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).value, 1200, "the level moved with the pushed reading");
+
+    built.sensor.cleanup();
+  });
+
+  test("the carbon dioxide level holds through a live-but-null reading, and a pull during the hold answers the held value", async () => {
+
+    // The metric keeps a status and loses its number, the sensor momentarily between readings. The write log - not the cached value - proves nothing was written.
+    const built = buildSensor({ airQuality: { co2: { status: "neutral", value: 800 } }, co2Enabled: true, co2Threshold: 1000 });
+
+    await settle();
+
+    const service = built.accessory.getService(Service.CarbonDioxideSensor);
+
+    assert.ok(service, "the service exists before the patch");
+
+    const writeBaseline = service.getCharacteristic(Characteristic.CarbonDioxideLevel).writes.length;
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ co2: { status: "neutral", value: null } }) });
+
+    await settle();
+
+    assert.equal(service.testCharacteristic(Characteristic.CarbonDioxideLevel), true, "a live-but-null metric holds the level rather than shedding it");
+    assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).value, 800, "the held level still reports the last reading the sensor gave");
+    assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).writes.length, writeBaseline, "the hold wrote nothing at all");
+    assert.equal(await service.getCharacteristic(Characteristic.CarbonDioxideLevel).triggerGet(), 800, "a pull during the hold answers with the held level");
+
+    built.sensor.cleanup();
+  });
+
+  test("an unreachable device holds its carbon dioxide level even as the metric falls quiet", async () => {
+
+    // The offline window: the removal rule waits for the device to be reachable before believing the metric stopped reporting.
+    const built = buildSensor({ airQuality: { co2: { status: "neutral", value: 800 } }, co2Enabled: true, co2Threshold: 1000 });
+
+    await settle();
+
+    const service = built.accessory.getService(Service.CarbonDioxideSensor);
+
+    assert.ok(service, "the service exists before the device goes offline");
+
+    built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({}), state: "DISCONNECTED" });
+
+    await settle();
+
+    assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, false, "the device is genuinely unreachable for this pass");
+    assert.equal(service.testCharacteristic(Characteristic.CarbonDioxideLevel), true, "the level held through the offline window despite its metric reading quiet");
+    assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).value, 800, "the held level still reports the last reading");
+    assert.ok(built.accessory.getService(Service.CarbonDioxideSensor), "the service itself held too");
 
     built.sensor.cleanup();
   });

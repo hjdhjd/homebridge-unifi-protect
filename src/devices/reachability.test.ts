@@ -214,6 +214,33 @@ describe("reachability (real ProtectDevice)", () => {
     assert.equal(toggle.testCharacteristic(Characteristic.StatusActive), false, "the switch is still untouched after the second pass");
   });
 
+  test("refreshReachability answers null and writes nothing when no service carries StatusActive", () => {
+
+    const accessory = makeTestAccessory();
+    const toggle = accessory.addService(Service.Switch, "Some Switch");
+
+    toggle.getCharacteristic(Characteristic.On);
+
+    const { instance } = makeReachableDevice(accessory);
+
+    assert.equal(instance.refreshReachability(), null, "an accessory with no StatusActive carrier reports no transition");
+    assert.equal(toggle.testCharacteristic(Characteristic.StatusActive), false, "the sweep created no StatusActive characteristic");
+  });
+
+  test("refreshReachability answers null when the reachable state did not flip, and still writes it", () => {
+
+    const accessory = makeTestAccessory();
+    const motion = accessory.addService(Service.MotionSensor, "Motion");
+
+    motion.updateCharacteristic(Characteristic.StatusActive, true);
+
+    const { instance } = makeReachableDevice(accessory);
+    const writeBaseline = motion.getCharacteristic(Characteristic.StatusActive).writes.length;
+
+    assert.equal(instance.refreshReachability(), null, "a reachable device already shown active reports no transition");
+    assert.equal(motion.getCharacteristic(Characteristic.StatusActive).writes.length, writeBaseline + 1, "the unchanged reachable state was still written");
+  });
+
   test("cleanup() aborts the composed per-accessory signal, tearing down every observe loop bound to it", () => {
 
     const { instance } = makeReachableDevice(makeTestAccessory());

@@ -196,13 +196,13 @@ export class ProtectCameraPackage extends ProtectCamera {
   private configureFlashlight(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Lightbulb, this.hasFeature("Doorbell.PackageCamera.Flashlight"), ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT)) {
+    const { service } = this.validService({ name: this.accessoryName + " Flashlight", serviceType: this.hap.Service.Lightbulb,
+      subtype: ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT, validate: this.hasFeature("Doorbell.PackageCamera.Flashlight") });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Lightbulb, this.accessoryName + " Flashlight", ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT);
 
     // Activate or deactivate the package camera flashlight.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.flashlightState);

@@ -41,8 +41,10 @@ const controllers: AbortController[] = [];
 
 // The reusable construction helper: build a REAL ProtectViewer against the harness doubles, seeding the viewer record plus whatever liveviews the test wants. The casts
 // are confined to the construction boundary exactly as the light suite does; the instance under test is the production class running its real configureDevice /
-// spawnObservers paths. Returns logEntries and mqtt (the viewer asserts both the failure/configured log lines and the captured MQTT liveview handlers).
-function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {}, harnessOptions: { liveviews?: ProtectNvrLiveviewConfig[] } = {}): {
+// spawnObservers paths. Returns logEntries and mqtt (the viewer asserts both the failure/configured log lines and the captured MQTT liveview handlers). seedAccessory,
+// when supplied, runs against the fresh accessory before construction, standing in for the services a Homebridge restart restores from the accessory cache.
+function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {},
+  harnessOptions: { liveviews?: ProtectNvrLiveviewConfig[]; seedAccessory?: (accessory: TestAccessory) => void } = {}): {
   accessory: TestAccessory; logEntries: TestLogEntry[]; mqtt: TestMqttClient; projection: TestViewerProjection; store: TestStateStore; viewer: ProtectViewer;
 } {
 
@@ -53,6 +55,9 @@ function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {},
   controllers.push(controller);
 
   const accessory = makeTestAccessory("Test Viewer", "uuid:test-viewer");
+
+  harnessOptions.seedAccessory?.(accessory);
+
   const projection = new TestViewerProjection(viewerConfig.id, store);
   const viewer = new ProtectViewer(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Viewer);
 
@@ -160,8 +165,33 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
     await target.getCharacteristic(Characteristic.On).triggerSet(true);
 
     assert.deepEqual(projection.updateCalls, [{ liveview: "liveview-2" }], "the real setViewer dispatched a single update with the requested liveview id");
-    assert.deepEqual(mqtt.published, [{ payload: "Backyard", topic: projection.config.mac + "/liveview" }],
+    assert.deepEqual(mqtt.published, [{ payload: "Backyard", retain: false, topic: projection.config.mac + "/liveview" }],
       "the accepted change published the liveview name on the device-scoped topic");
+  });
+
+  test("a liveview switch restored from the accessory cache is bound on the first pass, so setting it issues the viewer's update", async () => {
+
+    // The restored switch carries no handlers, and the controller already lists its liveview, so the reconcile keeps it rather than adding it. Only the first pass's
+    // own binding can reach it: a construction that ran as a later pass would leave its set doing nothing, and no update would be recorded.
+    const fixture = buildViewer({ liveview: "liveview-1" }, { liveviews: [makeLiveviewConfig({ id: "liveview-3", name: "Garage" })],
+      seedAccessory: (seeded) => {
+
+        seeded.addService(Service.Switch, "Garage", "liveview-3");
+      } });
+
+    try {
+
+      const restored = fixture.accessory.getServiceById(Service.Switch, "liveview-3");
+
+      assert.ok(restored, "the restored liveview switch is on the accessory");
+
+      await restored.getCharacteristic(Characteristic.On).triggerSet(true);
+
+      assert.deepEqual(fixture.projection.updateCalls, [{ liveview: "liveview-3" }], "setting the restored switch issued the viewer's update");
+    } finally {
+
+      fixture.viewer.cleanup();
+    }
   });
 
   test("turning a liveview switch on writes nothing to the sibling switch - reflection is left to the broadcast observer", async () => {
@@ -240,6 +270,41 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
     assert.equal(accessory.getServiceById(Service.Switch, "liveview-1"), undefined, "a removed liveview's switch was pruned");
     assert.ok(accessory.getServiceById(Service.Switch, "liveview-3"), "a switch was added for the first new liveview");
     assert.ok(accessory.getServiceById(Service.Switch, "liveview-4"), "a switch was added for the second new liveview");
+  });
+
+  test("a liveview-collection push that keeps one liveview leaves its switch in place beside the pruned and the added ones", async () => {
+
+    const kept = accessory.getServiceById(Service.Switch, "liveview-1");
+
+    assert.ok(kept, "the switch for the liveview the push keeps exists before the push");
+
+    // Keep the first liveview, drop the second, and add a third, so one push asks the reconcile for every outcome at once.
+    store.pushLiveviews([ makeLiveviewConfig({ id: "liveview-1", name: "Front Door" }), makeLiveviewConfig({ id: "liveview-3", name: "Garage" }) ]);
+
+    await settle();
+
+    // A removal pass that also took the kept switch would leave either no switch for it or a freshly added one, and both fail here.
+    assert.equal(accessory.getServiceById(Service.Switch, "liveview-1"), kept, "the kept liveview's switch is the same service it was before the push");
+    assert.equal(accessory.getServiceById(Service.Switch, "liveview-2"), undefined, "the dropped liveview's switch was pruned");
+    assert.ok(accessory.getServiceById(Service.Switch, "liveview-3"), "a switch was added for the new liveview");
+  });
+
+  test("a liveview switch added by a collection push is bound, so setting it issues the viewer's update", async () => {
+
+    // The collection observer runs a later pass, which binds nothing on the switches it keeps, so only the add path's own binding can reach the new switch: an add
+    // that ran as a later pass would leave its set doing nothing, and no update would be recorded.
+    store.pushLiveviews([ makeLiveviewConfig({ id: "liveview-1", name: "Front Door" }), makeLiveviewConfig({ id: "liveview-2", name: "Backyard" }),
+      makeLiveviewConfig({ id: "liveview-3", name: "Garage" }) ]);
+
+    await settle();
+
+    const added = accessory.getServiceById(Service.Switch, "liveview-3");
+
+    assert.ok(added, "a switch was added for the new liveview");
+
+    await added.getCharacteristic(Characteristic.On).triggerSet(true);
+
+    assert.deepEqual(projection.updateCalls, [{ liveview: "liveview-3" }], "setting the added switch issued the viewer's update");
   });
 
   test("the MQTT liveview get handler returns the active liveview name, or None when nothing is active", async () => {

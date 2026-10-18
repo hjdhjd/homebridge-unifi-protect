@@ -1,20 +1,20 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * air-quality-policy.test.ts: Unit tests for the pure air-quality reading policy extracted to the importable leaf src/devices/air-quality-policy.ts.
+ * air-quality-policy.test.ts: Unit tests for the pure air-quality reading policy in the importable leaf src/devices/air-quality-policy.ts.
  *
- * Every export here is a pure free function or a frozen shape - wire readings in, a boolean or a number out, no this, no HAP - so the natural coverage is to import the
+ * Every export here is a pure free function or a frozen shape - wire readings in, a plain answer out, no this, no HAP - so the natural coverage is to import the
  * REAL leaf and drive its truth tables directly, exactly as leak-policy.test.ts / stream-source-policy.test.ts drive theirs. The leaf owns the decisions the whole
- * air-quality surface rests on, so these tables are the highest-value pins: the not-capable signature that keeps a sensor without air-quality hardware from growing any
- * service, the AQI band edges (each boundary value AND the value one past it), the CO2 threshold comparison including the at-threshold case that must NOT alert, and the
- * vape predicate's status-alone rule - a reading carrying a number under an "unknown" status must never detect, which is exactly the case a value-aware formula would
- * get wrong.
+ * air-quality surface rests on, so these tables are the highest-value assertions: the not-capable signature that keeps a sensor without air-quality hardware from
+ * growing any service, the AQI band edges (each boundary value AND the value one past it), the CO2 threshold comparison including the at-threshold case that must NOT
+ * alert, and the vape predicate's status-alone rule - a reading carrying a number under an "unknown" status must never detect, which is exactly the case a value-aware
+ * formula would get wrong.
  */
 import { AIR_QUALITY_LEVELS, DISABLED_THRESHOLD_SETTINGS, DISABLED_VAPE_SENSITIVITY, NOT_CAPABLE_AIR_QUALITY, NOT_CAPABLE_METRIC, airQualityLevel,
-  airQualityMetricLive, airQualityMetricReported, airQualityReporting, airQualitySensorCapable, co2AlertDetected, environmentalReading, environmentalServiceGate,
-  vapeDetected } from "./air-quality-policy.ts";
+  airQualityMetricLive, airQualityMetricReading, airQualityMetricReported, airQualityReporting, airQualitySensorCapable, co2AlertDetected, environmentalReading,
+  environmentalServiceGate, vapeDetected } from "./air-quality-policy.ts";
+import type { Nullable, PresenceReading } from "homebridge-plugin-utils";
 import type { ProtectAirQualityMetric, ProtectAirQualityThresholdSettings, ProtectSensorAirQuality } from "unifi-protect";
 import { describe, test } from "node:test";
-import type { Nullable } from "homebridge-plugin-utils";
 import assert from "node:assert/strict";
 
 // A metric reading, spelled as the pair the controller sends. Sharing it keeps each case row legible and within the line width.
@@ -77,6 +77,24 @@ describe("air-quality reading policy", () => {
     assert.equal(airQualityMetricReported(metric("neutral", 34.79)), true, "a fractional reading is a reading");
     assert.equal(airQualityMetricReported(metric("neutral", null)), false, "a live metric between readings carries no reading");
     assert.equal(airQualityMetricReported(metric("unknown", null)), false, "a not-capable metric carries no reading");
+  });
+
+  test("the presence reading reports a value under any status, holds a live metric with no value as pending, and calls the not-capable signature absent", () => {
+
+    // A value is a reading whatever status it arrives under, and a live metric with no value is the momentary gap the characteristic holds through. Only the
+    // not-capable signature reads absent, which is the one answer that lets a reachable device remove the characteristic.
+    const cases: { expected: PresenceReading; label: string; reading: ProtectAirQualityMetric }[] = [
+
+      { expected: { state: "reported", value: 42 }, label: "neutral status, a value -> reported with that value", reading: metric("neutral", 42) },
+      { expected: { state: "reported", value: 0 }, label: "unknown status, a zero value -> reported, a zero still being a reading", reading: metric("unknown", 0) },
+      { expected: { state: "pending" }, label: "neutral status, no value -> pending, the sensor between readings", reading: metric("neutral", null) },
+      { expected: { state: "absent" }, label: "unknown status, no value -> absent (the not-capable signature)", reading: metric("unknown", null) }
+    ];
+
+    for(const { expected, label, reading } of cases) {
+
+      assert.deepEqual(airQualityMetricReading(reading), expected, label);
+    }
   });
 
   test("the aqi mapping walks the EPA bands, each boundary and the value one past it", () => {

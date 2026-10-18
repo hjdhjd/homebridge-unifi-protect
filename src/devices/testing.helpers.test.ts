@@ -709,7 +709,8 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     // A smoke check that the public test windows reach the base configurators: hints first, then the motion sensor returns true (the deep motion nets are
     // device-motion.test.ts's job).
     assert.equal(device.configureHintsFor(), true, "configureHintsFor reaches the base configureHints");
-    assert.equal(device.configureMotionSensorFor(true), true, "configureMotionSensorFor reaches the base configureMotionSensor and validates the motion service");
+    assert.equal(device.configureMotionSensorFor({ enabled: true }), true,
+      "configureMotionSensorFor reaches the base configureMotionSensor and validates the motion service");
 
     device.cleanup();
     controller.abort();
@@ -727,7 +728,8 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     // A smoke check that the public window reaches the base configureStatusLedSwitch: with the Enable.Device.StatusLed.Switch feature it validates and acquires the
     // status-indicator switch and returns true (the deep status-LED nets - reflection, the onSet command routing, the change-gated log, the failure / auth paths - are
     // device-statusled.test.ts's job).
-    assert.equal(device.configureStatusLedSwitchFor(true), true, "configureStatusLedSwitchFor reaches the base configureStatusLedSwitch and validates the switch");
+    assert.equal(device.configureStatusLedSwitchFor({ enabled: true }), true,
+      "configureStatusLedSwitchFor reaches the base configureStatusLedSwitch and validates the switch");
 
     device.cleanup();
     controller.abort();

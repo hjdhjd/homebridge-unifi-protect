@@ -1,19 +1,18 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * nvr.test.ts: Unit tests for the controller root's pure decision logic - the startup-resilient connect retry policy, the HomeKit-membership set diff, the
- * request-outcome classifier, the removal-stability arithmetic, the disruption-expectation gating (the classification, its induced and recency halves, and the
- * episode-latch), the induced-reboot resume decision, and the scheduled-reboot arithmetic with the recording-count rule behind its deferral - plus the NvrHealth
- * connection-input mapping those drive.
+ * nvr.test.ts: Unit tests for the controller root's pure decision logic - the startup-resilient connect retry policy, the request-outcome classifier, the
+ * removal-stability arithmetic, the disruption-expectation gating (the classification, its induced and recency halves, and the episode-latch), the induced-reboot resume
+ * decision, and the scheduled-reboot arithmetic with the recording-count rule behind its deferral - plus the NvrHealth connection-input mapping those drive.
  *
  * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively imports the entire device and
- * media graph, so it is neither unit-constructable nor cheaply loadable. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and pin
- * those here, exercising the controller's real behavior (auth-budget exhaustion, membership add/remove, request-outcome-to-symptom mapping) without mocking a client.
- * The connection-input mapping is verified against the real NvrHealth with an injected clock, so the test proves both the new mapping and that the reducer/window
- * behavior it feeds is unchanged.
+ * media graph, so it is neither unit-constructable nor cheaply loadable. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and
+ * assert those here, exercising the controller's real behavior (auth-budget exhaustion, request-outcome-to-symptom mapping) without mocking a client.
+ * The connection-input mapping is verified against the real NvrHealth with an injected clock, so the test proves both the mapping and the reducer/window behavior it
+ * feeds.
  */
 import { canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, countActiveRecordingViews, createConnectRetryPolicy,
   createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption, isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest,
-  isWithinRebootRecency, membershipDelta, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+  isWithinRebootRecency, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describe, test } from "node:test";
 import { NvrHealth } from "./nvr-health.ts";
 import type { NvrPhase } from "./nvr.ts";
@@ -85,51 +84,6 @@ describe("connect retry policy", () => {
     assert.equal(shouldRetry(authError), true);
     assert.equal(shouldRetry(authError), true);
     assert.equal(shouldRetry(authError), false);
-  });
-});
-
-describe("membership delta", () => {
-
-  test("a newly adopted id is queued to add", () => {
-
-    const { toAdd, toRemove } = membershipDelta([ "a", "b", "c" ], [ "a", "b" ]);
-
-    assert.deepEqual(toAdd, ["c"]);
-    assert.deepEqual(toRemove, []);
-  });
-
-  test("a vanished id is queued to remove", () => {
-
-    const { toAdd, toRemove } = membershipDelta([ "a", "b" ], [ "a", "b", "c" ]);
-
-    assert.deepEqual(toAdd, []);
-    assert.deepEqual(toRemove, ["c"]);
-  });
-
-  test("an unchanged set produces no work", () => {
-
-    const { toAdd, toRemove } = membershipDelta([ "a", "b", "c" ], [ "a", "b", "c" ]);
-
-    assert.deepEqual(toAdd, []);
-    assert.deepEqual(toRemove, []);
-  });
-
-  test("a simultaneous add and remove are both surfaced", () => {
-
-    const { toAdd, toRemove } = membershipDelta([ "a", "c" ], [ "a", "b" ]);
-
-    assert.deepEqual(toAdd, ["c"]);
-    assert.deepEqual(toRemove, ["b"]);
-  });
-
-  test("diffs against the configured set, not a held snapshot", () => {
-
-    // The diff is a pure function of its two arguments - the controller's adopted ids and our configured ids - so the same adopted set produces different work for
-    // different configured sets, proving there is no retained #prev snapshot influencing the result.
-    const adopted = [ "a", "b", "c" ];
-
-    assert.deepEqual(membershipDelta(adopted, []).toAdd, [ "a", "b", "c" ]);
-    assert.deepEqual(membershipDelta(adopted, [ "a", "b", "c" ]).toAdd, []);
   });
 });
 

@@ -19,7 +19,7 @@
  * night vision dimmer add an establishment-only push on top: a live observe reconcile over an existing service never re-pushes the display (so an in-flight unlock or
  * night-vision command is never stomped), while create and the construct path (adoption or restart) do. The lock stamps SECURED; the dimmer pushes On / Brightness from
  * the device's irLedMode reading. Each suite's distinguishing mutations are traced in its tests' comments - the predicate's hasService and toggle clauses, the
- * early-return removal (lock only), and the !existing || (source === "construct") establishment condition.
+ * early-return removal (lock only), and the (transition === "attached") || (source === "construct") establishment condition.
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
@@ -193,6 +193,26 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
       assert.ok(projection.luxCalls.length >= 1,
         "the wiring re-ran against the restored service, re-issuing the controller lux read that re-establishes the handlers and poll");
       assert.equal(lightSensorCount(accessory), 1, "the re-wire reused the restored service - no duplicate ambient light sensor");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("an ambient light sensor created without a name of its own carries the camera's name", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { nvr } = buildTestNvr({ store });
+    const accessory = makeTestAccessory("Test Camera", "uuid:capability-reconcile-name");
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+
+    await settle();
+
+    try {
+
+      // The capability's validate wrapper defaults the name to its host's accessory name, so the sensor it creates carries the camera's name.
+      assert.equal(accessory.getService(Service.LightSensor)?.displayName, "Test Camera", "the ambient light sensor carries the camera's name");
     } finally {
 
       camera.cleanup();
@@ -428,7 +448,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
       await settle();
 
-      // The supportUnlock observer drove reconcileCapabilities("observe"), which created the lock and (no prior service -> !existing) stamped it SECURED. Removing the
+      // The supportUnlock observer drove reconcileCapabilities("observe"), which created the lock and (an attached transition) stamped it SECURED. Removing the
       // supportUnlock observer in spawnCameraObservers leaves this RED - the push wakes nothing (the featureFlags observer dedups, since featureFlags is unchanged) and
       // the lock stays absent.
       const lock = accessLock(accessory);
@@ -584,8 +604,8 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
       await settle();
 
-      // The display is untouched - still UNSECURED. Making the stamp unconditional (dropping !existing || (source === "construct")) leaves the observe reconcile
-      // re-stamping SECURED -> RED, which would truncate a momentary user unlock.
+      // The display is untouched - still UNSECURED. Making the stamp unconditional (dropping (transition === "attached") || (source === "construct")) leaves the observe
+      // reconcile re-stamping SECURED -> RED, which would truncate a momentary user unlock.
       assert.equal(lock.getCharacteristic(Characteristic.LockCurrentState).value, Characteristic.LockCurrentState.UNSECURED,
         "the observe reconcile left the lock current state UNSECURED");
       assert.equal(lock.getCharacteristic(Characteristic.LockTargetState).value, Characteristic.LockTargetState.UNSECURED,
@@ -622,14 +642,14 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
     try {
 
-      // (a) The construct path stamped SECURED on the EXISTING lock (source === "construct" with existing present). Dropping the source === "construct" half leaves the
-      // cached lock un-stamped - existing is present, so !existing is false - and it stays UNSECURED -> RED.
+      // (a) The construct path stamped SECURED on the EXISTING lock (source === "construct" with the lock kept). Dropping the source === "construct" half leaves the
+      // cached lock un-stamped - the gate answers kept, not attached - and it stays UNSECURED -> RED.
       assert.equal(restored.getCharacteristic(Characteristic.LockCurrentState).value, Characteristic.LockCurrentState.SECURED,
         "the construct reconcile recovered the lock current state to SECURED");
       assert.equal(restored.getCharacteristic(Characteristic.LockTargetState).value, Characteristic.LockTargetState.SECURED,
         "the construct reconcile recovered the lock target state to SECURED");
 
-      // (b) The onSet was re-bound on this configure (the wire-every-configure rule - existing does NOT gate the wiring). Driving the LockTargetState onSet to
+      // (b) The onSet was re-bound on this configure (the wire-every-configure rule - the transition does NOT gate the wiring). Driving the LockTargetState onSet to
       // UNSECURED dispatches exactly one unlock command. Re-introducing an if(existing) return true guard before the onSet bind leaves nothing recorded -> RED.
       await restored.getCharacteristic(Characteristic.LockTargetState).triggerSet(Characteristic.LockTargetState.UNSECURED);
 
@@ -775,7 +795,7 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
 
       await settle();
 
-      // The featureFlags observer drove reconcileCapabilities("observe"), which created the dimmer and (no prior service -> !existing) established it from the device's
+      // The featureFlags observer drove reconcileCapabilities("observe"), which created the dimmer and (an attached transition) established it from the device's
       // irLedMode "auto" reading. Dropping the configureNightVisionDimmer(source) call from reconcileCapabilities leaves this RED - the push wakes nothing and the dimmer
       // stays absent.
       const dimmer = nightVisionDimmer(accessory);
@@ -902,15 +922,16 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
       dimmer.updateCharacteristic(Characteristic.On, false);
       dimmer.updateCharacteristic(Characteristic.Brightness, 3);
 
-      // Trigger a LIVE observe reconcile through the featureFlags observer: re-pushing the same capability flags yields a new featureFlags object reference, so the
-      // whole-object observer wakes (Object.is dedup), while ispSettings is untouched so its observer stays asleep and updateNightVision never runs. With the dimmer
-      // already present and source "observe", the establishment block is skipped.
-      store.pushCameraFeatureFlags(cameraConfig.id, { hasIcrSensitivity: true, hasInfrared: true });
+      // Trigger a LIVE observe reconcile through the featureFlags observer with an unrelated capability change, exactly as the lock's row does: a re-push of the same
+      // infrared flags would dedup under the value selector and wake nothing. ispSettings is untouched, so its observer stays asleep and updateNightVision never runs.
+      // With the dimmer already present and source "observe", the establishment block is skipped.
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasLuxCheck: true });
 
       await settle();
 
-      // The display is untouched - still the optimistic value. Making the push unconditional (dropping !existing || (source === "construct")) leaves the observe
-      // reconcile re-pushing the device reading (On true / Brightness 10) over the optimistic setting -> RED, which would momentarily stomp the user's in-flight command.
+      // The display is untouched - still the optimistic value. Making the push unconditional (dropping (transition === "attached") || (source === "construct")) leaves
+      // the observe reconcile re-pushing the device reading (On true / Brightness 10) over the optimistic setting -> RED, which would momentarily stomp the user's
+      // in-flight command.
       assert.equal(dimmer.getCharacteristic(Characteristic.On).value, false, "the observe reconcile left the optimistic On false untouched");
       assert.equal(dimmer.getCharacteristic(Characteristic.Brightness).value, 3, "the observe reconcile left the optimistic Brightness 3 untouched");
     } finally {
@@ -947,13 +968,12 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
 
     try {
 
-      // (a) The construct path re-established the EXISTING dimmer from the device reading (source === "construct" with existing present). Dropping the
-      // source === "construct" half leaves the cached dimmer un-pushed - existing is present, so !existing is false - and it stays at the stale On false /
-      // Brightness 0 -> RED.
+      // (a) The construct path re-established the EXISTING dimmer from the device reading (source === "construct" with the dimmer kept). Dropping the
+      // source === "construct" half leaves the cached dimmer un-pushed - the gate answers kept, not attached - and it stays at the stale On false / Brightness 0 -> RED.
       assert.equal(restored.getCharacteristic(Characteristic.On).value, true, "the construct reconcile re-established On true from the device irLedMode auto reading");
       assert.equal(restored.getCharacteristic(Characteristic.Brightness).value, 10, "the construct reconcile re-established Brightness 10 from the device reading");
 
-      // (b) The On onSet was re-bound on this configure (the wire-every-configure rule - existing does NOT gate the wiring). Driving it to false dispatches
+      // (b) The On onSet was re-bound on this configure (the wire-every-configure rule - the transition does NOT gate the wiring). Driving it to false dispatches
       // exactly one irLedMode off write. Re-introducing an if(existing) return true guard before the onSet bind leaves nothing recorded -> RED.
       await restored.getCharacteristic(Characteristic.On).triggerSet(false);
 
@@ -988,9 +1008,9 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
       assert.ok(nightVisionDimmer(accessory), "the infrared hardware plus the Enable toggle created the night vision dimmer at construction");
       assert.equal(enablingLogCount(), 1, "the establishment block logged Enabling night vision dimmer exactly once at creation");
 
-      // Trigger a LIVE observe reconcile: a new featureFlags reference wakes the whole-object observer; the dimmer is already present and source is observe, so the
-      // establishment block (and its log) is skipped.
-      store.pushCameraFeatureFlags(cameraConfig.id, { hasIcrSensitivity: true, hasInfrared: true });
+      // Trigger a LIVE observe reconcile through the featureFlags observer with an unrelated capability change, since a re-push of the same infrared flags would dedup
+      // under the value selector and wake nothing; the dimmer is already present and source is observe, so the establishment block (and its log) is skipped.
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasLuxCheck: true });
 
       await settle();
 
@@ -1156,6 +1176,43 @@ describe("the camera capability reconcile - tamper detection", () => {
     }
   });
 
+  test("with the setting off and no StatusTampered to remove, a reconcile still clears a set latch", async () => {
+
+    // A camera whose user setting stays off while a tamper event latches. The gate refuses the characteristic and finds none to remove, and the latch still clears,
+    // because the clear follows the setting-off verdict rather than the removal itself.
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { nvr } = buildTestNvr({ store });
+    const accessory = makeTestAccessory("Test Camera", "uuid:tamper-5");
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+
+    await settle();
+
+    try {
+
+      const motionService = motionSensor(accessory);
+
+      assert.ok(motionService, "the camera carries its motion sensor");
+      assert.equal(motionService.testCharacteristic(Characteristic.StatusTampered), false, "no tamper characteristic exists while the setting is off");
+
+      camera.isTampered = true;
+
+      // The controller reports the tamper capability while the setting stays off, waking the featureFlags observer and running the tamper reconcile on a pass where
+      // the gate refuses the characteristic and has nothing to remove.
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasTamperDetection: true });
+
+      await settle();
+
+      assert.equal(motionService.testCharacteristic(Characteristic.StatusTampered), false, "the setting-off verdict kept the tamper characteristic absent");
+
+      // Clearing the latch only when the gate removed a characteristic leaves isTampered latched true here, where there was nothing to remove -> RED.
+      assert.equal(camera.isTampered, false, "the setting-off verdict cleared the latch with no characteristic to remove");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
   test("a configure against a restart-restored StatusTampered re-binds the onGet over the stale cached value (the construct re-wire; wire-every-configure)", async () => {
 
     // Pre-push the setting on BEFORE construction so the construct reconcile sees enableTamperDetection true, mirroring the controller-stored config a restart restores
@@ -1183,11 +1240,16 @@ describe("the camera capability reconcile - tamper detection", () => {
 
     try {
 
-      // The construct reconcile's keep branch re-bound the onGet over the existing characteristic (the wire-every-configure rule - existing does NOT gate the
-      // wiring). triggerGet now reads this.isTampered at rest (false), NOT the stale cached true. Re-introducing an if(existing) return true guard before the onGet bind
-      // leaves the cached characteristic unwired, so triggerGet falls through to the stale cached true -> RED.
+      // The tamper gate answers kept for the restored characteristic, and the construct reconcile binds the onGet on that answer as well as on attached (the
+      // wire-every-configure rule). triggerGet now reads this.isTampered at rest (false), NOT the stale cached true. Binding the onGet only on an attached answer leaves
+      // the restored characteristic unwired, so triggerGet falls through to the stale cached true -> RED.
       assert.equal(await restored.getCharacteristic(Characteristic.StatusTampered).triggerGet(), false,
         "the construct reconcile re-bound the onGet, so the read returns isTampered at rest, not the stale cached true");
+
+      // The pass binds the handler and writes no value: the write log holds the seed write above and no initial value after it, so a configure that stamped the
+      // latch on a kept characteristic -> RED.
+      assert.deepEqual(restored.getCharacteristic(Characteristic.StatusTampered).writes, [true],
+        "the configure pass wrote no initial StatusTampered value, leaving only the row's own seed write in the log");
     } finally {
 
       camera.cleanup();

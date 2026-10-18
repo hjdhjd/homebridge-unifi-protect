@@ -55,17 +55,20 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
 
     // Gate the ambient light sensor on the camera's lux capability (conservative) and the user's Device.AmbientLightSensor toggle (absolute) via capabilityGate; the gate
     // sits above the poll registration below, so a hidden sensor registers no interval.
-    if(!this.validService(this.hap.Service.LightSensor,
-      capabilityGate({ capability: this.ufp.featureFlags.hasLuxCheck, toggle: this.hasFeature("Device.AmbientLightSensor") }))) {
+    const { service } = this.validService({
+
+      onServiceCreate: (lightSensorService: Service) => {
+
+        lightSensorService.addOptionalCharacteristic(this.hap.Characteristic.StatusActive);
+      },
+      serviceType: this.hap.Service.LightSensor,
+      validate: capabilityGate({ capability: this.ufp.featureFlags.hasLuxCheck, toggle: this.hasFeature("Device.AmbientLightSensor") })
+    });
+
+    if(!service) {
 
       return;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.LightSensor, undefined, undefined, (lightSensorService: Service) => {
-
-      lightSensorService.addOptionalCharacteristic(this.hap.Characteristic.StatusActive);
-    });
 
     // Read the camera's current lux level, mapping every failure to the -1 no-reading sentinel that both callers below skip on.
     const getLux = async (): Promise<number> => {

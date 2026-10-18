@@ -3,14 +3,13 @@
  * nvr-policy.ts: Pure decision logic for the NVR controller root.
  *
  * This module is the home for all of the controller root's pure decision logic, separated from the ProtectNvr composition root that acts on it. It holds the
- * startup-resilient connect retry policy, the HomeKit-membership set diff at the heart of device sync, the request-outcome classifier that feeds NvrHealth,
- * induced-disruption and reboot-recency gating, the induced-reboot resume decision, the per-episode livestream-recovery quiet latch, the scheduled-reboot deferral
- * decision with its initial-delay arithmetic and its recording-count rule, and the removal-stability arithmetic. Each is a pure function of its inputs. They live here,
- * in a dependency-light leaf, rather than inside the ProtectNvr composition root, for the same reason the unifi-protect library keeps its reducer pure and apart from its
- * client and the plugin keeps the NvrHealth reducer apart from its event-sink wrapper: a decision separated from the effect it drives is independently testable, and the
- * test is the proof the separation is real. ProtectNvr transitively imports the entire device and media graph (cameras, streaming, snapshots); a 5-line set diff should
- * never have to stand that up to be exercised. This module imports only the auth-error type it branches on and the shared failure-limit constant, so it loads and tests
- * in isolation.
+ * startup-resilient connect retry policy, the request-outcome classifier that feeds NvrHealth, induced-disruption and reboot-recency gating, the induced-reboot resume
+ * decision, the per-episode livestream-recovery quiet latch, the scheduled-reboot deferral decision with its initial-delay arithmetic and its recording-count rule, and
+ * the removal-stability arithmetic. Each is a pure function of its inputs. They live here, in a dependency-light leaf, rather than inside the ProtectNvr composition
+ * root, for the same reason the unifi-protect library keeps its reducer pure and apart from its client and the plugin keeps the NvrHealth reducer apart from its
+ * event-sink wrapper: a decision separated from the effect it drives is independently testable, and the test is the proof the separation is real. ProtectNvr
+ * transitively imports the entire device and media graph (cameras, streaming, snapshots); a pure predicate should never have to stand that up to be exercised. This
+ * module imports only the auth-error type it branches on and the shared failure-limit constant, so it loads and tests in isolation.
  */
 import type { ConnectionState } from "unifi-protect";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -158,24 +157,6 @@ export function createLivestreamEpisodeLatch(): {
       episodes.set(key, { cameraId, quiet });
     }
   };
-}
-
-/**
- * The HomeKit-membership delta between the controller's adopted-id set and the ids we have already configured, as a pure set diff. `toAdd` is the adopted ids we have
- * not configured; `toRemove` is the configured ids no longer adopted. This single set diff drives the whole of device sync - one engine for both adoption and
- * unadoption; isolating it makes the reconcile read as decision (this pure diff) then effect (add/remove). Order-preserving relative to the inputs.
- *
- * @param adoptedIds    - The controller's current adopted ids for one device category.
- * @param configuredIds - The ids we have already configured in that category.
- *
- * @returns The ids to add and the ids to remove.
- */
-export function membershipDelta(adoptedIds: readonly string[], configuredIds: readonly string[]): { toAdd: string[]; toRemove: string[] } {
-
-  const adopted = new Set(adoptedIds);
-  const configured = new Set(configuredIds);
-
-  return { toAdd: adoptedIds.filter(id => !configured.has(id)), toRemove: configuredIds.filter(id => !adopted.has(id)) };
 }
 
 /**

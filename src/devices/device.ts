@@ -2,12 +2,12 @@
  *
  * device.ts: ProtectDevice - the per-accessory device base (its shared spine, ProtectBase, lives in device-base.ts).
  */
-import type { API, CharacteristicValue, Service, WithUUID } from "homebridge";
-import type { AcquireServiceTarget, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import type { API, CharacteristicValue, Service } from "homebridge";
+import type { AcquireServiceOptions, AcquireServiceResult, HomebridgePluginLogging, Nullable, ValidServiceOptions, ValidServiceResult } from "homebridge-plugin-utils";
 import type { DeviceCollectionKey, ProtectCameraConfig, ProtectDeviceConfig, ProtectState } from "unifi-protect";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
-import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, WithoutIdentity } from "../types.ts";
-import { acquireService, mqttGetTopic, mqttSetTopic, setAccessoryName, validService } from "homebridge-plugin-utils";
+import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, ProtectServiceOptions, WithoutIdentity } from "../types.ts";
+import { acquireService, mqttGetTopic, mqttSetTopic, setAccessoryName, updateServices, validService } from "homebridge-plugin-utils";
 import { deviceSelectors, isDeviceOnline } from "unifi-protect";
 import { legacyFamilyForOption, resolveLegacySelection } from "../options-legacy.ts";
 import type { LegacyFamily } from "../options-legacy.ts";
@@ -96,6 +96,19 @@ export interface ProtectDeviceContext {
   setStatusLed(value: boolean): Promise<boolean>;
 }
 
+// The facts a configure pass runs with, which every configure method that takes one reads by name: whether what it configures should exist, and which pass this is.
+// The first pass sets a service up in full, whether it created the service or found it restored from the accessory cache, which carries none of its handlers. A later
+// pass - a runtime reconfigure or an observer's refresh - leaves the handlers and MQTT registrations of a service it finds standing as they are, since they are already
+// in place. A method whose callers must always say which pass they run takes initialized as a required field, so no bare call can change its meaning.
+export interface ProtectConfigurePass {
+
+  // Whether the configured service should exist on this pass. Defaults to true where a method leaves it optional.
+  readonly enabled?: boolean;
+
+  // Whether an earlier pass already set the configured service up. Defaults to false, the first pass, where a method leaves it optional.
+  readonly initialized?: boolean;
+}
+
 // The per-accessory device base every device family extends: it owns the live projection handle, the resolved feature-option hints bag, the shared HomeKit service
 // helpers (acquireService/validService), the base motion/occupancy/status-LED capabilities, and the observers every family shares. The generic parameter D is the
 // concrete live-projection type the family supplies on its own class header; it defaults to the full device-collection union so a bare ProtectDevice reference (the
@@ -181,18 +194,21 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     return config === undefined ? absent : read(config);
   }
 
-  // Retrieve an existing service from an accessory, creating it if necessary.
-  protected acquireService(serviceType: AcquireServiceTarget, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void): Service {
+  // Acquire a service on this device's accessory, creating it when the accessory carries none. The wrapper supplies the accessory and defaults the name to the
+  // accessory name, and answers with the homebridge-plugin-utils result unchanged: the service, and the transition that says whether this call attached it or kept one
+  // already present.
+  protected acquireService<T extends Service>(options: ProtectServiceOptions<AcquireServiceOptions<T>>): AcquireServiceResult<T> {
 
-    return acquireService(this.accessory, serviceType, name, subtype, onServiceCreate);
+    return acquireService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
   }
 
-  // Validate whether a service should exist, removing it if necessary. The validate argument accepts either a plain boolean or a presence-aware predicate, mirroring the
-  // homebridge-plugin-utils free function this delegates to: the predicate receives the service's current presence so a gate can keep an already-present service while
-  // refusing to create a new one (the additive-eager / subtractive-conservative capability gates).
-  protected validService(serviceType: WithUUID<typeof Service>, validate: boolean | ((hasService: boolean) => boolean), subtype?: string): boolean {
+  // Reconcile a service's presence on this device's accessory from one verdict, supplying the accessory and the default name the same way. The verdict is either a
+  // plain boolean or a presence-aware predicate, mirroring the homebridge-plugin-utils free function this delegates to: the predicate receives the service's current
+  // presence so a gate can keep an already-present service while refusing to create a new one (the additive-eager / subtractive-conservative capability gates). The
+  // answer is the library's own: the service with an attached or kept transition when the verdict keeps it, or null with a removed or absent transition when it does not.
+  protected validService<T extends Service>(options: ProtectServiceOptions<ValidServiceOptions<T>>): ValidServiceResult<T> {
 
-    return validService(this.accessory, serviceType, validate, subtype);
+    return validService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
   }
 
   // Configure device-specific settings. The complete base bag is built as one literal and assigned, which is what lets the field be declared with definite assignment
@@ -296,32 +312,31 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   }
 
   // Configure the Protect motion sensor for HomeKit.
-  protected configureMotionSensor(isEnabled = true, isInitialized = false): boolean {
+  protected configureMotionSensor({ enabled = true, initialized = false }: ProtectConfigurePass = {}): boolean {
 
     // Have we disabled the motion sensor?
-    if(!isEnabled) {
+    if(!enabled) {
 
       this.unsubscribe(mqttGetTopic(mqttTopics.motion.topic));
       this.unsubscribe(mqttSetTopic(mqttTopics.motion.topic));
-      this.configureMotionSwitch(isEnabled);
-      this.configureMotionTrigger(isEnabled);
+      this.configureMotionSwitch({ enabled });
+      this.configureMotionTrigger({ enabled });
     }
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.MotionSensor, isEnabled)) {
+    const { service, transition } = this.validService({ serviceType: this.hap.Service.MotionSensor, validate: enabled });
+
+    if(!service) {
 
       return false;
     }
 
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.MotionSensor, undefined, undefined, () => {
+    // Set the sensor up on the first pass, or on any later pass that created it. A runtime reconfigure (UniFi sensors can switch sensor modes in realtime) that finds
+    // the sensor already standing leaves its handlers and MQTT registrations as they are, since registering them again would stack a second MQTT handler, while one
+    // that created the sensor sets it up in full.
+    const dressing = !initialized || (transition === "attached");
 
-      isInitialized = false;
-    });
-
-    // Have we previously initialized this sensor? We assume not by default, but this allows for scenarios where you may be dynamically reconfiguring a sensor at
-    // runtime (e.g. UniFi sensors can be reconfigured for various sensor modes in realtime).
-    if(!isInitialized) {
+    if(dressing) {
 
       // Initialize the state of the motion sensor.
       service.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
@@ -346,18 +361,21 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       });
 
       // Configure any motion switches or triggers the user may have enabled or disabled.
-      this.configureMotionSwitch(isEnabled);
-      this.configureMotionTrigger(isEnabled);
+      this.configureMotionSwitch({ enabled });
+      this.configureMotionTrigger({ enabled });
     }
 
     return true;
   }
 
   // Configure a switch to easily activate or deactivate motion sensor detection for HomeKit.
-  private configureMotionSwitch(isEnabled = true): boolean {
+  private configureMotionSwitch({ enabled = true }: Pick<ProtectConfigurePass, "enabled"> = {}): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Switch, isEnabled && this.hasFeature("Motion.Switch"), ProtectReservedNames.SWITCH_MOTION_SENSOR)) {
+    const { service } = this.validService({ name: this.accessoryName + " Motion Events", serviceType: this.hap.Service.Switch,
+      subtype: ProtectReservedNames.SWITCH_MOTION_SENSOR, validate: enabled && this.hasFeature("Motion.Switch") });
+
+    if(!service) {
 
       // If we disable the switch, make sure we fully reset its state. Otherwise, we can end up in a situation (e.g. liveview switches) where we have disabled motion
       // detection with no meaningful way to enable it again.
@@ -365,9 +383,6 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Motion Events", ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
     // Activate or deactivate motion detection.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !!this.accessory.context.detectMotion);
@@ -396,16 +411,16 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   }
 
   // Configure a switch to manually trigger a motion sensor event for HomeKit.
-  private configureMotionTrigger(isEnabled = true): boolean {
+  private configureMotionTrigger({ enabled = true }: Pick<ProtectConfigurePass, "enabled"> = {}): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Switch, isEnabled && this.hasFeature("Motion.Trigger"), ProtectReservedNames.SWITCH_MOTION_TRIGGER)) {
+    const { service: triggerService } = this.validService({ name: this.accessoryName + " Motion Trigger", serviceType: this.hap.Service.Switch,
+      subtype: ProtectReservedNames.SWITCH_MOTION_TRIGGER, validate: enabled && this.hasFeature("Motion.Trigger") });
+
+    if(!triggerService) {
 
       return false;
     }
-
-    // Acquire the service.
-    const triggerService = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Motion Trigger", ProtectReservedNames.SWITCH_MOTION_TRIGGER);
 
     const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
     const switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
@@ -452,30 +467,27 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   }
 
   // Configure the Protect occupancy sensor for HomeKit.
-  protected configureOccupancySensor(isEnabled = true, isInitialized = false): boolean {
+  protected configureOccupancySensor({ enabled = true, initialized = false }: ProtectConfigurePass = {}): boolean {
 
     // Occupancy sensors are disabled by default and primarily exist for automation purposes.
-    if(!isEnabled || !this.hasFeature("Motion.OccupancySensor")) {
+    if(!enabled || !this.hasFeature("Motion.OccupancySensor")) {
 
       this.unsubscribe(mqttGetTopic(mqttTopics.occupancy.topic));
     }
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.OccupancySensor, isEnabled && this.hasFeature("Motion.OccupancySensor"))) {
+    const { service, transition } = this.validService({ serviceType: this.hap.Service.OccupancySensor, validate: enabled && this.hasFeature("Motion.OccupancySensor") });
+
+    if(!service) {
 
       return false;
     }
 
-    // Acquire the service, flipping isInitialized false when this call actually CREATES the service so a service stood up during a steady-state reconcile runs the full
-    // init block below rather than being left half-configured. Mirrors configureMotionSensor's onServiceCreate reset.
-    const service = this.acquireService(this.hap.Service.OccupancySensor, undefined, undefined, () => {
+    // Set the sensor up on the first pass, or on any later pass that created it, the same rule configureMotionSensor follows: a sensor stood up during a steady-state
+    // reconcile runs the full setup below rather than being left half-configured, and one already standing does not register its MQTT handler a second time.
+    const dressing = !initialized || (transition === "attached");
 
-      isInitialized = false;
-    });
-
-    // Have we previously initialized this sensor? We assume not by default, but this allows for scenarios where you may be dynamically reconfiguring a sensor at
-    // runtime (e.g. UniFi sensors can be reconfigured for various sensor modes in realtime).
-    if(!isInitialized) {
+    if(dressing) {
 
       // Reset the resolved smart-occupancy type list before rebuilding it, so a live re-creation of the service repopulates from empty rather than accumulating
       // duplicates across runs.
@@ -521,16 +533,16 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   }
 
   // Configure a switch to turn on or off the status indicator light for HomeKit.
-  protected configureStatusLedSwitch(isEnabled = true): boolean {
+  protected configureStatusLedSwitch({ enabled = true }: Pick<ProtectConfigurePass, "enabled"> = {}): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Switch, isEnabled && this.hasFeature("Device.StatusLed.Switch"), ProtectReservedNames.SWITCH_STATUS_LED)) {
+    const { service } = this.validService({ name: this.accessoryName + " Status Indicator", serviceType: this.hap.Service.Switch,
+      subtype: ProtectReservedNames.SWITCH_STATUS_LED, validate: enabled && this.hasFeature("Device.StatusLed.Switch") });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Status Indicator", ProtectReservedNames.SWITCH_STATUS_LED);
 
     // Enable or disable the status indicator light.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.statusLed);
@@ -751,9 +763,9 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     this.accessoryName = synced;
   }
 
-  // Pushed by the NVR's connection observe loop when controller-level reachability changes. Walks every service on the accessory and rewrites StatusActive from
-  // isReachable on any service that carries that characteristic. Single source: one read of isReachable, one push to every relevant service; no second list of
-  // services, no parallel registry.
+  // Pushed by the NVR's connection observe loop when controller-level reachability changes. Rewrites StatusActive from isReachable on every service on the accessory
+  // that carries that characteristic, through the homebridge-plugin-utils sweep. Single source: one read of isReachable, one push to every relevant service; no second
+  // list of services, no parallel registry.
   //
   // Returns the reachability transition (the prior and new StatusActive value) when the accessory's HomeKit-visible reachability actually flipped, or null when it
   // was unchanged or the accessory carries no StatusActive characteristic. The prior value is read from the first StatusActive-bearing service - the characteristic
@@ -762,34 +774,21 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   public refreshReachability(): Nullable<{ now: boolean; was: boolean }> {
 
     const now = this.isReachable;
-    let transition: Nullable<{ now: boolean; was: boolean }> = null;
-    let captured = false;
 
-    for(const service of this.accessory.services) {
+    // The first StatusActive-bearing service supplies the representative prior value: every such service is driven from the same isReachable, so they share one
+    // transition. We read it before the sweep writes the new value to every service that carries the characteristic.
+    const carrier = this.accessory.services.find((service) => service.testCharacteristic(this.hap.Characteristic.StatusActive));
 
-      if(!service.testCharacteristic(this.hap.Characteristic.StatusActive)) {
+    if(!carrier) {
 
-        continue;
-      }
-
-      // The first StatusActive-bearing service supplies the representative prior value: every such service is driven from the same isReachable, so they share one
-      // transition. We capture it before the write, then write the new value to every service that carries the characteristic.
-      if(!captured) {
-
-        captured = true;
-
-        const was = service.getCharacteristic(this.hap.Characteristic.StatusActive).value === true;
-
-        if(was !== now) {
-
-          transition = { now, was };
-        }
-      }
-
-      service.updateCharacteristic(this.hap.Characteristic.StatusActive, now);
+      return null;
     }
 
-    return transition;
+    const was = carrier.getCharacteristic(this.hap.Characteristic.StatusActive).value === true;
+
+    updateServices(this.accessory, this.hap.Characteristic.StatusActive, now);
+
+    return (was === now) ? null : { now, was };
   }
 
   // The HomeKit / event-timer identity of this device, sourced from the persisted accessory-context MAC rather than the live config so it survives a vanished record. For

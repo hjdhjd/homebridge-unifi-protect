@@ -22,7 +22,7 @@
  * - nvr.ufp reads THROUGH the store (the harness's read-through client.nvr.config getter), so seeding the store's nvr slice IS how the construction record reaches
  *   nvr.ufp, and a pushNvrPatch that moves systemInfo by reference changes both selectNvr(state) and nvr.ufp at once.
  *
- * The observer non-vacuity trap: the onGet is bound only on the initial pass (the configureHandler guard) and reads live nvr.ufp, so after a push
+ * The observer non-vacuity trap: the onGet is bound only on the initial pass (the guard on the pass's initialized flag) and reads live nvr.ufp, so after a push
  * triggerGet returns the NEW temperature REGARDLESS of whether the observer fired - it cannot prove the reaction. What tells the two apart is the characteristic's CACHED
  * .value, which is written ONLY by the observer-driven updateCharacteristic: a non-firing observer leaves .value at the initial-pass write. So the observer test asserts
  * CurrentTemperature.value === NEW after pushNvrPatch moves a FRESH systemInfo by reference, never triggerGet.
@@ -127,6 +127,25 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
 
     // The singular enabled-sensors log (one sensor, so the %s plural marker is empty).
     assert.ok(loggedAt(built.logEntries, "info", "Enabled system information sensor: cpu temperature."), "the one enabled sensor logs the singular enabled-sensor line");
+  });
+
+  test("the initial pass binds the temperature read-through, so a pull answers the live temperature over a stale cached value", async () => {
+
+    const built = buildSystemInfo({ temperature: 36 }, { userOptions: ["Enable.Nvr.SystemInfo"] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const temperature = built.accessory?.getService(Service.TemperatureSensor);
+
+    assert.ok(temperature, "the temperature service exists after construction");
+
+    // Overwrite the cached value with a sentinel the controller never reported, so only a bound read-through can answer the live temperature. A construction that ran
+    // as a later pass would bind nothing, and the pull would fall through to the sentinel.
+    temperature.getCharacteristic(Characteristic.CurrentTemperature).updateValue(-1);
+
+    assert.equal(await temperature.getCharacteristic(Characteristic.CurrentTemperature).triggerGet(), 36, "the pull answers the live temperature, not the sentinel");
   });
 
   test("construction with the feature disabled and a cached accessory present unregisters it, splices it out, and logs the removal", async () => {

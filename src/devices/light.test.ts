@@ -133,6 +133,13 @@ describe("real ProtectLight construction and observer behavior", () => {
     assert.ok(accessory.getService(Service.MotionSensor), "configureMotionSensor is default-on, so the light carries a MotionSensor service the motion tests depend on");
   });
 
+  test("the lightbulb and the motion sensor, acquired without a name of their own, carry the accessory's name", () => {
+
+    // The lightbulb comes through the acquire wrapper and the motion sensor through the validate wrapper, and each wrapper defaults the name to the accessory's own.
+    assert.equal(accessory.getService(Service.Lightbulb)?.displayName, "Test Light", "the lightbulb carries the accessory's name");
+    assert.equal(accessory.getService(Service.MotionSensor)?.displayName, "Test Light", "the motion sensor carries the accessory's name");
+  });
+
   test("preserves a persisted detectMotion of false across the context reset", async () => {
 
     // The mirror of the sensor half: pre-seed the accessory as if the user had turned motion detection off, then build with Motion.Switch enabled so the switch takes its
@@ -316,8 +323,8 @@ describe("real ProtectLight construction and observer behavior", () => {
 
       assert.deepEqual(lightProjection.updateCalls, [{ payload: { lightOnSettings: { isLedForceOn: true } } }],
         "the /light SET of \"true\" wrote the force-on power state through device.update");
-      assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light"), [{ payload: "true", topic: lightConfig.mac + "/light" }],
-        "the accepted power write published \"true\" on the light topic");
+      assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light"),
+        [{ payload: "true", retain: false, topic: lightConfig.mac + "/light" }], "the accepted power write published \"true\" on the light topic");
     });
 
     test("a /light SET of a non-\"true\" value drives the power-off write and publishes \"false\"", async () => {
@@ -333,8 +340,8 @@ describe("real ProtectLight construction and observer behavior", () => {
 
       assert.deepEqual(lightProjection.updateCalls, [{ payload: { lightOnSettings: { isLedForceOn: false } } }],
         "a non-\"true\" /light SET wrote the force-off power state through device.update");
-      assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light"), [{ payload: "false", topic: lightConfig.mac + "/light" }],
-        "the accepted power-off write published \"false\" on the light topic");
+      assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light"),
+        [{ payload: "false", retain: false, topic: lightConfig.mac + "/light" }], "the accepted power-off write published \"false\" on the light topic");
     });
 
     test("a valid /light/brightness SET maps the percentage to an LED level, publishes the round-tripped brightness, and reflects it after 50ms", async () => {
@@ -357,7 +364,7 @@ describe("real ProtectLight construction and observer behavior", () => {
         assert.deepEqual(lightProjection.updateCalls, [{ payload: { lightDeviceSettings: { ledLevel: 4 } } }],
           "the /light/brightness SET of \"55\" mapped to LED level 4 and wrote it through device.update");
         assert.deepEqual(mqtt.published.filter((entry) => entry.topic === lightConfig.mac + "/light/brightness"),
-          [{ payload: "60", topic: lightConfig.mac + "/light/brightness" }], "the write published the round-tripped brightness (55 in, 60 published)");
+          [{ payload: "60", retain: false, topic: lightConfig.mac + "/light/brightness" }], "the write published the round-tripped brightness (55 in, 60 published)");
 
         // The 50ms reflect snaps the Lightbulb Brightness to the LED-level-mapped value, reconciling HomeKit's finer granularity with Protect's 1-6 levels.
         mock.timers.tick(50);

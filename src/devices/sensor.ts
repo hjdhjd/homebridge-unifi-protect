@@ -2,19 +2,20 @@
  *
  * sensor.ts: Sensor device class for UniFi Protect.
  */
-import type { AcquireServiceTarget, MqttTopicEntry, Nullable } from "homebridge-plugin-utils";
-import type { Characteristic, HAP, Service, WithUUID } from "homebridge";
+import type { AcquireServiceTarget, CharacteristicTarget, MqttTopicEntry, Nullable } from "homebridge-plugin-utils";
 import { DISABLED_THRESHOLD_SETTINGS, DISABLED_VAPE_SENSITIVITY, NOT_CAPABLE_AIR_QUALITY, NO_READING, airQualityLevel, airQualityMetricLive,
-  airQualityMetricReported, airQualityReporting, airQualitySensorCapable, co2AlertDetected, environmentalReading, environmentalServiceGate,
+  airQualityMetricReading, airQualityReporting, airQualitySensorCapable, co2AlertDetected, environmentalReading, environmentalServiceGate,
   vapeDetected } from "./air-quality-policy.ts";
+import type { HAP, Service, WithUUID } from "homebridge";
 import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
 import type { ProtectAirQualityMetric, ProtectAirQualityThresholdSettings, ProtectSensorAirQuality, ProtectSensorConfig, ProtectSensorSmokeStatus,
   Sensor } from "unifi-protect";
 import { SMOKE_ALARM_TYPES, carbonMonoxideDetected, carbonMonoxideFault, carbonMonoxideFaultReasons, smokeAlarmCapable, smokeDetected, smokeDetectorHardware,
   smokeFault, smokeFaultReasons } from "./smoke-policy.ts";
 import type { SmokeAlarmType, SmokeFaultReason } from "./smoke-policy.ts";
-import { capabilityGate, mqttGetTopic } from "homebridge-plugin-utils";
+import { capabilityGate, mqttGetTopic, sameEntries, updatePresenceCharacteristic, updateServices } from "homebridge-plugin-utils";
 import type { LeakChannelContext } from "./leak-policy.ts";
+import type { ProtectConfigurePass } from "./device.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
@@ -101,11 +102,6 @@ const SENSOR_ALARM_CONTACTS: readonly AlarmContactDescriptor[] = [
     log: "Glass break", mqtt: mqttTopics.glassbreak, name: " Glass Break", subtype: ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK }
 ];
 
-// The characteristic-class shape the reconcile helpers below accept. Service.getCharacteristic and updateCharacteristic want a constructor signature while
-// testCharacteristic wants the static class shape, so the intersection of the two is the only type that satisfies every call they make - the same intersection
-// homebridge-plugin-utils uses to type its own service-acquisition target. Every real characteristic class satisfies it.
-type CharacteristicClass = WithUUID<typeof Characteristic> & (new () => Characteristic);
-
 // The noun phrases a fault sentence prints for each flag the smoke leaf hands back. Presentation lives here in the device layer because the leaf deals only in typed
 // tags; a phrase is deliberately shared wherever the wire flag behind it would mean nothing to a user, who reads that a sensor is reporting a sensor fault and does not
 // care which flag carried it. This is the same separation the alarm table's label / log pair draws one level up.
@@ -121,7 +117,7 @@ const SMOKE_FAULT_LABELS: Readonly<Record<SmokeFaultReason, string>> = { cleanSm
 interface SmokeAlarmDescriptor {
 
   readonly alarmType: SmokeAlarmType;
-  readonly characteristic: (hap: HAP) => CharacteristicClass;
+  readonly characteristic: (hap: HAP) => CharacteristicTarget;
   readonly detected: (status: ProtectSensorSmokeStatus) => boolean;
   readonly fault: (status: ProtectSensorSmokeStatus) => boolean;
   readonly faultReasons: (status: ProtectSensorSmokeStatus) => SmokeFaultReason[];
@@ -187,7 +183,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     this.configureBatteryService();
 
     // Configure the sensor services that have been enabled.
-    this.updateDevice(false);
+    this.updateDevice({ initialized: false });
 
     // Configure the status indicator light switch.
     this.configureStatusLedSwitch();
@@ -202,14 +198,14 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   private configureBatteryService(): void {
 
     // Acquire the service.
-    this.acquireService(this.hap.Service.Battery);
+    this.acquireService({ serviceType: this.hap.Service.Battery });
 
     // Initialize the battery state.
     this.updateBatteryStatus();
   }
 
   // Update accessory services and characteristics.
-  private updateDevice(isInitialized = true): void {
+  private updateDevice({ initialized }: Required<Pick<ProtectConfigurePass, "initialized">>): void {
 
     const currentEnabledSensors: string[] = [];
 
@@ -229,8 +225,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       this.publish(mqttTopics.airquality.topic, this.airQualityPayload);
     }
 
-    // Configure the alarm-family contact sensors (alarm sound and glass break), threading updateDevice's own isInitialized exactly as the leak and motion paths do.
-    currentEnabledSensors.push(...this.configureAlarmContactSensors(isInitialized));
+    // Configure the alarm-family contact sensors (alarm sound and glass break), threading updateDevice's own initialized flag exactly as the leak and motion paths do.
+    currentEnabledSensors.push(...this.configureAlarmContactSensors({ initialized }));
 
     // Configure the ambient light sensor.
     if(this.configureAmbientLightSensor()) {
@@ -261,7 +257,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     }
 
     // Configure the leak sensor.
-    if(this.configureLeakSensor(isInitialized)) {
+    if(this.configureLeakSensor({ initialized })) {
 
       const sensorType = this.hasFeature("Sensor.MoistureSensor") ? "moisture" : "leak";
 
@@ -280,7 +276,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     }
 
     // Configure the motion sensor.
-    if(this.configureMotionSensor(this.ufp.motionSettings.isEnabled, isInitialized)) {
+    if(this.configureMotionSensor({ enabled: this.ufp.motionSettings.isEnabled, initialized })) {
 
       // Apply the connection and tamper status characteristics to the motion service ourselves; battery status is handled separately by configureBatteryService.
       const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
@@ -295,7 +291,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     }
 
     // Configure the occupancy sensor.
-    this.configureOccupancySensor(this.ufp.motionSettings.isEnabled, isInitialized);
+    this.configureOccupancySensor({ enabled: this.ufp.motionSettings.isEnabled, initialized });
 
     // Configure the temperature sensor.
     if(this.configureTemperatureSensor()) {
@@ -313,7 +309,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED)?.updateCharacteristic(this.hap.Characteristic.On, this.statusLed);
 
     // Inform the user if we've had a change.
-    if(this.enabledSensors.join(" ") !== currentEnabledSensors.join(" ")) {
+    if(!sameEntries(this.enabledSensors, currentEnabledSensors, (left, right) => left === right)) {
 
       this.enabledSensors = currentEnabledSensors;
 
@@ -337,14 +333,13 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Validate whether we should have this service enabled, on the lifecycle rule every capability-driven sensor service shares, asked here of the metrics HomeKit's
     // air quality service can model. No feature option gates it: the service has a direct HomeKit analog, and the Protect app is where a user chooses what a sensor
     // measures.
-    if(!this.validService(this.hap.Service.AirQualitySensor,
-      (hasService) => environmentalServiceGate({ capability: airQualitySensorCapable(airQuality), hasService, isReachable: this.isReachable }))) {
+    const { service } = this.validService({ serviceType: this.hap.Service.AirQualitySensor,
+      validate: (hasService) => environmentalServiceGate({ capability: airQualitySensorCapable(airQuality), hasService, isReachable: this.isReachable }) });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.AirQualitySensor);
 
     // Retrieve the current air quality when requested.
     service.getCharacteristic(this.hap.Characteristic.AirQuality).onGet(() => airQualityLevel(this.airQuality.aqi));
@@ -356,8 +351,10 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // actually answer for. The gas readings stay off this service entirely - Protect reports VOC, TVOC, and NOx as baseline-relative indexes carrying no unit, while
     // HomeKit's density characteristics describe a mass concentration, and there is no honest conversion from one to the other. They ride the MQTT telemetry instead,
     // where a subscriber sees them for what they are. Revisit the moment Protect reports a gas reading as a real concentration.
-    this.updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.PM2_5Density, read: () => this.airQuality.pm2p5, service });
-    this.updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.PM10Density, read: () => this.airQuality.pm10p0, service });
+    updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.PM2_5Density, reachable: this.isReachable,
+      read: () => airQualityMetricReading(this.airQuality.pm2p5), service });
+    updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.PM10Density, reachable: this.isReachable,
+      read: () => airQualityMetricReading(this.airQuality.pm10p0), service });
 
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
@@ -369,34 +366,33 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   // steady-state VALUE writer per row - that row's dedicated field observer via updateAlarmState - owns its ContactSensorState after the create-time seed here. Each
   // descriptor row is validated and acquired independently; the returned labels feed the enabled-sensors log so it can never disagree with the services actually
   // created.
-  private configureAlarmContactSensors(isInitialized = true): string[] {
+  private configureAlarmContactSensors({ initialized }: Required<Pick<ProtectConfigurePass, "initialized">>): string[] {
 
     const config = this.ufp;
     const enabled: string[] = [];
 
     for(const descriptor of SENSOR_ALARM_CONTACTS) {
 
-      // Validate whether we should have this service enabled.
-      if(!this.validService(this.hap.Service.ContactSensor, descriptor.gate(config), descriptor.subtype)) {
+      // Validate whether we should have this service enabled. The transition the gate answers is "attached" exactly when the service is new to its lifetime - the first
+      // configure or a late capability creating it - and "kept" for a service restored across a restart or already present from an earlier reconcile. This drives the
+      // once-per-lifetime VALUE seed below alongside the first-configure signal.
+      const { service, transition } = this.validService({ name: this.accessoryName + descriptor.name, serviceType: this.hap.Service.ContactSensor,
+        subtype: descriptor.subtype, validate: descriptor.gate(config) });
+
+      if(!service) {
 
         continue;
       }
-
-      // Detect creation by presence before we acquire: a subtype not yet on this accessory will be created by acquireService, so this is true exactly when the service is
-      // new to its lifetime - the first configure or a late capability creating it - and false for a service restored across a restart or already present from an earlier
-      // reconcile. This drives the once-per-lifetime VALUE seed below alongside the first-configure signal.
-      const created = !this.accessory.getServiceById(this.hap.Service.ContactSensor, descriptor.subtype);
-      const service = this.acquireService(this.hap.Service.ContactSensor, this.accessoryName + descriptor.name, descriptor.subtype);
 
       // Apply the connection and tamper status characteristics every reconcile, exactly like every other sensor service: this unconditional call is the sole per-device
       // StatusActive driver when a device goes offline while the controller stays healthy. It does not touch ContactSensorState, so the alarm VALUE is not re-pushed.
       this.configureStateCharacteristics(service);
 
-      // Seed the alarm VALUE bits exactly once per service lifetime - the first configure (isInitialized false) or a late capability creating the service (created): the
-      // onGet read-through, the initial characteristic value from a guaranteed-boolean local, and the initial MQTT publish. Steady-state updates are then owned by this
-      // row's dedicated field observer, so the alarm VALUE leaves the per-reconcile path entirely. The seeded baseline is recorded under the row's own field, so the
-      // first observed transition on one kind cannot be measured against what the other kind was doing.
-      if(!isInitialized || created) {
+      // Seed the alarm VALUE bits exactly once per service lifetime - the first configure (initialized false) or a late capability creating the service (an
+      // attached transition): the onGet read-through, the initial characteristic value from a guaranteed-boolean local, and the initial MQTT publish. Steady-state
+      // updates are then owned by this row's dedicated field observer, so the alarm VALUE leaves the per-reconcile path entirely. The seeded baseline is recorded under
+      // the row's own field, so the first observed transition on one kind cannot be measured against what the other kind was doing.
+      if(!initialized || (transition === "attached")) {
 
         const detected = this.alarmDetected(descriptor);
 
@@ -420,13 +416,13 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   private configureAmbientLightSensor(): boolean {
 
     // Validate whether we should have this service enabled: the sensor must report ambient light AND the user must not have hidden it via Device.AmbientLightSensor.
-    if(!this.validService(this.hap.Service.LightSensor, this.ufp.lightSettings.isEnabled && this.hasFeature("Device.AmbientLightSensor"))) {
+    const { service } = this.validService({ serviceType: this.hap.Service.LightSensor,
+      validate: this.ufp.lightSettings.isEnabled && this.hasFeature("Device.AmbientLightSensor") });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.LightSensor);
 
     // Retrieve the current light level when requested.
     service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel).onGet(() => {
@@ -455,14 +451,13 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
     // Validate whether we should have this service enabled, on the same shared lifecycle rule, asked here of the carbon dioxide metric alone. No feature option gates
     // it either: carbon dioxide is its own HomeKit service with its own direct analog, and the user chooses whether the sensor measures it in the Protect app.
-    if(!this.validService(this.hap.Service.CarbonDioxideSensor,
-      (hasService) => environmentalServiceGate({ capability: airQualityMetricLive(airQuality.co2), hasService, isReachable: this.isReachable }))) {
+    const { service } = this.validService({ serviceType: this.hap.Service.CarbonDioxideSensor,
+      validate: (hasService) => environmentalServiceGate({ capability: airQualityMetricLive(airQuality.co2), hasService, isReachable: this.isReachable }) });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.CarbonDioxideSensor);
 
     // Retrieve the current carbon dioxide alert state when requested.
     service.getCharacteristic(this.hap.Characteristic.CarbonDioxideDetected).onGet(() => co2AlertDetected(this.airQuality.co2, this.co2Settings));
@@ -471,7 +466,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     service.updateCharacteristic(this.hap.Characteristic.CarbonDioxideDetected, co2AlertDetected(airQuality.co2, this.co2Settings));
 
     // The measured level, present only while the sensor is actually reporting a number.
-    this.updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.CarbonDioxideLevel, read: () => this.airQuality.co2, service });
+    updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.CarbonDioxideLevel, reachable: this.isReachable,
+      read: () => airQualityMetricReading(this.airQuality.co2), service });
 
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
@@ -483,14 +479,13 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   private configureContactSensor(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.ContactSensor, !!this.ufp.mountType && (this.ufp.mountType !== "leak") && (this.ufp.mountType !== "none"),
-      ProtectReservedNames.CONTACT_SENSOR)) {
+    const { service } = this.validService({ serviceType: this.hap.Service.ContactSensor, subtype: ProtectReservedNames.CONTACT_SENSOR,
+      validate: !!this.ufp.mountType && (this.ufp.mountType !== "leak") && (this.ufp.mountType !== "none") });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.ContactSensor, undefined, ProtectReservedNames.CONTACT_SENSOR);
 
     // Retrieve the current contact sensor state when requested.
     service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.contact);
@@ -512,14 +507,14 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
     // Validate whether we should have this service enabled, on the shared lifecycle rule: the user's Protect-side humidity toggle carries the USL family, while
     // air-quality hardware reports humidity through its own telemetry with no toggle at all.
-    if(!this.validService(this.hap.Service.HumiditySensor, (hasService) => environmentalServiceGate({ capability: airQualityMetricLive(this.airQuality.humidity),
-      enabled: this.ufp.humiditySettings.isEnabled, hasService, isReachable: this.isReachable }))) {
+    const { service } = this.validService({ serviceType: this.hap.Service.HumiditySensor,
+      validate: (hasService) => environmentalServiceGate({ capability: airQualityMetricLive(this.airQuality.humidity), enabled: this.ufp.humiditySettings.isEnabled,
+        hasService, isReachable: this.isReachable }) });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.HumiditySensor);
 
     // Wire the read-through, write the current reading, and publish it.
     this.updateEnvironmentalCharacteristic({ characteristic: this.hap.Characteristic.CurrentRelativeHumidity, read: () => this.humidity, service,
@@ -539,7 +534,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   }
 
   // Configure the leak sensor for HomeKit.
-  private configureLeakSensor(isInitialized = true): boolean {
+  private configureLeakSensor({ initialized }: Required<Pick<ProtectConfigurePass, "initialized">>): boolean {
 
     // Determine which service and characteristic types to use based on whether we are configured as a moisture sensor.
     const isMoistureSensor = this.hasFeature("Sensor.MoistureSensor");
@@ -577,19 +572,14 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
         this.unsubscribe(mqttGetTopic(sensor.mqtt.topic));
       }
 
-      // Validate whether we should have this service enabled.
-      if(!this.validService(serviceType, enabled, sensor.subtype)) {
+      // Validate whether we should have this service enabled. The transition the gate answers is "attached" exactly when this channel's service is newly created this
+      // pass.
+      const { service, transition } = this.validService({ name: this.accessoryName + (sensor.name ?? ""), serviceType, subtype: sensor.subtype, validate: enabled });
+
+      if(!service) {
 
         continue;
       }
-
-      // Detect creation by presence before we acquire: a subtype not yet on this accessory will be created by acquireService below, so this reads true exactly when the
-      // channel's service is newly created this pass. We use a presence probe here, NOT an onServiceCreate closure flip: the loop shares one isInitialized parameter
-      // across channels, and a closure flip on one channel would leak the reset into the next channel's iteration and double-register its GET.
-      const created = !this.accessory.getServiceById(serviceType, sensor.subtype);
-
-      // Acquire the service.
-      const service = this.acquireService(serviceType, this.accessoryName + (sensor.name ?? ""), sensor.subtype);
 
       // Retrieve the current sensor state when requested.
       service.getCharacteristic(characteristic).onGet(() => this.leakDetected(sensor.isDetected));
@@ -607,10 +597,11 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       }
 
       // Register the MQTT get handler exactly once per channel: subscribeGet accumulates a handler on every call, so a second call would double-register the channel's
-      // GET; we guard it on the first configure (isInitialized false) OR a channel enabled at runtime (created) - a channel toggled on after first configure must
-      // register its GET now rather than stay dead until a restart. ONLY leak is folded onto this per-channel leaf gate, because only leak has the model-aware
-      // per-channel enable signal; the other sensor GETs remain unconditional in configureMqtt - a pre-existing, accepted inconsistency that is out of scope here.
-      if(!isInitialized || created) {
+      // GET; we guard it on the first configure (initialized false) OR a channel enabled at runtime (an attached transition) - a channel toggled on after first
+      // configure must register its GET now rather than stay dead until a restart. ONLY leak is folded onto this per-channel leaf gate, because only leak has the
+      // model-aware per-channel enable signal; the other sensor GETs remain unconditional in configureMqtt - a pre-existing, accepted inconsistency that is out of scope
+      // here.
+      if(!initialized || (transition === "attached")) {
 
         this.subscribeGet(sensor.mqtt.topic, sensor.mqtt.label, () => this.leakDetected(sensor.isDetected).toString());
       }
@@ -642,7 +633,9 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       // Validate whether we should have this service enabled, on the sensor's model-identified detector hardware and that hardware's own alarm-type advertisement. Both
       // are stable hardware facts rather than readings that flap, so it is a plain boolean rather than one of the conservative capability gates the measurement-driven
       // services use.
-      if(!this.validService(serviceType, smokeAlarmCapable(this.smokeAlarmTypes, descriptor.alarmType))) {
+      const { service } = this.validService({ serviceType, validate: smokeAlarmCapable(this.smokeAlarmTypes, descriptor.alarmType) });
+
+      if(!service) {
 
         // With no service on the accessory there is no state to hold, so the bookkeeping clears: an alarm type that goes away and later returns re-seeds from its first
         // live reading rather than narrating a transition against a state nobody has seen since. Cleared by writing undefined, which the record's own value type admits
@@ -651,9 +644,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
         continue;
       }
-
-      // Acquire the service.
-      const service = this.acquireService(serviceType);
 
       const characteristic = descriptor.characteristic(this.hap);
 
@@ -738,14 +728,14 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
     // Validate whether we should have this service enabled, on the shared lifecycle rule: the user's Protect-side temperature toggle carries the USL family, while
     // air-quality hardware reports temperature through its own telemetry with no toggle at all.
-    if(!this.validService(this.hap.Service.TemperatureSensor, (hasService) => environmentalServiceGate({ capability:
-      airQualityMetricLive(this.airQuality.temperature), enabled: this.ufp.temperatureSettings.isEnabled, hasService, isReachable: this.isReachable }))) {
+    const { service } = this.validService({ serviceType: this.hap.Service.TemperatureSensor,
+      validate: (hasService) => environmentalServiceGate({ capability: airQualityMetricLive(this.airQuality.temperature), enabled: this.ufp.temperatureSettings.isEnabled,
+        hasService, isReachable: this.isReachable }) });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.TemperatureSensor);
 
     // Wire the read-through, write the current reading, and publish it.
     this.updateEnvironmentalCharacteristic({ characteristic: this.hap.Characteristic.CurrentTemperature, read: () => this.temperature, service,
@@ -762,8 +752,11 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   // the Protect app, not a wire reading that flaps, so turning it off there should take the sensor away immediately.
   private configureVapeSensor(): boolean {
 
-    if(!this.validService(this.hap.Service.ContactSensor, capabilityGate({ capability: airQualityMetricLive(this.airQuality.vape),
-      toggle: this.hasFeature("Sensor.Vape") && this.vapeSensitivity.isEnabled }), ProtectReservedNames.CONTACT_SENSOR_VAPE)) {
+    const { service } = this.validService({ name: this.accessoryName + " Vape", serviceType: this.hap.Service.ContactSensor,
+      subtype: ProtectReservedNames.CONTACT_SENSOR_VAPE, validate: capabilityGate({ capability: airQualityMetricLive(this.airQuality.vape),
+        toggle: this.hasFeature("Sensor.Vape") && this.vapeSensitivity.isEnabled }) });
+
+    if(!service) {
 
       // With no service on the accessory there is no state to hold, so the bookkeeping clears: a sensor turned off and later back on re-seeds from its first live
       // reading rather than narrating a transition against a state nobody has seen since.
@@ -771,9 +764,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.ContactSensor, this.accessoryName + " Vape", ProtectReservedNames.CONTACT_SENSOR_VAPE);
 
     // Retrieve the current vape state when requested.
     service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.vapeState);
@@ -818,8 +808,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   }
 
   /* Reconcile one environmental characteristic - the temperature or humidity a sensor reports - against whichever of the two sources this hardware reports through,
-   * and publish what it says. The same resolve-else-hold shape updatePresenceCharacteristic applies to the densities, minus the removal half: these two services own
-   * their characteristic for their whole lifetime, so the only question is whether there is a reading to write.
+   * and publish what it says. The same resolve-else-hold shape the library's updatePresenceCharacteristic applies to the densities, minus the removal half: the
+   * temperature and humidity services own their characteristic for their whole lifetime, so the only question is whether there is a reading to write.
    *
    * WRITE - a source is reporting a number, so the characteristic takes it and the reading goes out on its MQTT topic.
    *
@@ -831,7 +821,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
    * this accessory does; a pull arriving mid-hold answers with what HomeKit already holds. Re-registering the handler on every pass is the file's established idiom -
    * registration replaces rather than accumulates.
    */
-  private updateEnvironmentalCharacteristic(options: { characteristic: CharacteristicClass; read: () => Nullable<number>; service: Service; topic: string }): void {
+  private updateEnvironmentalCharacteristic(options: { characteristic: CharacteristicTarget; read: () => Nullable<number>; service: Service; topic: string }): void {
 
     // Retrieve the current reading when requested, honoring a hold.
     options.service.getCharacteristic(options.characteristic).onGet(() => options.read() ?? options.service.getCharacteristic(options.characteristic).value);
@@ -848,56 +838,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     this.publish(options.topic, reading.toString());
   }
 
-  /* Reconcile one presence-driven characteristic against the metric behind it, applying the same additive-eager / subtractive-conservative asymmetry capabilityGate
-   * applies to services, one level down. Four outcomes, from one read of the metric:
-   *
-   * ADD or UPDATE - the metric carries a reading, so the characteristic appears (HomeKit vends it on first access) and takes the current value. There is deliberately no
-   * reachability gate on this half: the guarantee we want is asymmetric, in that the characteristic set never shrinks outside a real loss of the metric, while growth is
-   * welcome the moment data arrives.
-   *
-   * HOLD - the metric is still reporting but has no number at this instant, or the device is unreachable. Nothing is written and nothing is removed, so a momentary null
-   * or an offline window leaves HomeKit showing the last thing the sensor actually said.
-   *
-   * REMOVE - the metric has left liveness entirely while the device is reachable, meaning it genuinely stopped reporting (disabled, failed, or withdrawn by a firmware
-   * update) rather than merely going quiet. Only then does the characteristic go, which keeps the accessory's configuration stable across the transient cases.
-   *
-   * The metric arrives as a read-through rather than a value so the bound handler answers from the record at pull time, exactly as every other characteristic on this
-   * accessory does.
-   */
-  private updatePresenceCharacteristic(options: { characteristic: CharacteristicClass; read: () => ProtectAirQualityMetric; service: Service }): void {
-
-    const metric = options.read();
-
-    if(airQualityMetricReported(metric)) {
-
-      // Retrieve the current reading when requested, honoring a hold: a pull arriving while the metric is between readings answers with what HomeKit already holds
-      // rather than recomputing a value the sensor has not given us.
-      options.service.getCharacteristic(options.characteristic).onGet(() => {
-
-        const current = options.read();
-
-        return airQualityMetricReported(current) ? current.value : options.service.getCharacteristic(options.characteristic).value;
-      });
-
-      // Update the characteristic.
-      options.service.updateCharacteristic(options.characteristic, metric.value);
-
-      return;
-    }
-
-    // A metric that is still reporting, or a device we cannot currently see, holds whatever HomeKit has.
-    if(airQualityMetricLive(metric) || !this.isReachable) {
-
-      return;
-    }
-
-    // Read prior existence side-effect-free; getCharacteristic would lazily materialize the characteristic we are about to remove.
-    if(options.service.testCharacteristic(options.characteristic)) {
-
-      options.service.removeCharacteristic(options.service.getCharacteristic(options.characteristic));
-    }
-  }
-
   /* Read what HomeKit currently holds for one characteristic, resolving the service by type and, where one is given, by subtype.
    *
    * HomeKit's own cached value IS the held state, and this is the single place a read-through reaches for it. hap-nodejs writes a GET handler's answer straight back into
@@ -909,7 +849,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
    * requires - nothing is ever lazily created by this read. A missing service and a never-written characteristic both answer false, which is what HomeKit itself shows
    * for a sensor that has said nothing yet.
    */
-  private heldCharacteristicValue(options: { characteristic: CharacteristicClass; service: WithUUID<typeof Service>; subtype?: string }): boolean {
+  private heldCharacteristicValue(options: { characteristic: CharacteristicTarget; service: WithUUID<typeof Service>; subtype?: string }): boolean {
 
     const service = options.subtype ? this.accessory.getServiceById(options.service, options.subtype) : this.accessory.getService(options.service);
 
@@ -1190,10 +1130,11 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       }
     });
 
-    // The reactive tamper push: when the controller's tamperingDetectedAt changes, re-write StatusTampered across every state-bearing sensor service. The onGet already
-    // reads through, so this is purely the push that keeps HomeKit current between reads.
+    // The reactive tamper push: when the controller's tamperingDetectedAt changes, re-write StatusTampered across every sensor service that carries it, mirroring how
+    // refreshReachability sweeps StatusActive. One read of the projection field, one write per state-bearing service; no second copy of "are we tampered?" is held
+    // anywhere. The onGet already reads through, so this is purely the push that keeps HomeKit current between reads.
     this.observeState({ key: "sensor.tamperingDetectedAt", selector: state => sensor(state)?.tamperingDetectedAt, title: "tamper detection" },
-      () => this.updateTamperState());
+      () => updateServices(this.accessory, this.hap.Characteristic.StatusTampered, this.tampered));
 
     // The reactive alarm-family push: one dedicated observer per alarm-family row, each watching the single latched field its descriptor names and pushing only its own
     // ContactSensorState. Per row rather than one observer over both fields because the controller moves them independently - a glass break advances
@@ -1214,25 +1155,10 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // capability-flip existence reconcile. Decomposing this into per-service observers - which would also retire the StatusTampered re-apply - safe to run more than once
     // - the dedicated tamper observer already owns - is a tracked follow-up; any such retirement MUST first add a sensor.state -> refreshReachability availability
     // observer to preserve the per-device StatusActive push this broad observer currently provides.
-    this.observeState({ key: "sensor.config", selector: sensor, title: "sensor settings" }, () => this.updateDevice());
+    this.observeState({ key: "sensor.config", selector: sensor, title: "sensor settings" }, () => this.updateDevice({ initialized: true }));
   }
 
-  // Push the tamper state across every sensor service that carries StatusTampered, mirroring how refreshReachability fans StatusActive out. One read of the projection
-  // field, one write per state-bearing service; no second copy of "are we tampered?" is held anywhere.
-  private updateTamperState(): void {
-
-    const tampered = this.tampered;
-
-    for(const service of this.accessory.services) {
-
-      if(service.testCharacteristic(this.hap.Characteristic.StatusTampered)) {
-
-        service.updateCharacteristic(this.hap.Characteristic.StatusTampered, tampered);
-      }
-    }
-  }
-
-  // Push one alarm-family row's state to its own contact sensor, the twin-in-idiom of updateTamperState but TARGETED by subtype rather than fanned across every service.
+  // Push one alarm-family row's state to its own contact sensor, TARGETED by subtype rather than swept across every service the way the tamper push is.
   // One read of that row's latched field, one write to that row's service; the transition log is sourced from the row's own subject word so the sentence is
   // correct-by-construction (never a featureFlags.glassBreak probe, which is present even for a glass-break-DISABLED device) and fires only when the service exists (a
   // device with no service for this row never logs). Each row's last narrated reading is held under its own field, so a unit carrying both alarm kinds narrates each

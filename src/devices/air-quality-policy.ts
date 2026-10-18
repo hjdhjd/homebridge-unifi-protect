@@ -4,9 +4,9 @@
  *
  * This module owns every decision the air-quality surface makes about a sensor's readings: whether a metric is reporting at all, whether it carries a usable number, how
  * an AQI reading maps onto HomeKit's air-quality levels, when the controller's configured CO2 threshold is exceeded, when a vape status counts as a detection, and which
- * services a given block of readings can support. It is deliberately pure - `this`-free and free of any device or controller I/O, wire readings in and a boolean or a
- * number out - so the sensor leaf's consumers (the service gates, the characteristic writers, and the air-quality MQTT publish) import it without value-importing a
- * non-leaf module (the device layer's module-structure rule), and each truth table is exhaustively testable without standing up a sensor accessory.
+ * services a given block of readings can support. It is deliberately pure - `this`-free and free of any device or controller I/O, wire readings in and a boolean, a
+ * number, or a presence reading out - so the sensor leaf's consumers (the service gates, the characteristic writers, and the air-quality MQTT publish) import it without
+ * value-importing a non-leaf module (the device layer's module-structure rule), and each truth table is exhaustively testable without standing up a sensor accessory.
  *
  * Why a leaf at all: the air-quality block is twelve metrics wide and every consumer asks a different question of it - the air quality service asks whether any of the
  * metrics HomeKit can model are reporting, the MQTT publish asks whether ANY metric is, each density characteristic asks whether its own metric carries a reading, and
@@ -19,8 +19,8 @@
  * every metric reading { status: "unknown", value: null }. Capability therefore cannot be decided by property presence - the property is always there - so every gate
  * here reads values and statuses instead.
  */
+import type { Nullable, PresenceReading } from "homebridge-plugin-utils";
 import type { ProtectAirQualityMetric, ProtectAirQualityThresholdSettings, ProtectSensorAirQuality } from "unifi-protect";
-import type { Nullable } from "homebridge-plugin-utils";
 
 // The twelve metrics the controller reports, named once. Reading through this list rather than the block's own keys keeps every decision here scoped to the metrics we
 // actually model, since the wire type carries an open index signature that a future firmware could widen underneath us.
@@ -110,6 +110,27 @@ export function airQualityMetricLive(metric: ProtectAirQualityMetric): boolean {
 export function airQualityMetricReported(metric: ProtectAirQualityMetric): metric is ProtectAirQualityMetric & { value: number } {
 
   return metric.value !== null;
+}
+
+/**
+ * Map a metric onto the presence reading a presence-driven characteristic follows.
+ *
+ * A metric carrying a value is reported with that value, whatever its status. A metric with no value that is still live is pending, the sensor momentarily between
+ * readings. Any other metric is absent, having left liveness. The liveness and reporting predicates above are the whole of the rule, so the characteristic and every
+ * other consumer of those predicates agree on what reporting means.
+ *
+ * @param metric - The metric reading to map.
+ *
+ * @returns The presence reading for this metric.
+ */
+export function airQualityMetricReading(metric: ProtectAirQualityMetric): PresenceReading {
+
+  if(airQualityMetricReported(metric)) {
+
+    return { state: "reported", value: metric.value };
+  }
+
+  return airQualityMetricLive(metric) ? { state: "pending" } : { state: "absent" };
 }
 
 /**

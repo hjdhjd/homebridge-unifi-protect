@@ -11,6 +11,7 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { describeDeviceModel } from "./device-descriptor.ts";
 import { deviceSelectors } from "unifi-protect";
+import { validCharacteristic } from "homebridge-plugin-utils";
 
 // Projects one UniFi Protect LoRa fob's fixed button set and battery state onto a HomeKit accessory.
 export class ProtectFob extends ProtectDevice<Fob> {
@@ -99,11 +100,10 @@ export class ProtectFob extends ProtectDevice<Fob> {
     const visible = this.#buttons.filter((button) => selected.has(button.wireId));
     const grouped = visible.length >= 2;
 
-    // Validate the ServiceLabel against the grouping decision - a fob that drops below two visible buttons (an option flip across a restart) has its label removed - then
-    // acquire it and set its namespace when grouped. serviceLabel non-null is the single source of truth for "grouped" through the loop below.
-    this.validService(this.hap.Service.ServiceLabel, grouped);
-
-    const serviceLabel = grouped ? this.acquireService(this.hap.Service.ServiceLabel) : null;
+    // Validate the ServiceLabel against the grouping decision - a fob that drops below two visible buttons (an option flip across a restart) has its label removed, and a
+    // grouped fob acquires it - then set its namespace when grouped. The grouping decision is also the verdict each button's label index follows in the loop below, so
+    // the label is present exactly when the buttons carry an index to link to it.
+    const { service: serviceLabel } = this.validService({ serviceType: this.hap.Service.ServiceLabel, validate: grouped });
 
     if(serviceLabel) {
 
@@ -117,31 +117,30 @@ export class ProtectFob extends ProtectDevice<Fob> {
       const subtype = this.buttonSubtype(button);
 
       // Validate whether this button's switch should exist, gating on the selection resolved above. This prunes exactly this button's subtyped switch when it is left
-      // out of the list.
-      if(!this.validService(this.hap.Service.StatelessProgrammableSwitch, selected.has(button.wireId), subtype)) {
+      // out of the list, and otherwise acquires it, named by the bare security-action label. displayName and the Name characteristic hold that label as the stable
+      // identity hap-nodejs revalidates through checkName on every construction, including cache-restore, where a single-character name would trip it; ConfiguredName
+      // carries the label the controller's active button labeling assigns, which is what the Home app shows for a grouped switch. The create callback initializes
+      // ConfiguredName so a fresh button is born correctly named and the reconcile below stays silent. An unqualified label reads cleanest ("Arm", not "<Fob> Arm"); the
+      // accessory already supplies the fob's context.
+      const { service } = this.validService({ name: button.label,
+        onServiceCreate: (svc) => svc.updateCharacteristic(this.hap.Characteristic.ConfiguredName, this.buttonName(button)),
+        serviceType: this.hap.Service.StatelessProgrammableSwitch, subtype, validate: selected.has(button.wireId) });
+
+      if(!service) {
 
         continue;
       }
 
-      // Acquire the service, named by the bare security-action label. displayName and the Name characteristic hold that label as the stable identity hap-nodejs
-      // revalidates through checkName on every construction, including cache-restore, where a single-character name would trip it; ConfiguredName carries the label the
-      // controller's active button labeling assigns, which is what the Home app shows for a grouped switch. The create callback initializes ConfiguredName so a fresh
-      // button is born correctly named and the reconcile below stays silent. An unqualified label reads cleanest ("Arm", not "<Fob> Arm"); the accessory already supplies
-      // the fob's context.
-      const service = this.acquireService(this.hap.Service.StatelessProgrammableSwitch, button.label, subtype,
-        (svc) => svc.updateCharacteristic(this.hap.Characteristic.ConfiguredName, this.buttonName(button)));
+      // Validate the switch's ServiceLabelIndex against the same grouping decision. Lone visible, a switch restored from a prior grouped configure has its stale index
+      // removed, while a freshly created lone switch is left untouched, so a single-button fob presents no index and links to no label.
+      const transition = validCharacteristic({ characteristic: this.hap.Characteristic.ServiceLabelIndex, service, validate: grouped });
 
-      if(serviceLabel) {
+      // Grouped: stamp the STABLE fixed table index (never the visible-subset position, so hiding an earlier button never renumbers a later one) and link the switch to
+      // the label so HomeKit renders them as one remote. The label exists exactly when the fob is grouped, so a kept or attached index always has one to link to.
+      if(serviceLabel && ((transition === "attached") || (transition === "kept"))) {
 
-        // Grouped: stamp the STABLE fixed table index (never the visible-subset position, so hiding an earlier button never renumbers a later one) and link the switch to
-        // the label so HomeKit renders them as one remote.
         service.updateCharacteristic(this.hap.Characteristic.ServiceLabelIndex, button.index);
         serviceLabel.addLinkedService(service);
-      } else if(service.testCharacteristic(this.hap.Characteristic.ServiceLabelIndex)) {
-
-        // Lone visible: a switch restored from a prior grouped configure carries a stale ServiceLabelIndex, so we drop it. A single-button fob presents no index and
-        // links to no label. The testCharacteristic guard keeps this side-effect-free when no stale index is present, so a freshly-created lone switch is untouched.
-        service.removeCharacteristic(service.getCharacteristic(this.hap.Characteristic.ServiceLabelIndex));
       }
     }
 
@@ -235,7 +234,7 @@ export class ProtectFob extends ProtectDevice<Fob> {
   private configureBatteryService(): void {
 
     // Acquire the service.
-    this.acquireService(this.hap.Service.Battery);
+    this.acquireService({ serviceType: this.hap.Service.Battery });
 
     // Initialize the battery state.
     this.updateBatteryStatus();

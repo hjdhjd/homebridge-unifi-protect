@@ -99,13 +99,13 @@ export class ProtectRelay extends ProtectDevice<Relay> {
 
       // Validate whether we should have this output's switch enabled, gating on the selection resolved above. This prunes exactly this output's subtyped switch when it
       // is left out, leaving the sibling outputs and the accessory intact.
-      if(!this.validService(this.hap.Service.Switch, visible.has((id + 1).toString()), subtype)) {
+      const { service } = this.validService({ name: this.accessoryName + " " + label, serviceType: this.hap.Service.Switch, subtype,
+        validate: visible.has((id + 1).toString()) });
+
+      if(!service) {
 
         continue;
       }
-
-      // Acquire the service.
-      const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " " + label, subtype);
 
       // Read the live controller output state when requested (controller is authority; the observe loop keeps the tile current between reads).
       service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.outputState(id));

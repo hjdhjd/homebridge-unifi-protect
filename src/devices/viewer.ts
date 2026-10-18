@@ -6,9 +6,11 @@ import type { CharacteristicValue, Service } from "homebridge";
 import { deviceSelectors, selectLiveviews } from "unifi-protect";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectAccessory } from "../types.ts";
+import type { ProtectConfigurePass } from "./device.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { Viewer } from "unifi-protect";
+import { membershipDelta } from "homebridge-plugin-utils";
 import { mqttTopics } from "../mqtt.ts";
 
 export class ProtectViewer extends ProtectDevice<Viewer> {
@@ -42,7 +44,7 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
     this.configureInfo();
 
     // Configure accessory services.
-    const enabledLiveviews = this.updateDevice(true);
+    const enabledLiveviews = this.updateDevice({ initialized: false });
 
     // Configure MQTT services.
     this.configureMqtt();
@@ -59,34 +61,34 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
     return true;
   }
 
-  // Update accessory services and characteristics.
-  public updateDevice(configureHandlers = false): string[] {
+  // Update accessory services and characteristics. The first pass binds the handlers of every liveview switch, a switch restored from the accessory cache included,
+  // and a later pass binds only the switches it adds.
+  public updateDevice({ initialized }: Required<Pick<ProtectConfigurePass, "initialized">>): string[] {
 
     // Grab the current list of liveview switches we know about.
     const currentLiveviewSwitches = this.accessory.services.filter(x => (x.UUID === this.hap.Service.Switch.UUID) && x.subtype);
 
-    // Grab the current list of liveview identifiers from the controller, read through the live projection. client.liveviews is always an array, so the list operations
-    // below need no presence guard.
-    const nvrLiveviewIds = this.nvr.client.liveviews.map(x => x.id);
+    // Compare the controller's current liveview identifiers, read through the live projection, against the liveview each switch's subtype names. client.liveviews is
+    // always an array, so the comparison needs no presence guard.
+    const { toAdd, toRemove } = membershipDelta(this.nvr.client.liveviews.map(x => x.id), currentLiveviewSwitches.map(x => x.subtype ?? ""));
 
-    // Identify what's been removed on the controller and remove it from the accessory as well.
-    for(const service of currentLiveviewSwitches.filter(x => !nvrLiveviewIds.includes(x.subtype ?? ""))) {
+    // Remove the switches whose liveview the controller no longer lists, then add a switch for each liveview it newly lists.
+    for(const service of currentLiveviewSwitches.filter(x => toRemove.includes(x.subtype ?? ""))) {
 
       this.accessory.removeService(service);
     }
 
-    // Identify what needs to be added to HomeKit that isn't already there, and add them.
-    this.addLiveviewSwitch(nvrLiveviewIds.filter(x => !currentLiveviewSwitches.filter(liveviewSwitch => liveviewSwitch.subtype === x).length));
+    this.addLiveviewSwitch(toAdd);
 
     // Finally, reflect the state of the liveview that's currently enabled. We loop through the list of services on our viewer accessory and sync the liveview switches.
-    this.updateLiveviewSwitchState(configureHandlers);
+    this.updateLiveviewSwitchState({ initialized });
 
     // Return a list of our available liveviews for this device.
     return this.accessory.services.filter(x => (x.UUID === this.hap.Service.Switch.UUID) && x.subtype).map(x => x.displayName);
   }
 
   // Update the state of liveview switches for viewer devices.
-  private updateLiveviewSwitchState(configureHandlers = false): boolean {
+  private updateLiveviewSwitchState({ initialized }: Required<Pick<ProtectConfigurePass, "initialized">>): boolean {
 
     for(const switchService of this.accessory.services) {
 
@@ -103,17 +105,17 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
       }
 
       // Configure the switch and update the state.
-      this.configureLiveviewSwitch(switchService, configureHandlers);
+      this.configureLiveviewSwitch(switchService, { initialized });
     }
 
     return true;
   }
 
   // Configure the state and handlers of a liveview switch.
-  private configureLiveviewSwitch(switchService: Service, configureHandlers = true): boolean {
+  private configureLiveviewSwitch(switchService: Service, { initialized }: Required<Pick<ProtectConfigurePass, "initialized">>): boolean {
 
     // If we're configuring a switch for the first time, we add our respective handlers.
-    if(configureHandlers) {
+    if(!initialized) {
 
       // Turn the liveview switch on or off.
       switchService.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
@@ -170,9 +172,9 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
       const liveviewName = this.nvr.client.liveviews.find(x => x.id === liveviewId)?.name;
 
       // Acquire the service.
-      const service = this.acquireService(this.hap.Service.Switch, liveviewName, liveviewId);
+      const { service } = this.acquireService({ name: liveviewName, serviceType: this.hap.Service.Switch, subtype: liveviewId });
 
-      this.configureLiveviewSwitch(service);
+      this.configureLiveviewSwitch(service, { initialized: false });
     }
   }
 
@@ -240,10 +242,11 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
 
     // The viewer's active liveview drives which liveview switch reads on. This observe reflects only the active selection - the single switch that shows as on - by
     // re-running updateLiveviewSwitchState; the set of switches itself is reconciled by the liveview-collection observe below.
-    this.observeState({ key: "viewer.liveview", selector: state => viewer(state)?.liveview, title: "the active live view" }, () => this.updateLiveviewSwitchState());
+    this.observeState({ key: "viewer.liveview", selector: state => viewer(state)?.liveview, title: "the active live view" },
+      () => this.updateLiveviewSwitchState({ initialized: true }));
 
     // The controller's liveview collection drives which switches this viewer exposes. Re-run the full reconcile whenever that collection changes, so the switch set
     // stays in step with the liveviews the controller offers. (The viewer.liveview observe above handles the active-selection reflection.)
-    this.observeState({ key: "nvr.liveviews", selector: selectLiveviews, title: "the live view list" }, () => this.updateDevice());
+    this.observeState({ key: "nvr.liveviews", selector: selectLiveviews, title: "the live view list" }, () => this.updateDevice({ initialized: true }));
   }
 }

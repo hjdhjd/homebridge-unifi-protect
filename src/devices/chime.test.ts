@@ -197,7 +197,7 @@ describe("real ProtectChime construction and play behavior", () => {
 
     assert.equal(projection.playBuzzerCalls.length, 1, "the real playTone dispatched a single playBuzzer call with no ringtone join");
     assert.equal(projection.playSpeakerCalls.length, 0, "the buzzer never dispatches to the speaker");
-    assert.deepEqual(mqtt.published, [{ payload: "buzzer", topic: projection.config.mac + "/tone" }],
+    assert.deepEqual(mqtt.published, [{ payload: "buzzer", retain: false, topic: projection.config.mac + "/tone" }],
       "an accepted buzzer publishes its tone name on the device-scoped topic");
     assert.ok(loggedAt(logEntries, "info", "Playing buzzer."), "the Playing info log fired for the buzzer");
     assert.equal(await buzzerSwitch.getCharacteristic(Characteristic.On).triggerGet(), true, "the On getter reads the armed play-timer");

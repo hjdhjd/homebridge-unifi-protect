@@ -4,9 +4,10 @@
  */
 import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext } from "../types.ts";
-import { acquireService, sanitizeName, validService } from "homebridge-plugin-utils";
+import { sanitizeName, validService } from "homebridge-plugin-utils";
 import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectBase } from "../devices/device-base.ts";
+import type { ProtectConfigurePass } from "../devices/device.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { mqttTopics } from "../mqtt.ts";
 import { selectNvr } from "unifi-protect";
@@ -41,7 +42,8 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     // a systemInfo change - never on the lastSeen/storage churn the whole NVR record carries - and the store yields only on change, so the constructor's initial pass
     // above stands on its own and this loop handles only subsequent updates. It binds to the controller lifetime (ProtectBase.observeSignal) and re-reads through
     // this.nvr.ufp rather than trusting the yielded slice.
-    this.observeState({ key: "nvr.systemInfo", selector: state => selectNvr(state)?.systemInfo, title: "system information" }, () => this.updateDevice(false));
+    this.observeState({ key: "nvr.systemInfo", selector: state => selectNvr(state)?.systemInfo, title: "system information" },
+      () => this.updateDevice({ initialized: true }));
   }
 
   // Configure the NVR system information accessory.
@@ -103,7 +105,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     this.setInfo(this.accessory, this.nvr.ufp);
 
     // Configure accessory services.
-    const enabledSensors = this.updateDevice(true);
+    const enabledSensors = this.updateDevice({ initialized: false });
 
     // Inform the user what we're enabling on startup.
     if(enabledSensors.length) {
@@ -117,14 +119,14 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     this.isConfigured = true;
   }
 
-  // Update accessory services and characteristics. Private: both callers are this class - the constructor's initial pass (handler flag set) and this owner's own
-  // systemInfo observer (handler flag clear, for the per-change characteristic refresh).
-  private updateDevice(configureHandler = false): string[] {
+  // Update accessory services and characteristics. Private: every caller is this class - the constructor's initial pass, which binds the handlers, and this owner's
+  // own systemInfo observer, a later pass that refreshes the characteristic on each change.
+  private updateDevice({ initialized }: Required<Pick<ProtectConfigurePass, "initialized">>): string[] {
 
     const enabledSensors: string[] = [];
 
     // Configure the temperature sensor.
-    if(this.configureTemperatureSensor(configureHandler)) {
+    if(this.configureTemperatureSensor({ initialized })) {
 
       enabledSensors.push("cpu temperature");
     }
@@ -133,7 +135,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
   }
 
   // Configure the temperature sensor for HomeKit.
-  private configureTemperatureSensor(configureHandler: boolean): boolean {
+  private configureTemperatureSensor({ initialized }: Required<Pick<ProtectConfigurePass, "initialized">>): boolean {
 
     // Ensure we have an accessory before we do anything else.
     if(!this.accessory) {
@@ -142,16 +144,16 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     }
 
     // Validate the service.
-    if(!validService(this.accessory, this.hap.Service.TemperatureSensor, this.nvr.hasFeature("NVR.SystemInfo"))) {
+    const { service } = validService({ accessory: this.accessory, name: this.accessory.displayName + " CPU Temperature", serviceType: this.hap.Service.TemperatureSensor,
+      validate: this.nvr.hasFeature("NVR.SystemInfo") });
+
+    if(!service) {
 
       return false;
     }
 
-    // Acquire the service.
-    const service = acquireService(this.accessory, this.hap.Service.TemperatureSensor, this.accessory.displayName + " CPU Temperature");
-
     // If we're configuring for the first time, we add our respective handlers.
-    if(configureHandler) {
+    if(!initialized) {
 
       // Retrieve the current temperature when requested.
       service.getCharacteristic(this.hap.Characteristic.CurrentTemperature).onGet(() => this.nvr.ufp.systemInfo.cpu.temperature);

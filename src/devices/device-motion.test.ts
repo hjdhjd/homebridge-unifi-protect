@@ -55,8 +55,9 @@ const controllers: AbortController[] = [];
 // all-quiet sensor carrier and the recording dispatch injected through the NVR double's dispatch parameter. The casts are confined to the point of construction exactly
 // as the light / chime suites do; the instance under test is the production base, running its real configureHints / configureMotionSensor / configureOccupancySensor
 // paths. We drive the wiring a family leaf would: configureHints first (the motion configurators read this.hints), then the base's motion-capability configurators with
-// isEnabled true. The userOptions thread into the REAL FeatureOptions engine, so the Enable.Motion.* strings - and only those - materialize the services.
-function buildMotionDevice(harnessOptions: { userOptions?: string[] } = {}): {
+// enabled true. The userOptions thread into the REAL FeatureOptions engine, so the Enable.Motion.* strings - and only those - materialize the services. seedAccessory,
+// when supplied, runs against the fresh accessory before construction, standing in for the services a Homebridge restart restores from the accessory cache.
+function buildMotionDevice(harnessOptions: { seedAccessory?: (accessory: TestAccessory) => void; userOptions?: string[] } = {}): {
   accessory: TestAccessory; device: TestBaseDevice; logEntries: TestLogEntry[]; mqtt: TestMqttClient; recording: TestRecordingDispatch;
 } {
 
@@ -74,6 +75,8 @@ function buildMotionDevice(harnessOptions: { userOptions?: string[] } = {}): {
   // assertions.
   accessory.context["mac"] = sensorConfig.mac;
 
+  harnessOptions.seedAccessory?.(accessory);
+
   const projection = new TestSensorProjection(sensorConfig.id, store) as unknown as Sensor;
   const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
 
@@ -85,11 +88,11 @@ function buildMotionDevice(harnessOptions: { userOptions?: string[] } = {}): {
   }
 
   // Wire the base capabilities the way a family leaf does: hints first (the motion configurators read this.hints), then the motion sensor (which configures the switch /
-  // trigger) and the occupancy sensor. isEnabled is true; whether each switch / service actually materializes is then governed entirely by the Enable.Motion.*
+  // trigger) and the occupancy sensor. enabled is true; whether each switch / service actually materializes is then governed entirely by the Enable.Motion.*
   // userOptions.
   device.configureHintsFor();
-  device.configureMotionSensorFor(true);
-  device.configureOccupancySensorFor(true);
+  device.configureMotionSensorFor({ enabled: true });
+  device.configureOccupancySensorFor({ enabled: true });
 
   return { accessory, device, logEntries, mqtt, recording };
 }
@@ -280,9 +283,8 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
     test("an occupancy service created during a steady-state reconcile runs its full init block", async () => {
 
       // Motion.OccupancySensor must be enabled so validService re-creates the service on the enable. The constructor's first configure stands the service up and
-      // registers its GET; a disable removes it, and a steady-state reconcile (isInitialized TRUE, the shape a runtime enable takes) re-creates the service. The
-      // acquireService onServiceCreate callback resets isInitialized to false on that re-creation, which is what makes the init block run again rather than being
-      // skipped.
+      // registers its GET; a disable removes it, and a steady-state reconcile (initialized TRUE, the shape a runtime enable takes) re-creates the service. The attached
+      // transition that re-creation answers is what makes the init block run again rather than being skipped.
       const built = buildMotionDevice({ userOptions: ["Enable.Motion.OccupancySensor"] });
 
       device = built.device;
@@ -290,11 +292,11 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       const occupancyGets = (): number => built.mqtt.subscriptions.filter((subscription) => (subscription.kind === "get") && (subscription.topic ===
         (SENSOR_MAC + "/occupancy/get"))).length;
 
-      built.device.configureOccupancySensorFor(false, false);
+      built.device.configureOccupancySensorFor({ enabled: false, initialized: false });
 
       const baseline = occupancyGets();
 
-      built.device.configureOccupancySensorFor(true, true);
+      built.device.configureOccupancySensorFor({ enabled: true, initialized: true });
 
       const occupancy = built.accessory.getService(Service.OccupancySensor);
 
@@ -334,13 +336,13 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       built.hints.smartDetect = true;
 
       // The first configure resolves the single smart-occupancy type.
-      built.configureOccupancySensorFor(true, false);
+      built.configureOccupancySensorFor({ enabled: true, initialized: false });
 
       assert.deepEqual(built.hints.smartOccupancy, ["person"], "the first configure resolved the single smart-occupancy type");
 
       // Disable, then reconcile-create so the init block runs a SECOND time; the reset must keep the resolved list free of duplicates.
-      built.configureOccupancySensorFor(false, false);
-      built.configureOccupancySensorFor(true, true);
+      built.configureOccupancySensorFor({ enabled: false, initialized: false });
+      built.configureOccupancySensorFor({ enabled: true, initialized: true });
 
       assert.deepEqual(built.hints.smartOccupancy, ["person"], "the re-created service repopulated smartOccupancy from empty rather than accumulating a duplicate");
     });
@@ -375,8 +377,8 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       built.configureHintsFor();
       built.hints.smartDetect = true;
-      built.configureMotionSensorFor(true);
-      built.configureOccupancySensorFor(true);
+      built.configureMotionSensorFor({ enabled: true });
+      built.configureOccupancySensorFor({ enabled: true });
 
       // The wrapper answered in the domain's own spelling, which for a camera's reported detection types is the wire casing the controller sends.
       assert.deepEqual(built.hints.smartOccupancy, ["person"], "the canonical selection resolves to the wire-cased type the controller delivers");
@@ -441,6 +443,92 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       motionService.updateCharacteristic(Characteristic.MotionDetected, true);
 
       assert.equal(await built.mqtt.invokeGet(motionTopic + "/get"), "true", "the motion get reflects the flipped MotionDetected state (true)");
+    });
+  });
+
+  /* The first-time setup across configure passes. A runtime reconfigure runs as a later pass (initialized true), and on it the setup - the MQTT registrations, the
+   * StatusActive read-through, and the initial values - runs only for a service that pass created; a service the pass finds standing keeps the registrations it already
+   * has. The MQTT double records every registration, so a second one is directly countable.
+   */
+  describe("the motion and occupancy setup across configure passes", () => {
+
+    // The count of MQTT registrations of one kind on one MAC-scoped topic.
+    const registrations = (mqtt: TestMqttClient, kind: "get" | "set", tail: string): number => {
+
+      return mqtt.subscriptions.filter((subscription) => (subscription.kind === kind) && (subscription.topic === (SENSOR_MAC + tail))).length;
+    };
+
+    test("a first pass over sensors restored from the accessory cache runs their full setup", () => {
+
+      // A Homebridge restart restores each service with none of its handlers or MQTT registrations, so the first pass answers kept and still sets each one up.
+      const built = buildMotionDevice({ seedAccessory: (accessory) => {
+
+        accessory.addService(Service.MotionSensor, "Test Sensor");
+        accessory.addService(Service.OccupancySensor, "Test Sensor");
+      }, userOptions: ["Enable.Motion.OccupancySensor"] });
+
+      device = built.device;
+
+      assert.equal(built.accessory.services.filter((service) => service.type === Service.MotionSensor).length, 1, "the first pass kept the restored motion service");
+      assert.equal(registrations(built.mqtt, "get", "/motion/get"), 1, "the restored motion service registered its motion MQTT get");
+      assert.equal(registrations(built.mqtt, "set", "/motion/set"), 1, "the restored motion service registered its motion MQTT set");
+      assert.equal(registrations(built.mqtt, "get", "/occupancy/get"), 1, "the restored occupancy service registered its occupancy MQTT get");
+    });
+
+    test("a motion service created during a steady-state reconcile runs its full setup", async () => {
+
+      const built = buildMotionDevice();
+
+      device = built.device;
+
+      // Disable the sensor, which removes the service, then run the shape a runtime enable takes (initialized true). The attached transition the re-creation answers
+      // is what runs the setup again.
+      built.device.configureMotionSensorFor({ enabled: false, initialized: false });
+
+      const getBaseline = registrations(built.mqtt, "get", "/motion/get");
+      const setBaseline = registrations(built.mqtt, "set", "/motion/set");
+
+      built.device.configureMotionSensorFor({ enabled: true, initialized: true });
+
+      const motion = built.accessory.getService(Service.MotionSensor);
+
+      assert.ok(motion, "the reconcile re-created the motion service");
+      assert.equal(registrations(built.mqtt, "get", "/motion/get") - getBaseline, 1, "the re-created service registered its motion MQTT get once");
+      assert.equal(registrations(built.mqtt, "set", "/motion/set") - setBaseline, 1, "the re-created service registered its motion MQTT set once");
+      assert.equal(await motion.getCharacteristic(Characteristic.StatusActive).triggerGet(), true,
+        "StatusActive carries an onGet reading isReachable after the re-creation");
+    });
+
+    test("a steady-state reconcile over a standing motion service registers nothing a second time", () => {
+
+      const built = buildMotionDevice();
+
+      device = built.device;
+
+      assert.equal(registrations(built.mqtt, "get", "/motion/get"), 1, "the first pass registered the motion MQTT get once");
+      assert.equal(registrations(built.mqtt, "set", "/motion/set"), 1, "the first pass registered the motion MQTT set once");
+
+      // The service is standing, so the later pass answers kept and leaves the registrations the first pass made.
+      built.device.configureMotionSensorFor({ enabled: true, initialized: true });
+
+      assert.ok(built.accessory.getService(Service.MotionSensor), "the motion service is still standing");
+      assert.equal(registrations(built.mqtt, "get", "/motion/get"), 1, "the reconcile did not register a second motion MQTT get");
+      assert.equal(registrations(built.mqtt, "set", "/motion/set"), 1, "the reconcile did not register a second motion MQTT set");
+    });
+
+    test("a steady-state reconcile over a standing occupancy service registers its MQTT get only once", () => {
+
+      const built = buildMotionDevice({ userOptions: ["Enable.Motion.OccupancySensor"] });
+
+      device = built.device;
+
+      assert.equal(registrations(built.mqtt, "get", "/occupancy/get"), 1, "the first pass registered the occupancy MQTT get once");
+
+      // The service is standing, so the later pass answers kept and leaves the registration the first pass made.
+      built.device.configureOccupancySensorFor({ enabled: true, initialized: true });
+
+      assert.ok(built.accessory.getService(Service.OccupancySensor), "the occupancy service is still standing");
+      assert.equal(registrations(built.mqtt, "get", "/occupancy/get"), 1, "the reconcile did not register a second occupancy MQTT get");
     });
   });
 });

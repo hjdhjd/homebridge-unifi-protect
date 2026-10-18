@@ -249,7 +249,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       this.log.info("Enabled doorbell message switch%s: %s.", entry.duration ? " (" + (entry.duration / 1000).toString() + " seconds)" : "", entry.text);
 
       // Acquire the service. Each message cannot exceed 30 characters, but given that HomeKit allows for strings to be up to 64 characters long, this should be fine.
-      const service = this.acquireService(this.hap.Service.Switch, entry.text, switchIndex);
+      const { service } = this.acquireService({ name: entry.text, serviceType: this.hap.Service.Switch, subtype: switchIndex });
 
       const duration = "duration" in entry ? entry.duration : this.defaultMessageDuration;
 
@@ -439,13 +439,13 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
       // Validate whether we should have this service enabled.
       // If we don't have the physical capabilities or the feature option enabled, disable the switch and we're done.
-      if(!this.validService(this.hap.Service.Switch, this.ufp.featureFlags.hasChime && this.hasFeature("Doorbell.PhysicalChime"), physicalChimeType)) {
+      const { service } = this.validService({ name: this.accessoryName + " Physical Chime " + toStartCase(chimeSetting), serviceType: this.hap.Service.Switch,
+        subtype: physicalChimeType, validate: this.ufp.featureFlags.hasChime && this.hasFeature("Doorbell.PhysicalChime") });
+
+      if(!service) {
 
         continue;
       }
-
-      // Acquire the service.
-      const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Physical Chime " + toStartCase(chimeSetting), physicalChimeType);
 
       // Get the current status of the physical chime mode on the doorbell.
       service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
@@ -509,13 +509,13 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
   private configureProtectChimeLightbulb(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Lightbulb, this.hasFeature("Doorbell.Volume.Dimmer"), ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)) {
+    const { service } = this.validService({ name: this.accessoryName + " Chime Volume", serviceType: this.hap.Service.Lightbulb,
+      subtype: ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME, validate: this.hasFeature("Doorbell.Volume.Dimmer") });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Lightbulb, this.accessoryName + " Chime Volume", ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME);
 
     // Turn the chime on or off.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.chimeVolume > 0);
@@ -552,14 +552,14 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // Validate whether we should have this service enabled.
     // The authentication contact sensor is disabled by default unless the user enables it. We only make it available if we have at least one of the
     // fingerprint sensor or the NFC sensor available.
-    if(!this.validService(this.hap.Service.ContactSensor, this.hasFeature("Doorbell.AuthSensor") && (this.ufp.enableNfc || this.ufp.featureFlags.hasFingerprintSensor),
-      ProtectReservedNames.CONTACT_AUTHSENSOR)) {
+    const { service } = this.validService({ name: this.accessoryName + " Authenticated", serviceType: this.hap.Service.ContactSensor,
+      subtype: ProtectReservedNames.CONTACT_AUTHSENSOR,
+      validate: this.hasFeature("Doorbell.AuthSensor") && (this.ufp.enableNfc || this.ufp.featureFlags.hasFingerprintSensor) });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.ContactSensor, this.accessoryName + " Authenticated", ProtectReservedNames.CONTACT_AUTHSENSOR);
 
     // Initialize the authentication contact sensor.
     service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);

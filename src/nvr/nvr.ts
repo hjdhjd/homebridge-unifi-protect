@@ -3,8 +3,8 @@
  * nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP } from "homebridge";
-import { APIEvent, createMqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, mqttConnectionSettings, prefixedLog, retry,
-  sanitizeName, superviseLoop } from "homebridge-plugin-utils";
+import { APIEvent, createMqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, membershipDelta, mqttConnectionSettings, prefixedLog,
+  retry, sanitizeName, superviseLoop } from "homebridge-plugin-utils";
 import type { Camera, CollectionSelectors, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload,
   LivestreamRecoveryStartedPayload, ProtectDeviceConfig, ProtectDeviceConfigMap, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, deviceSelectors, channels as protectChannels } from "unifi-protect";
@@ -12,7 +12,7 @@ import type { HomebridgePluginLogging, MqttClient, Nullable } from "homebridge-p
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnostics.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_CONTROLLER_DISABLED_SETTLE_DELAY, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, ProtectDevices, ProtectProjectionMap } from "../types.ts";
-import { canTransition, countActiveRecordingViews, createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected, membershipDelta,
+import { canTransition, countActiveRecordingViews, createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected,
   shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describeDevice, describeDeviceModel } from "../devices/device-descriptor.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";

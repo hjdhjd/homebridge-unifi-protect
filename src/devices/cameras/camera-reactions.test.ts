@@ -18,12 +18,13 @@
  * existence assertion (a non-optional assert.ok, so an absent service throws here rather than letting a later optional-chained assertion pass vacuously) and pairs with a
  * without-gate test that proves the same push produces nothing when the precondition is omitted.
  *
- * Two writes are honestly out of this suite's reach and left uncovered, NOT asserted: the night-vision operating-mode write (camera.ts, gated on
- * this.hints.nightVision through the CameraOperatingMode service) and the status-indicator operating-mode write (camera.ts, the CameraOperatingModeIndicator on
- * the same service). CameraOperatingMode is never created in this harness: the plugin never acquireService's it - it only ever getService-reads it - and the HAP
- * CameraController that does create it, as a side effect of configureController, is replaced by the stub streaming-delegate factory, so those writes target an absent
- * service and cannot be made non-vacuous here. The night-vision-dimmer onSet, the status-LED-switch onSet, and the
- * recording-switch onSet all route through runDeviceCommand -> device.update and belong to the projection command surface - this suite drives none of them.
+ * The per-field operating-mode pushes are left uncovered, NOT asserted: the night-vision push (camera.ts, gated on this.hints.nightVision through the
+ * CameraOperatingMode service) and the status-indicator push (camera.ts, the CameraOperatingModeIndicator on the same service). CameraOperatingMode exists in this
+ * harness only where a test seeds it onto the accessory before construction: the plugin never acquireService's it - it only ever getService-reads it - and the HAP
+ * CameraController that does create it, as a side effect of configureController, is replaced by the stub streaming-delegate factory. The camera-details rows seed it,
+ * the way a restart restores it from the accessory cache, to drive configureCameraDetails' gates and the handlers they bind. The night-vision-dimmer onSet, the
+ * status-LED-switch onSet, and the recording-switch onSet all route through runDeviceCommand -> device.update and belong to the projection command surface - this
+ * suite drives none of them.
  *
  * Each construction holds no observer-wake subscription except where a reaction's identity is the wake KEY itself (the videoCodec reaction, whose only observable output
  * is "the right observer woke and the streaming reconcile re-derived"); the rest assert the characteristic effect directly. Every constructed camera is unwound through
@@ -31,7 +32,7 @@
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, settle } from "../../testing.helpers.ts";
-import type { TestAccessory, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import type { CharacteristicType, TestAccessory, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { TestRecordingDispatch, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
@@ -68,6 +69,7 @@ interface BuiltCamera<C extends ProtectCamera = ProtectCamera> {
   factory: TestStreamingDelegateFactory;
   logEntries: TestLogEntry[];
   nvr: TestProtectNvr;
+  projection: TestCameraProjection;
   recording: TestRecordingDispatch;
 }
 
@@ -76,9 +78,11 @@ interface BuiltCamera<C extends ProtectCamera = ProtectCamera> {
 // projection, and a fresh accessory. The casts are confined to construction - the instance is the production ProtectCamera and everything it runs is the production path.
 // The returned controller is the harness AbortController the afterEach aborts to unwind the observe loops. seedLastMotion, when supplied, is committed to the store
 // record BEFORE the camera is constructed, so the lastMotion observer seeds its baseline against an already-present value - the bootstrap-hydration case where a value
-// present at subscribe must never fire.
+// present at subscribe must never fire. seedAccessory, when supplied, runs against the fresh accessory before construction, standing in for the services and context a
+// Homebridge restart restores from the accessory cache.
 async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { construct?: (nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera) => C;
-  featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>; seedLastMotion?: number; userOptions?: string[]; } = {}): Promise<BuiltCamera<C>> {
+  featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>; seedAccessory?: (accessory: TestAccessory) => void; seedLastMotion?: number;
+  userOptions?: string[]; } = {}): Promise<BuiltCamera<C>> {
 
   const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, ...(options.featureFlags ? { featureFlags: options.featureFlags } : {}) });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
@@ -98,6 +102,8 @@ async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { c
   const recording = nvr.events as TestRecordingDispatch;
   const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
 
+  options.seedAccessory?.(accessory);
+
   // How the camera under test is constructed, mirroring makeTestNvr's own dispatch factory: omitted, it is the plain production ProtectCamera every other arm builds,
   // so those are unchanged. The reboot-return watch's describe supplies a subclass that adds one read over an inherited protected member and overrides no behavior, so
   // the instance under test is still the production class running production paths.
@@ -105,13 +111,13 @@ async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { c
 
     return new ProtectCamera(innerNvr, innerAccessory, innerDevice) as C;
   });
-  const camera = construct(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, new TestCameraProjection(cameraConfig.id, store) as unknown as
-    Camera);
+  const projection = new TestCameraProjection(cameraConfig.id, store);
+  const camera = construct(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
 
   // Settle the floating configure IIFE and the observe loops' lazy registration before any push so the camera is fully wired when the reaction is driven.
   await settle();
 
-  return { accessory, camera, cameraConfig, controller, factory, logEntries, nvr, recording };
+  return { accessory, camera, cameraConfig, controller, factory, logEntries, nvr, projection, recording };
 }
 
 describe("camera-family observer reactions and bound read handlers (camera-reactions concern net)", () => {
@@ -304,6 +310,76 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       assert.equal(motionService.testCharacteristic(Characteristic.StatusTampered), false,
         "without hasTamperDetection the enableTamperDetection push never materializes StatusTampered - the hardware half of the gate held");
     });
+  });
+
+  /* The camera details: configureCameraDetails gates the status indicator and night vision characteristics on the CameraOperatingMode service, each on HKSV capability
+   * and its own hint. Each row seeds the service before construction, the way a restart restores it from the accessory cache, and a seeded characteristic carries a
+   * cached true while the camera's live state reads false. A pull proves a bound handler only when the cached value differs from the live answer, so a row plants that
+   * stale value again after construction before it pulls.
+   */
+  describe("the camera details on a seeded CameraOperatingMode service", () => {
+
+    // Each characteristic the camera details gate, with the hardware flag its hint follows and the device command its set handler issues for a true set.
+    const details: { characteristic: CharacteristicType; featureFlags: Partial<ProtectCameraConfig["featureFlags"]>; label: string; payload: unknown }[] = [
+
+      { characteristic: Characteristic.CameraOperatingModeIndicator, featureFlags: { hasLedStatus: true }, label: "status indicator",
+        payload: { ledSettings: { isEnabled: true } } },
+      { characteristic: Characteristic.NightVision, featureFlags: { hasInfrared: true }, label: "night vision", payload: { ispSettings: { irLedMode: "auto" } } }
+    ];
+
+    // Seed the operating-mode service, and with it the characteristic at a stale cached true when the row restores one.
+    const seedOperatingMode = (characteristic: CharacteristicType, seeded: boolean): ((accessory: TestAccessory) => void) => (accessory: TestAccessory): void => {
+
+      const operatingMode = accessory.addService(Service.CameraOperatingMode, "Test Camera");
+
+      if(seeded) {
+
+        operatingMode.updateCharacteristic(characteristic, true);
+      }
+    };
+
+    for(const { characteristic, featureFlags, label, payload } of details) {
+
+      for(const seeded of [ true, false ]) {
+
+        const origin = seeded ? "restored from the accessory cache" : "attached by the camera";
+
+        test("with its condition holding, the " + label + " characteristic " + origin + " is bound and initialized", async () => {
+
+          built = await buildCamera({ featureFlags, seedAccessory: seedOperatingMode(characteristic, seeded) });
+
+          const operatingMode = built.accessory.getService(Service.CameraOperatingMode);
+
+          assert.ok(operatingMode, "the seeded CameraOperatingMode service is on the accessory");
+          assert.equal(operatingMode.testCharacteristic(characteristic), true, "the " + label + " characteristic is present");
+
+          const detail = operatingMode.getCharacteristic(characteristic);
+
+          assert.deepEqual(detail.writes, seeded ? [ true, false ] : [false], "the configure wrote the live " + label + " state as the initial value");
+
+          // Plant the stale cached value again, so only a bound handler can answer the live state.
+          detail.updateValue(true);
+
+          assert.equal(await detail.triggerGet(), false, "a pull answers the live " + label + " state rather than the stale cached value");
+
+          await detail.triggerSet(true);
+
+          assert.deepEqual(built.projection.updateCalls, [{ payload }], "the " + label + " set handler issued the device command");
+        });
+
+        test("with its condition not holding, the " + label + " characteristic is absent when " + (seeded ? "restored from the accessory cache" : "never present"),
+          async () => {
+
+            // No hardware flag is set, so the hint the condition reads is off.
+            built = await buildCamera({ seedAccessory: seedOperatingMode(characteristic, seeded) });
+
+            const operatingMode = built.accessory.getService(Service.CameraOperatingMode);
+
+            assert.ok(operatingMode, "the seeded CameraOperatingMode service is on the accessory");
+            assert.equal(operatingMode.testCharacteristic(characteristic), false, "the " + label + " characteristic is absent");
+          });
+      }
+    }
   });
 
   describe("the isp -> night-vision DIMMER reaction (On + Brightness)", () => {
@@ -506,6 +582,70 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       assert.equal(built.accessory.context["doorbellMuted"], false, "onSet false un-muted the doorbell by clearing the context flag");
       assert.equal(await onChar.triggerGet(), false, "the onGet reflects the un-muted state");
+    });
+  });
+
+  /* The doorbell switches' tie to the Doorbell service. A plain camera carries a Doorbell service only when the trigger option stands one up, and the mute switch is
+   * created only beside one, so a plain camera with the mute option on and the trigger off is the state the mute rows drive. The trigger's gate creates its switch on
+   * an enabling verdict, so the camera stands its Doorbell service up first: the trigger's row asserts the Doorbell service precedes the switch among the accessory's
+   * services, and the name the switch carries. With the option off, the trigger's disabled path removes a restored switch and the Doorbell service beside it from a
+   * plain camera.
+   */
+  describe("the doorbell trigger and mute switches on a camera's Doorbell service", () => {
+
+    test("a plain camera with the mute option on but no Doorbell service gains no mute switch and carries no muted state", async () => {
+
+      // The context reset seeds the muted state for the enabled option, so its absence afterward is the gate's own clearing.
+      built = await buildCamera({ userOptions: ["Enable.Doorbell.Mute"] });
+
+      assert.equal(built.accessory.getService(Service.Doorbell), undefined, "a plain camera without the trigger option carries no Doorbell service");
+      assert.equal(built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_MUTE), undefined,
+        "no mute switch is created while the camera carries no Doorbell service");
+      assert.equal("doorbellMuted" in built.accessory.context, false, "the muted state is cleared when the mute switch cannot be configured");
+    });
+
+    test("a mute switch already on a camera with no Doorbell service is left in place, and the muted state still clears", async () => {
+
+      // A mute switch and a saved muted state restored from the accessory cache onto a camera that carries no Doorbell service.
+      built = await buildCamera({ seedAccessory: (accessory) => {
+
+        accessory.addService(Service.Switch, "Test Camera Doorbell Mute", ProtectReservedNames.SWITCH_DOORBELL_MUTE);
+        accessory.context["doorbellMuted"] = true;
+      }, userOptions: ["Enable.Doorbell.Mute"] });
+
+      assert.equal(built.accessory.getService(Service.Doorbell), undefined, "a plain camera without the trigger option carries no Doorbell service");
+      assert.ok(built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_MUTE),
+        "the gate keeps a mute switch already present while the camera carries no Doorbell service");
+      assert.equal("doorbellMuted" in built.accessory.context, false, "the muted state is cleared when the mute switch cannot be configured");
+    });
+
+    test("a plain camera with the trigger option stands up the Doorbell service ahead of the trigger switch, named after the camera", async () => {
+
+      built = await buildCamera({ userOptions: ["Enable.Doorbell.Trigger"] });
+
+      const doorbell = built.accessory.getService(Service.Doorbell);
+      const trigger = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
+
+      assert.ok(doorbell, "the trigger option stands up a Doorbell service on a plain camera");
+      assert.ok(trigger, "the trigger option materializes the doorbell trigger switch");
+      assert.ok(built.accessory.services.indexOf(doorbell) < built.accessory.services.indexOf(trigger),
+        "the Doorbell service joins the accessory ahead of the trigger switch");
+      assert.equal(trigger.displayName, "Test Camera Doorbell Trigger", "the trigger switch carries the camera's name and its role");
+    });
+
+    test("a plain camera with the trigger option off drops a restored trigger switch and the Doorbell service beside it", async () => {
+
+      // A trigger switch and the Doorbell service it stood up, restored from the accessory cache onto a camera the controller does not report as a doorbell.
+      built = await buildCamera({ seedAccessory: (accessory) => {
+
+        accessory.addService(Service.Doorbell, "Test Camera");
+        accessory.addService(Service.Switch, "Test Camera Doorbell Trigger", ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
+      } });
+
+      assert.equal(built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER), undefined,
+        "the trigger's gate removes the restored trigger switch");
+      assert.equal(built.accessory.getService(Service.Doorbell), undefined,
+        "the trigger's disabled path removes the Doorbell service from a camera that is not a doorbell");
     });
   });
 

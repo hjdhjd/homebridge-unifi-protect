@@ -68,7 +68,7 @@ export class ProtectLight extends ProtectDevice<Light> {
   private configureLightbulb(): void {
 
     // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Lightbulb);
+    const { service } = this.acquireService({ serviceType: this.hap.Service.Lightbulb });
 
     // Turn the light on or off.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {

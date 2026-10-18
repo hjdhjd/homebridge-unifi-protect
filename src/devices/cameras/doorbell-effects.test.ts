@@ -267,7 +267,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.deepEqual(served.updateCalls, [{ payload: { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 70 }] } }],
         "the PATCH carries one ring entry: this doorbell's ring spread with only the volume changed to 70");
-      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "70", topic: chimeTopic }],
+      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "70", retain: false, topic: chimeTopic }],
         "the new volume is published once on the chime topic after the write is accepted");
       assert.ok(!loggedAt(built.logEntries, "error", "Unable to set the chime volume"), "an accepted write logs no failure");
     });
@@ -292,7 +292,8 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.deepEqual(served.updateCalls, [{ payload: { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 0 }] } }],
         "a negative volume clamps to zero in the written ring PATCH");
-      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "0", topic: chimeTopic }], "the clamped value is what we publish");
+      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "0", retain: false, topic: chimeTopic }],
+        "the clamped value is what we publish");
     });
 
     test("every chime serving this doorbell is written, and the volume is published exactly once", async () => {
@@ -315,7 +316,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.equal(servedA.updateCalls.length, 1, "the first chime serving this doorbell is written");
       assert.equal(servedB.updateCalls.length, 1, "the second chime serving this doorbell is written");
-      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "55", topic: chimeTopic }],
+      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "55", retain: false, topic: chimeTopic }],
         "the volume is published exactly once after every assigned chime accepts the write");
     });
 
@@ -338,7 +339,8 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.equal(foreignProjection.updateCalls.length, 0, "the chime that does not list this doorbell is filtered out and never written");
       assert.equal(servedProjection.updateCalls.length, 1, "only the chime that serves this doorbell is written");
-      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "45", topic: chimeTopic }], "the volume is published once");
+      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "45", retain: false, topic: chimeTopic }],
+        "the volume is published once");
     });
 
     test("a chime serving this doorbell but carrying no ring for it is skipped without a write", async () => {
@@ -360,7 +362,8 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.equal(noRingProjection.updateCalls.length, 0, "the chime listing the doorbell but with no ring for it is skipped; the loop continues to the next");
       assert.equal(servedProjection.updateCalls.length, 1, "the chime carrying a ring for this doorbell is written");
-      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "35", topic: chimeTopic }], "the volume is published once");
+      assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "35", retain: false, topic: chimeTopic }],
+        "the volume is published once");
     });
 
     test("the first failed write early-returns: no later chime is written, nothing is published, and the failure is logged", async () => {
@@ -516,7 +519,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         assert.deepEqual(served.updateCalls, [{ payload: { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "default", volume: 70 }] } }],
           "the valid /chime SET routed the volume to the Lightbulb, driving one served-chime ring PATCH at volume 70");
-        assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === mac + "/chime"), [{ payload: "70", topic: mac + "/chime" }],
+        assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === mac + "/chime"), [{ payload: "70", retain: false, topic: mac + "/chime" }],
           "the accepted write published the new volume once on the chime topic");
       });
 

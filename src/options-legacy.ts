@@ -2,7 +2,7 @@
  *
  * options-legacy.ts: Translation of retired per-member feature options into the selectable value options that carry them.
  */
-import { ALL_CHOICES, buildCatalogIndex, buildConfigIndex, enumerateConfiguredEntries, formatValueList, isValidScopeId, resolveScope,
+import { ALL_CHOICES, buildCatalogIndex, buildConfigIndex, enumerateConfiguredEntries, formatValueList, isValidScopeId, resolveScope, sameEntries,
   selectValues } from "homebridge-plugin-utils";
 import type { ConfigIndex, FeatureCategoryEntry, FeatureOptionEntry, Nullable } from "homebridge-plugin-utils";
 import { SMART_DETECT_TYPES, STREAM_QUALITY_TIERS, featureOptionCategories, featureOptions } from "./options.ts";
@@ -439,7 +439,7 @@ function composeEmission(args: { configIndex: ConfigIndex; controller?: string; 
 
   const inherited = scope.length ? composeFamily({ configIndex, controller, family }) : composeFamily({ configIndex: defaultConfigIndex, family });
 
-  if(here.join(",") === inherited.join(",")) {
+  if(sameEntries(here, inherited, (left, right) => left === right)) {
 
     return null;
   }
@@ -683,12 +683,6 @@ export interface MigrationPatch {
   readonly [key: string]: unknown;
 }
 
-// Whether two configured-options arrays say the same thing, which is what decides whether a rewrite is worth committing at all.
-function sameOptions(left: readonly string[], right: readonly string[]): boolean {
-
-  return (left.length === right.length) && left.every((entry, index) => entry === right[index]);
-}
-
 /**
  * Rewrite a configuration's retired feature option entries into the current grammar, permanently, as far as the supplied topology makes exact.
  *
@@ -838,7 +832,9 @@ export function composeMigrationPatch({ controllers, migratePatch, platformOptio
   const source = (migratePatch && ("options" in migratePatch) && Array.isArray(migratePatch.options)) ? migratePatch.options :
     (Array.isArray(platformOptions) ? platformOptions : []);
   const migration = migrateLegacyFeatureOptions({ controllers, options: source });
-  const translated = !sameOptions(source, migration.options);
+
+  // Whether the translation says something the configured options do not, entry for entry, which is what decides whether a rewrite is worth committing at all.
+  const translated = !sameEntries(source, migration.options, (left, right) => left === right);
 
   if(!migratePatch && !translated) {
 

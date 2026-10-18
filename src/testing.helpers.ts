@@ -624,17 +624,18 @@ export class TestService {
     this.getCharacteristic(charType);
   }
 
-  // Report whether the characteristic of the given kind has already been created on this service. Mirrors HAP's Service.testCharacteristic, which the production
-  // reachability fan-out (ProtectDevice.refreshReachability) calls to decide whether a service carries StatusActive before writing it. Unlike getCharacteristic, this
-  // never lazily creates the characteristic - it is a pure predicate over what has already been added.
+  // Report whether the characteristic of the given kind has already been created on this service. Mirrors HAP's Service.testCharacteristic, which the
+  // homebridge-plugin-utils sweep (updateServices, behind ProtectDevice.refreshReachability) calls to decide whether a service carries StatusActive before writing it,
+  // and which the library's presence gates read before attaching or removing. Unlike getCharacteristic, this never lazily creates the characteristic - it is a pure
+  // predicate over what has already been added.
   public testCharacteristic(charType: CharacteristicType): boolean {
 
     return this.characteristicsByType.has(charType);
   }
 
-  // Remove a characteristic instance from this service, mirroring HAP's Service.removeCharacteristic. The camera's configureTamperDetection takes this path only to prune
-  // an existing StatusTampered when tamper detection is turned off: it reads prior existence side-effect-free through testCharacteristic, so it never materializes the
-  // characteristic just to remove it. The double keys one instance per kind, so removal by the instance's kind is exact.
+  // Remove a characteristic instance from this service, mirroring HAP's Service.removeCharacteristic. The homebridge-plugin-utils presence gates take this path to prune
+  // a characteristic their verdict refuses, such as the camera's StatusTampered when tamper detection is turned off: they read prior existence side-effect-free through
+  // testCharacteristic, so they never materialize a characteristic just to remove it. The double keys one instance per kind, so removal by the instance's kind is exact.
   public removeCharacteristic(characteristic: TestCharacteristic): void {
 
     this.characteristicsByType.delete(characteristic.type);
@@ -699,9 +700,9 @@ class BatteryServiceType extends TestService {
   }
 }
 
-// The camera-operating-mode kind. Added for the camera-construction harness: configureCameraDetails and the per-field camera updaters resolve it by key (and
-// no-op through optional chains when absent), so the kind must exist as a distinct key. Its HAP-required characteristics are not in the namespace, so it seeds the
-// generic Name stand-in.
+// The camera-operating-mode kind. Added for the camera-construction harness: configureCameraDetails and the per-field camera updaters resolve it by key (and do
+// nothing when it is absent), so the kind must exist as a distinct key. Its HAP-required characteristics are not in the namespace, so it seeds the generic Name
+// stand-in.
 class CameraOperatingModeServiceType extends TestService {
 
   public static readonly UUID = "CameraOperatingMode";
@@ -1033,7 +1034,7 @@ export class TestAccessory {
   public context: Record<string, unknown> = {};
   public displayName: string;
   public readonly UUID: string;
-  // Exposed so production code that iterates every service on the accessory (ProtectDevice.refreshReachability walks accessory.services) sees the same surface HAP's
+  // Exposed so code that iterates every service on the accessory (the homebridge-plugin-utils updateServices sweep walks accessory.services) sees the same surface HAP's
   // PlatformAccessory.services offers.
   public readonly services: TestService[] = [];
   // The ordered controller-event log: every configureController / removeController call in arrival order, each stamped with its sequence number, so a test can

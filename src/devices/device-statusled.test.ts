@@ -73,10 +73,10 @@ function buildStatusLedDevice(configOptions: { ledEnabled?: boolean } = {}, harn
   const projection = new TestSensorProjection(sensorConfig.id, store);
   const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Sensor);
 
-  // Wire the base capabilities the way a family leaf does: hints first, then the status-LED switch with isEnabled true. Whether the switch actually materializes is then
+  // Wire the base capabilities the way a family leaf does: hints first, then the status-LED switch with enabled true. Whether the switch actually materializes is then
   // governed entirely by the Enable.Device.StatusLed.Switch userOptions.
   device.configureHintsFor();
-  device.configureStatusLedSwitchFor(true);
+  device.configureStatusLedSwitchFor({ enabled: true });
 
   return { accessory, device, logEntries, projection };
 }

@@ -2,13 +2,13 @@
  *
  * device-capability.ts: ProtectDeviceCapability - the contract for a capability composed onto a hosting device, and the host surface it reads through.
  */
-import type { AcquireServiceTarget, Nullable } from "homebridge-plugin-utils";
-import type { Service, WithUUID } from "homebridge";
+import type { AcquireServiceOptions, AcquireServiceResult, Nullable, ValidServiceOptions, ValidServiceResult } from "homebridge-plugin-utils";
+import type { ProtectAccessory, ProtectServiceOptions } from "../types.ts";
 import { acquireService, validService } from "homebridge-plugin-utils";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectBase } from "./device-base.ts";
 import type { ProtectDeviceContext } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
+import type { Service } from "homebridge";
 
 /* The slice of a hosting device that a composed capability genuinely reads through it. ProtectDevice implements it, so every device family is capability-host-capable by
  * compiler proof rather than by retrofit: the contract is structural, and its one implementation obligation beyond what a device already exposes is publishObserverWake,
@@ -149,18 +149,22 @@ export abstract class ProtectDeviceCapability<H extends ProtectCapabilityHost = 
   }
 
   // Acquire a service on the host's accessory, a thin re-binding to the homebridge-plugin-utils free function - the same single source ProtectDevice's own wrapper
-  // delegates to. It lives here rather than on the spine because the spine also serves owners with no single accessory (liveviews manages a set) or a nullable one (the
-  // controller's system-information owner), so an accessory contract there would be dishonest; here a non-null accessory genuinely exists.
-  protected acquireService(serviceType: AcquireServiceTarget, name = this.accessoryName, subtype?: string, onServiceCreate?: (svc: Service) => void): Service {
+  // delegates to. It supplies the host's accessory, defaults the name to the host's accessory name, and answers with the library's result unchanged: the service, and
+  // the transition that says whether this call attached it or kept one already present. It lives here rather than on the spine because the spine also serves owners
+  // with no single accessory (liveviews manages a set) or a nullable one (the controller's system-information owner), so an accessory contract there would be
+  // dishonest; here a non-null accessory genuinely exists.
+  protected acquireService<T extends Service>(options: ProtectServiceOptions<AcquireServiceOptions<T>>): AcquireServiceResult<T> {
 
-    return acquireService(this.accessory, serviceType, name, subtype, onServiceCreate);
+    return acquireService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
   }
 
-  // Validate a service on the host's accessory, the same thin re-binding. The validate argument accepts either a plain boolean or a presence-aware predicate, mirroring
-  // the free function: the predicate receives the service's current presence so a gate can keep an already-present service while refusing to create a new one.
-  protected validService(serviceType: WithUUID<typeof Service>, validate: boolean | ((hasService: boolean) => boolean), subtype?: string): boolean {
+  // Reconcile a service's presence on the host's accessory from one verdict, the same thin re-binding. The verdict is either a plain boolean or a presence-aware
+  // predicate, mirroring the free function: the predicate receives the service's current presence so a gate can keep an already-present service while refusing to create
+  // a new one. The answer is the library's own: the service with an attached or kept transition when the verdict keeps it, or null with a removed or absent transition
+  // when it does not.
+  protected validService<T extends Service>(options: ProtectServiceOptions<ValidServiceOptions<T>>): ValidServiceResult<T> {
 
-    return validService(this.accessory, serviceType, validate, subtype);
+    return validService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
   }
 
   // The log prefix and diagnostics name: the host's functional name, which resolves to the live controller projection name so a log prefix tracks the controller's

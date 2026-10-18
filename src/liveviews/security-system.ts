@@ -165,7 +165,7 @@ export class ProtectSecuritySystem extends ProtectBase {
   private configureSecuritySystem(): void {
 
     // Acquire (find or create) the security system service.
-    const service = acquireService(this.accessory, this.hap.Service.SecuritySystem, this.accessory.displayName);
+    const { service } = acquireService({ accessory: this.accessory, name: this.accessory.displayName, serviceType: this.hap.Service.SecuritySystem });
 
     const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
     const SecuritySystemTargetState = this.hap.Characteristic.SecuritySystemTargetState;
@@ -222,13 +222,13 @@ export class ProtectSecuritySystem extends ProtectBase {
     this.isAlarmTriggered = false;
 
     // Have we enabled the security system alarm?
-    if(!validService(this.accessory, this.hap.Service.Switch, this.nvr.hasFeature("SecuritySystem.Alarm"))) {
+    const { service } = validService({ accessory: this.accessory, name: this.accessory.displayName + " Security Alarm", serviceType: this.hap.Service.Switch,
+      validate: this.nvr.hasFeature("SecuritySystem.Alarm") });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = acquireService(this.accessory, this.hap.Service.Switch, this.accessory.displayName + " Security Alarm");
 
     // Notify the user that we're enabled.
     this.log.info("Enabling the security alarm switch on the security system accessory.");

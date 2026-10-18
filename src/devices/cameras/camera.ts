@@ -2,7 +2,8 @@
  *
  * camera.ts: Camera device class for UniFi Protect.
  */
-import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, formatErrorMessage, parseValueList, toStartCase } from "homebridge-plugin-utils";
+import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, formatErrorMessage, parseValueList, toStartCase,
+  validCharacteristic } from "homebridge-plugin-utils";
 import type { Camera, LivestreamSource, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, Resolution } from "homebridge";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
@@ -338,7 +339,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.configureMqtt();
 
     // Configure the motion sensor.
-    this.configureMotionSensor(this.isHksvCapable);
+    this.configureMotionSensor({ enabled: this.isHksvCapable });
 
     // Configure the occupancy sensor.
     this.configureOccupancySensor();
@@ -696,23 +697,20 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // (construct: a fresh adoption or a Homebridge restart) from a live reconcile (observe), which governs the resting-state stamp below.
   private configureAccessFeatures(source: ReconcileSource): boolean {
 
-    // Read whether the lock already exists BEFORE we touch it. This is the resting-state-stamp decision input only - it does NOT gate the wiring below (the onSet
-    // re-binds on every configure, which re-establishes the handler after a Homebridge restart restores the cached service but never its runtime wiring).
-    const existing = this.accessory.getServiceById(this.hap.Service.LockMechanism, ProtectReservedNames.LOCK_ACCESS);
-
     // Whether the paired Access reader reports the unlock capability. A single optional chain: the controller reports accessDeviceMetadata only for a camera with a
     // paired reader, and the nested featureFlags is always present when the metadata is.
     const supportsUnlock = Boolean(this.ufp.accessDeviceMetadata?.featureFlags.supportUnlock);
 
-    // Gate the lock on the paired-reader capability (conservative) and the user toggle (absolute) via capabilityGate.
-    if(!this.validService(this.hap.Service.LockMechanism,
-      capabilityGate({ capability: supportsUnlock, toggle: this.hasFeature("UniFi.Access.Lock") }), ProtectReservedNames.LOCK_ACCESS)) {
+    // Gate the lock on the paired-reader capability (conservative) and the user toggle (absolute) via capabilityGate. The transition the gate answers says whether
+    // this pass created the lock, which is the resting-state-stamp decision input only - it does NOT gate the wiring below (the onSet re-binds on every configure,
+    // which re-establishes the handler after a Homebridge restart restores the cached service but never its runtime wiring).
+    const { service, transition } = this.validService({ serviceType: this.hap.Service.LockMechanism, subtype: ProtectReservedNames.LOCK_ACCESS,
+      validate: capabilityGate({ capability: supportsUnlock, toggle: this.hasFeature("UniFi.Access.Lock") }) });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.LockMechanism, this.accessoryName, ProtectReservedNames.LOCK_ACCESS);
 
     // Configure the lock current and target state characteristics.
     service.getCharacteristic(this.hap.Characteristic.LockTargetState).onSet(async (value: CharacteristicValue) => {
@@ -769,7 +767,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // restoring a cached lock, whose runtime SECURED/UNSECURED state HAP does not serialize). A LIVE reconcile over an existing lock deliberately never re-stamps the
     // display - the onSet owns it - so the reconcile can never truncate a momentary user unlock, whose optimistic UNSECURED shows with no relock timer yet armed during
     // the command round-trip (the timer arms only after the awaited unlock command resolves).
-    if(!existing || (source === "construct")) {
+    if((transition === "attached") || (source === "construct")) {
 
       service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
       service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
@@ -872,16 +870,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // A utility for us to add contact sensors.
     const addSmartDetectContactSensor = (name: string, serviceId: string): void => {
 
-      // Read prior existence BEFORE acquiring, the same establishment-detection idiom the Access lock and the night vision dimmer use: a get-or-create returns the
-      // service either way and cannot tell us which it did.
-      const existing = this.accessory.getServiceById(this.hap.Service.ContactSensor, serviceId);
-
-      // Acquire the service.
-      const service = this.acquireService(this.hap.Service.ContactSensor, name, serviceId);
+      // Acquire the service. The transition it answers says whether this call created the sensor, the same establishment signal the Access lock and the night vision
+      // dimmer read from their gates.
+      const { service, transition } = this.acquireService({ name, serviceType: this.hap.Service.ContactSensor, subtype: serviceId });
 
       // Initialize a freshly created sensor to its resting state, and only a freshly created one: an existing sensor's state belongs to the delivery path, so re-stamping
       // it here would reset a tripped detection the moment an unrelated capability change drove a reconcile, silently cancelling a live smart-motion event.
-      if(!existing) {
+      if(transition === "attached") {
 
         service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
 
@@ -975,18 +970,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       return false;
     }
 
-    // Read prior existence side-effect-free; getCharacteristic would lazily materialize StatusTampered, defeating the conservative existence check.
-    const existing = service.testCharacteristic(this.hap.Characteristic.StatusTampered);
-
     // Gate the characteristic with the shared additive-eager / subtractive-conservative asymmetry: the enableTamperDetection setting is the absolute toggle, the
-    // hasTamperDetection hardware capability is conservative for an already-present characteristic. capabilityGate is service-agnostic, so we apply it to the
-    // characteristic's existence.
-    if(!capabilityGate({ capability: this.ufp.featureFlags.hasTamperDetection, toggle: this.ufp.smartDetectSettings.enableTamperDetection })(existing)) {
+    // hasTamperDetection hardware capability is conservative for an already-present characteristic. The gate reads presence without attaching, so a characteristic the
+    // verdict refuses is never materialized only to be removed.
+    const transition = validCharacteristic({ characteristic: this.hap.Characteristic.StatusTampered, service,
+      validate: capabilityGate({ capability: this.ufp.featureFlags.hasTamperDetection, toggle: this.ufp.smartDetectSettings.enableTamperDetection }) });
 
-      if(existing) {
-
-        service.removeCharacteristic(service.getCharacteristic(this.hap.Characteristic.StatusTampered));
-      }
+    if((transition === "removed") || (transition === "absent")) {
 
       // Clear the one-way tamper latch only on the genuine user toggle-off (the documented clear path); a transient capability-false must never clear an active tamper.
       if(!this.ufp.smartDetectSettings.enableTamperDetection) {
@@ -997,7 +987,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       return false;
     }
 
-    // Retrieve the current tamper status when requested; materializing StatusTampered here is intentional once the gate keeps it.
+    // Retrieve the current tamper status when requested. We bind on every pass that keeps the characteristic, not only the pass that attaches it: a characteristic
+    // restored from the accessory cache carries no handler and answers kept on the first pass after a restart, and binding again replaces the handler rather than
+    // stacking a second one.
     service.getCharacteristic(this.hap.Characteristic.StatusTampered).onGet(() => this.isTampered);
 
     return true;
@@ -1006,17 +998,18 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // Configure a switch to mute doorbell ring events in HomeKit.
   private configureDoorbellMuteSwitch(): boolean {
 
-    // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Switch, this.hasFeature("Doorbell.Mute"), ProtectReservedNames.SWITCH_DOORBELL_MUTE) ||
-      !this.accessory.getService(this.hap.Service.Doorbell)) {
+    // Validate whether we should have this service enabled, adding the switch to the camera if needed. The mute switch is created only beside a Doorbell service, so the
+    // verdict refuses creation while the camera carries none; a switch already present is left in place in that case, and the branch below still clears the muted state.
+    const hasDoorbell = !!this.accessory.getService(this.hap.Service.Doorbell);
+    const { service } = this.validService({ name: this.accessoryName + " Doorbell Mute", serviceType: this.hap.Service.Switch,
+      subtype: ProtectReservedNames.SWITCH_DOORBELL_MUTE, validate: (hasService) => this.hasFeature("Doorbell.Mute") && (hasService || hasDoorbell) });
+
+    if(!service || !hasDoorbell) {
 
       delete this.accessory.context.doorbellMuted;
 
       return false;
     }
-
-    // Add the switch to the camera, if needed.
-    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Doorbell Mute", ProtectReservedNames.SWITCH_DOORBELL_MUTE);
 
     // Configure the switch.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.accessory.context.doorbellMuted ?? false);
@@ -1039,11 +1032,22 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // Configure a switch to manually trigger a doorbell ring event for HomeKit.
   private configureDoorbellTrigger(): boolean {
 
-    // See if we have a doorbell service configured.
+    // See if we have a doorbell service configured, and whether the user has enabled the trigger.
     const doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
+    const enabled = this.hasFeature("Doorbell.Trigger");
 
-    // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Switch, this.hasFeature("Doorbell.Trigger"), ProtectReservedNames.SWITCH_DOORBELL_TRIGGER)) {
+    // A plain camera with the trigger enabled carries no Doorbell service of its own, so we stand one up for automation purposes. We do so ahead of the trigger's gate
+    // below because that gate creates the trigger switch on an enabling verdict, and a camera gaining both on one pass carries the Doorbell service first.
+    if(enabled && !doorbellService) {
+
+      this.configureDoorbellService();
+    }
+
+    // Validate whether we should have this service enabled, adding the switch to the camera if needed.
+    const { service: triggerService } = this.validService({ name: this.accessoryName + " Doorbell Trigger", serviceType: this.hap.Service.Switch,
+      subtype: ProtectReservedNames.SWITCH_DOORBELL_TRIGGER, validate: enabled });
+
+    if(!triggerService) {
 
       // Since we aren't enabling the doorbell trigger on this camera, remove the doorbell service if the camera isn't actually doorbell-capable hardware.
       if(!this.ufp.featureFlags.isDoorbell && doorbellService) {
@@ -1053,15 +1057,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       return false;
     }
-
-    // A plain camera with the trigger enabled carries no Doorbell service of its own, so we stand one up for automation purposes.
-    if(!doorbellService) {
-
-      this.configureDoorbellService();
-    }
-
-    // Add the switch to the camera, if needed.
-    const triggerService = this.acquireService(this.hap.Service.Switch, this.accessoryName + " Doorbell Trigger", ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
 
     // Trigger the doorbell.
     triggerService.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.isRinging);
@@ -1098,7 +1093,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   public configureDoorbellService(): void {
 
     // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Doorbell);
+    const { service } = this.acquireService({ serviceType: this.hap.Service.Doorbell });
 
     // Add the doorbell service to this Protect doorbell. HomeKit requires the doorbell service to be marked as the primary service on the accessory.
     service.setPrimaryService(true);
@@ -1110,38 +1105,33 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Find the service, if it exists.
     const service = this.accessory.getService(this.hap.Service.CameraOperatingMode);
 
-    // Retrieve the camera status light if we have it enabled.
-    const statusLight = service?.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator);
+    if(!service) {
 
-    if(!this.isHksvCapable || !this.hints.ledStatus) {
-
-      if(statusLight) {
-
-        service?.removeCharacteristic(statusLight);
-      }
-    } else {
-
-      // Turn the status light on or off.
-      statusLight?.onGet(() => this.statusLed);
-      statusLight?.onSet(async (value: CharacteristicValue) => this.setStatusLed(!!value));
-
-      // Initialize the status light state.
-      service?.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.statusLed);
+      return false;
     }
 
-    // Retrieve the night vision indicator if we have it enabled.
-    const nightVision = service?.getCharacteristic(this.hap.Characteristic.NightVision);
+    // Each characteristic below follows its own verdict, and a pass that keeps one binds its handlers and writes its initial value exactly as a pass that attaches one
+    // does: a characteristic restored from the accessory cache carries no handlers and answers kept on the first pass after a restart.
+    const statusLightTransition = validCharacteristic({ characteristic: this.hap.Characteristic.CameraOperatingModeIndicator, service,
+      validate: this.isHksvCapable && this.hints.ledStatus });
 
-    if(!this.isHksvCapable || !this.hints.nightVision) {
+    if((statusLightTransition === "attached") || (statusLightTransition === "kept")) {
 
-      if(nightVision) {
+      // Turn the status light on or off.
+      service.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator).onGet(() => this.statusLed);
+      service.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator).onSet(async (value: CharacteristicValue) => this.setStatusLed(!!value));
 
-        service?.removeCharacteristic(nightVision);
-      }
-    } else {
+      // Initialize the status light state.
+      service.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.statusLed);
+    }
 
-      service?.getCharacteristic(this.hap.Characteristic.NightVision)?.onGet(() => this.nightVision);
-      service?.getCharacteristic(this.hap.Characteristic.NightVision)?.onSet(async (value: CharacteristicValue) => {
+    const nightVisionTransition = validCharacteristic({ characteristic: this.hap.Characteristic.NightVision, service,
+      validate: this.isHksvCapable && this.hints.nightVision });
+
+    if((nightVisionTransition === "attached") || (nightVisionTransition === "kept")) {
+
+      service.getCharacteristic(this.hap.Characteristic.NightVision).onGet(() => this.nightVision);
+      service.getCharacteristic(this.hap.Characteristic.NightVision).onSet(async (value: CharacteristicValue) => {
 
         const command = nightVisionToggleCommand(value === true);
 
@@ -1155,7 +1145,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       });
 
       // Initialize the night vision state.
-      service?.updateCharacteristic(this.hap.Characteristic.NightVision, this.nightVision);
+      service.updateCharacteristic(this.hap.Characteristic.NightVision, this.nightVision);
     }
 
     return true;
@@ -1482,16 +1472,16 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   private configureHksvRecordingSwitch(): boolean {
 
     // Validate whether we should have this service enabled.
-    if(!this.validService(this.hap.Service.Switch, this.hasFeature("Video.HKSV.Recording.Switch"), ProtectReservedNames.SWITCH_HKSV_RECORDING)) {
+    const { service } = this.validService({ name: this.accessoryName + " HKSV Recording", serviceType: this.hap.Service.Switch,
+      subtype: ProtectReservedNames.SWITCH_HKSV_RECORDING, validate: this.hasFeature("Video.HKSV.Recording.Switch") });
+
+    if(!service) {
 
       // Remove our stateful context since it's unneeded.
       delete this.accessory.context.hksvRecordingDisabled;
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " HKSV Recording", ProtectReservedNames.SWITCH_HKSV_RECORDING);
 
     // Activate or deactivate HKSV recording.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !this.accessory.context.hksvRecordingDisabled);
@@ -1519,22 +1509,21 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // establishment (construct: a fresh adoption or a Homebridge restart) from a live reconcile (observe), which governs the establishment-only value push below.
   private configureNightVisionDimmer(source: ReconcileSource): boolean {
 
-    // Read whether the dimmer already exists BEFORE we touch it. This is the establishment-push decision input only - it does NOT gate the wiring below (the onGet/onSet
-    // re-bind on every configure, which re-establishes the handlers after a Homebridge restart restores the cached service but never its runtime wiring).
-    const existing = this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_NIGHTVISION);
-
     // The camera's adjustable night vision hardware: an infrared cut filter plus the ICR sensitivity control. Both must be present for the dimmer to mean anything.
     const hasNightVisionHardware = this.ufp.featureFlags.hasInfrared && this.ufp.featureFlags.hasIcrSensitivity;
 
-    // Gate the dimmer on the camera's adjustable night vision hardware (conservative) and the user's Device.NightVision.Dimmer toggle (absolute) via capabilityGate.
-    if(!this.validService(this.hap.Service.Lightbulb,
-      capabilityGate({ capability: hasNightVisionHardware, toggle: this.hasFeature("Device.NightVision.Dimmer") }), ProtectReservedNames.LIGHTBULB_NIGHTVISION)) {
+    // Gate the dimmer on the camera's adjustable night vision hardware (conservative) and the user's Device.NightVision.Dimmer toggle (absolute) via capabilityGate. The
+    // transition the gate answers says whether this pass created the dimmer, which is the establishment-push decision input only - it does NOT gate the wiring below
+    // (the onGet/onSet re-bind on every configure, which re-establishes the handlers after a Homebridge restart restores the cached service but never its runtime
+    // wiring).
+    const { service, transition } = this.validService({ name: this.accessoryName + " Night Vision", serviceType: this.hap.Service.Lightbulb,
+      subtype: ProtectReservedNames.LIGHTBULB_NIGHTVISION,
+      validate: capabilityGate({ capability: hasNightVisionHardware, toggle: this.hasFeature("Device.NightVision.Dimmer") }) });
+
+    if(!service) {
 
       return false;
     }
-
-    // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Lightbulb, this.accessoryName + " Night Vision", ProtectReservedNames.LIGHTBULB_NIGHTVISION);
 
     // Adjust night vision capabilities.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.nightVision);
@@ -1597,7 +1586,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Establish the dimmer at startup (a fresh adoption or create, or a restart's construct) only - never on a live reconcile re-run. The camera.ispSettings observer
     // already maintains the displayed value, and re-pushing the device's reading during an in-flight night-vision command would momentarily stomp the user's optimistic
     // setting; the once-per-boot "Enabling" log (a default-off feature the user turned on) rides the same gate so it prints at every startup but never on a reconnect.
-    if(!existing || (source === "construct")) {
+    if((transition === "attached") || (source === "construct")) {
 
       service.updateCharacteristic(this.hap.Characteristic.On, this.nightVision);
       service.updateCharacteristic(this.hap.Characteristic.Brightness, this.nightVisionBrightness);
@@ -1619,16 +1608,16 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       const ufpRecordingSetting = ufpRecordingSwitchType.slice(ufpRecordingSwitchType.lastIndexOf(".") + 1);
 
+      const switchName = this.accessoryName + " UFP Recording " + toStartCase(ufpRecordingSetting);
+
       // Validate whether we should have this service enabled.
-      if(!this.validService(this.hap.Service.Switch, this.hasFeature("Nvr.Recording.Switch"), ufpRecordingSwitchType)) {
+      const { service } = this.validService({ name: switchName, serviceType: this.hap.Service.Switch, subtype: ufpRecordingSwitchType,
+        validate: this.hasFeature("Nvr.Recording.Switch") });
+
+      if(!service) {
 
         continue;
       }
-
-      const switchName = this.accessoryName + " UFP Recording " + toStartCase(ufpRecordingSetting);
-
-      // Acquire the service.
-      const service = this.acquireService(this.hap.Service.Switch, switchName, ufpRecordingSwitchType);
 
       // Activate or deactivate the appropriate recording mode on the Protect controller.
       service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.recordingMode === ufpRecordingSetting);

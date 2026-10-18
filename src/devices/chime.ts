@@ -102,7 +102,7 @@ export class ProtectChime extends ProtectDevice<Chime> {
   private configureChimeSwitch(name: string, kind: "buzzer" | "speaker", subtype: string): void {
 
     // Acquire the service.
-    const service = this.acquireService(this.hap.Service.Switch, this.accessoryName + " " + toStartCase(name), subtype);
+    const { service } = this.acquireService({ name: this.accessoryName + " " + toStartCase(name), serviceType: this.hap.Service.Switch, subtype });
 
     // Reflect and drive the play state for this sound source (buzzer or ringtone speaker).
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
