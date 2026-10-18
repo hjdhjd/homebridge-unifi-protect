@@ -83,11 +83,44 @@ export interface ProtectConfigInterpreter {
   migrate(config?: ProtectConfig, macByAddress?: ReadonlyMap<string, string>): ProtectConfigPatch | null;
 }
 
-/** The configured controllers, normalized so callers never branch on undefined. */
+/** What a save says when the address it writes is one another configured controller already holds. */
+export declare const CONTROLLER_LISTED_WARNING: string;
+
+/**
+ * Whether a controller save would be refused because another configured controller already holds the address it writes, compared with surrounding space removed
+ * and letters lowercased. A save that writes its own item's address, in any spelling, is never refused. An address that is absent, empty once trimmed,
+ * or not a string is never listed.
+ */
+export declare const controllerListedElsewhere: (config: ProtectConfig | null | undefined, save: { address?: unknown; originalAddress?: unknown }) => boolean;
+
+/**
+ * The configured controllers, one entry per listed address: the stored entries themselves in their stored order, keeping the first entry at each address and every
+ * entry with no address, and leaving out every later entry at an address and every entry that is not an object, or an empty list when the configuration holds no list.
+ */
 export declare const controllers: (config?: ProtectConfig) => ProtectControllerConfig[];
 
 /** The configured controllers still carrying a per-controller legacy property, each reduced to the connection triple needed to reach it. */
 export declare const controllersAwaitingMigration: (config?: ProtectConfig) => ProtectControllerCredentials[];
+
+/**
+ * One reading of the UI server's device-list answer: the list itself, the controller the server could not reach with the reason it captured, the UI server's own
+ * failure, or a sidebar entry whose controller left the configuration. Every failure carries no devices and the headline its surfaces render it under.
+ */
+export type DeviceListVerdict = { devices: Record<string, unknown>[]; kind: "list"; message: string } |
+  { devices: Record<string, unknown>[]; headline: string; kind: "unreachable"; message: string } |
+  { devices: Record<string, unknown>[]; guidance: string; headline: string; kind: "serverFailure" | "staleSelection"; message: string };
+
+/** The result the framework's device-list hook answers, carrying a failure's own headline and guidance where it has them. */
+export interface DeviceListResult {
+
+  devices: Record<string, unknown>[];
+  error: string;
+  guidance?: string;
+  headline?: string;
+}
+
+/** Map a device-list verdict onto the result the framework's device-list hook answers, writing only the copy the outcome carries. */
+export declare const deviceListResult: (verdict: DeviceListVerdict) => DeviceListResult;
 
 /** Whether valid Protect login credentials exist for the primary controller. */
 export declare const hasValidCredentials: (config?: ProtectConfig) => boolean;
@@ -107,6 +140,18 @@ export declare const makeProtectConfig: ({ FeatureOptions, catalog }: { FeatureO
 export declare const primaryController: (config?: ProtectConfig) => ProtectControllerConfig | undefined;
 
 /**
+ * Whether the first-run save would be refused because a controller after the primary already holds the address it writes, by the rule a controller save is
+ * refused under, with the primary as the save's target.
+ */
+export declare const primaryListedElsewhere: (config: ProtectConfig | null | undefined, credentials: { address?: unknown }) => boolean;
+
+/** Read the UI server's answer to a device-list request, or the rejection the request settled with, into the one verdict every reader of it shares. */
+export declare const readDeviceListAnswer: (settlement: PromiseSettledResult<unknown>) => DeviceListVerdict;
+
+/** The verdict of a sidebar entry whose controller left the configuration after the sidebar was built. */
+export declare const staleSelectionVerdict: () => DeviceListVerdict;
+
+/**
  * The patch that removes one controller, and - when a MAC set is supplied - strips every configured entry scoped to one of those MAC addresses. An empty or absent
  * MAC set carries no `options` array at all, which is what leaves the configured entries untouched rather than rewriting them to themselves.
  */
@@ -115,11 +160,14 @@ export declare const withControllerRemoved: (config: ProtectConfig | undefined, 
 
 /**
  * The controllers patch that writes one controller's connection triple. An `originalAddress` naming a configured item replaces that item's credentials while
- * carrying every other key it holds; an absent or unmatched one appends a new item instead.
+ * carrying every other key it holds; an absent or unmatched one appends a new item instead. Null means the address is already listed and nothing is to be written.
  */
 export declare const withControllerSaved: (config: ProtectConfig | undefined,
-  controller: { address: string; originalAddress?: string; password: string; username: string }) => { controllers: ProtectControllerConfig[] };
+  controller: { address: string; originalAddress?: string; password: string; username: string }) => { controllers: ProtectControllerConfig[] } | null;
 
-/** The controllers patch that writes the supplied credentials into the primary controller, preserving any additional controllers and the primary's other fields. */
+/**
+ * The controllers patch that writes the supplied credentials into the primary controller, preserving the additional controllers the configured list holds, one
+ * entry per listed address, and the primary's other fields. Null means a controller after the primary already holds the address.
+ */
 export declare const withPrimaryCredentials: (config: ProtectConfig | undefined, credentials: { address: string; password: string; username: string }) =>
-  { controllers: ProtectControllerConfig[] };
+  { controllers: ProtectControllerConfig[] } | null;

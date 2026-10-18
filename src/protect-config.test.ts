@@ -16,8 +16,8 @@
 import { FeatureOptions, mqttConnectionSettings } from "homebridge-plugin-utils";
 import { PROTECT_DOORBELL_RING_DELAY, PROTECT_MQTT_TOPIC } from "./settings.ts";
 import type { ProtectConfig, ProtectConfigPatch, ProtectControllerConfig } from "../homebridge-ui/public/protect-config.mjs";
-import { controllersAwaitingMigration, hasValidCredentials, makeProtectConfig, withControllerRemoved, withControllerSaved }
-  from "../homebridge-ui/public/protect-config.mjs";
+import { controllerListedElsewhere, controllers, controllersAwaitingMigration, deviceListResult, hasValidCredentials, makeProtectConfig, primaryListedElsewhere,
+  readDeviceListAnswer, staleSelectionVerdict, withControllerRemoved, withControllerSaved, withPrimaryCredentials } from "../homebridge-ui/public/protect-config.mjs";
 import { describe, test } from "node:test";
 import { featureOptionCategories, featureOptions } from "./options.ts";
 import assert from "node:assert/strict";
@@ -241,6 +241,7 @@ describe("protect webUI controller writers, saving", () => {
     const patch = withControllerSaved({ controllers: [{ ...CREDENTIALS }] },
       { address: ADDRESS, originalAddress: ADDRESS, password: "new secret", username: "new@example.com" });
 
+    assert.ok(patch, "an edit writing exactly the address its item stores is never refused");
     assert.deepEqual(patch.controllers, [{ address: ADDRESS, password: "new secret", username: "new@example.com" }],
       "the triple lands on the item that was already there");
   });
@@ -250,6 +251,7 @@ describe("protect webUI controller writers, saving", () => {
     const patch = withControllerSaved({ controllers: [{ ...CREDENTIALS }] },
       { address: "10.0.0.9", originalAddress: ADDRESS, password: CREDENTIALS.password, username: CREDENTIALS.username });
 
+    assert.ok(patch, "an address no other controller holds is written");
     assert.equal(patch.controllers.length, 1, "the address the write started from is what finds the item, so a changed address replaces rather than duplicates");
     assert.deepEqual(patch.controllers[0], { ...CREDENTIALS, address: "10.0.0.9" }, "and the item now carries the new address");
   });
@@ -260,6 +262,7 @@ describe("protect webUI controller writers, saving", () => {
     const patch = withControllerSaved({ controllers: [item] },
       { address: ADDRESS, originalAddress: ADDRESS, password: "new secret", username: CREDENTIALS.username });
 
+    assert.ok(patch, "an edit writing exactly the address its item stores is never refused");
     assert.deepEqual(patch.controllers[0], { ...item, password: "new secret" },
       "an un-migrated controller still owns per-controller settings the plugin runs on, and only the migration retires those");
   });
@@ -268,10 +271,14 @@ describe("protect webUI controller writers, saving", () => {
 
     const added = { address: "10.0.0.9", password: "another secret", username: "another@example.com" };
     const appended = withControllerSaved({ controllers: [{ ...CREDENTIALS }] }, added);
+    const unmatched = withControllerSaved({ controllers: [{ ...CREDENTIALS }] }, { ...added, originalAddress: "10.0.0.250" });
 
+    assert.ok(appended, "an add at a free address is written");
     assert.deepEqual(appended.controllers, [ CREDENTIALS, added ], "an absent original address is what makes a write an add");
-    assert.deepEqual(withControllerSaved({ controllers: [{ ...CREDENTIALS }] }, { ...added, originalAddress: "10.0.0.250" }).controllers, [ CREDENTIALS, added ],
-      "and an original address matching no item falls back to the same append rather than writing nothing");
+    assert.ok(unmatched, "an edit whose item left the configuration, writing a free address, is written");
+    assert.deepEqual(unmatched.controllers, [ CREDENTIALS, added ], "and an original address matching no item falls back to the same append rather than writing nothing");
+    assert.equal(withControllerSaved({ controllers: [{ ...CREDENTIALS }] }, { ...added, address: ADDRESS }), null,
+      "while an add at the address the configured controller already holds is refused, so the append never writes a second item at one address");
   });
 
   test("every other configured controller carries through byte-identical", () => {
@@ -280,7 +287,424 @@ describe("protect webUI controller writers, saving", () => {
     const patch = withControllerSaved({ controllers: [ { ...CREDENTIALS }, other ] },
       { address: ADDRESS, originalAddress: ADDRESS, password: "new secret", username: CREDENTIALS.username });
 
+    assert.ok(patch, "an edit writing exactly the address its item stores is never refused");
     assert.equal(patch.controllers[1], other, "an item the write does not name is carried across by reference, so nothing about it can be reshaped in passing");
+  });
+});
+
+// The save the listed-address rule is asked about, in the shape the early check and the writer each take.
+interface SaveRequest {
+
+  address: string;
+  originalAddress?: string;
+  password: string;
+  username: string;
+}
+
+// The login a save in these rows writes, which the rule never reads and the writer carries through.
+const LOGIN = { password: CREDENTIALS.password, username: CREDENTIALS.username };
+
+/* Assert that a save is refused, by the early check the page makes before its login check and by the writer the write composes through alike, so every row
+ * below also proves the two agree.
+ *
+ * @param config  - The configuration the save is asked of.
+ * @param save    - The save.
+ * @param message - What the refusal stands for, for the assertion messages.
+ */
+function assertRefused(config: TestConfig, save: SaveRequest, message: string): void {
+
+  assert.equal(controllerListedElsewhere(config, save), true, message + ", by the early check");
+  assert.equal(withControllerSaved(config, save), null, message + ", by the writer");
+}
+
+/* Assert that a save is accepted by the early check and the writer alike, and answer the controllers the writer composes for it, which a row then reads.
+ *
+ * @param config  - The configuration the save is asked of.
+ * @param save    - The save.
+ * @param message - What the acceptance stands for, for the assertion messages.
+ *
+ * @returns The controllers array the writer composed.
+ */
+function accepted(config: TestConfig, save: SaveRequest, message: string): ProtectControllerConfig[] {
+
+  assert.equal(controllerListedElsewhere(config, save), false, message + ", by the early check");
+
+  const patch = withControllerSaved(config, save);
+
+  assert.ok(patch, message + ", by the writer");
+
+  return patch.controllers;
+}
+
+describe("protect webUI controller writers, the listed-address rule", () => {
+
+  test("an add at an address another controller holds is refused, and an add at a free address appends", () => {
+
+    const config: TestConfig = { controllers: [{ ...CREDENTIALS }] };
+
+    assertRefused(config, { ...LOGIN, address: ADDRESS }, "an add at the address the configured controller holds is refused");
+    assert.deepEqual(accepted(config, { ...LOGIN, address: "10.0.0.9" }, "an add at a free address is accepted"), [ CREDENTIALS, { ...LOGIN, address: "10.0.0.9" } ],
+      "and it appends beside the controller already there");
+  });
+
+  test("an edit moving onto another controller's address is refused, and one writing its own stored address beside a repeated entry saves the first entry alone", () => {
+
+    const second = { ...LOGIN, address: "10.0.0.2" };
+
+    assertRefused({ controllers: [ { ...CREDENTIALS }, second ] }, { ...LOGIN, address: ADDRESS, originalAddress: "10.0.0.2" },
+      "an edit moving the second controller onto the first one's address is refused");
+
+    // A configuration that already carries more than one item at an address, which the refusal stops new saves from making. The page reads the first item there
+    // alone, so an edit lands on it and the write leaves the later item out.
+    const twins = [ { ...CREDENTIALS }, { ...CREDENTIALS, username: "twin@example.com" } ];
+
+    assert.deepEqual(accepted({ controllers: twins }, { ...CREDENTIALS, originalAddress: ADDRESS, password: "new secret" },
+      "an edit writing exactly the address its item stores is accepted"), [{ ...CREDENTIALS, password: "new secret" }],
+    "and the saved list holds the edited first entry alone");
+  });
+
+  test("an edit changing only the letter case of its own address is accepted, and over a case-variant pair it writes the first entry alone", () => {
+
+    const host = { ...LOGIN, address: "unifi.local" };
+
+    assert.deepEqual(accepted({ controllers: [host] }, { ...LOGIN, address: "UNIFI.local", originalAddress: "unifi.local" },
+      "a case-only edit of a controller no other controller shares an address with is accepted"), [{ ...LOGIN, address: "UNIFI.local" }],
+    "and the address is stored exactly as typed");
+
+    // A case-variant pair, which the folded comparison reads as one controller: the page reads the first entry alone, so the edit moves that entry onto the
+    // spelling the later one holds and the write leaves the later one out.
+    assert.deepEqual(accepted({ controllers: [ host, { ...LOGIN, address: "UNIFI.local" } ] }, { ...LOGIN, address: "UNIFI.local", originalAddress: "unifi.local" },
+      "a case-only edit onto the spelling a later entry at its own address holds is accepted"), [{ ...LOGIN, address: "UNIFI.local" }],
+    "and it writes the edited first entry alone");
+  });
+
+  test("an edit whose original address matches no controller is refused at a held address and appends at a free one", () => {
+
+    const config: TestConfig = { controllers: [{ ...CREDENTIALS }] };
+
+    assertRefused(config, { ...LOGIN, address: ADDRESS, originalAddress: "10.0.0.250" },
+      "an edit whose item left the configuration, writing an address another controller holds, is refused rather than appended");
+    assert.deepEqual(accepted(config, { ...LOGIN, address: "10.0.0.9", originalAddress: "10.0.0.250" }, "the same edit at a free address is accepted"),
+      [ CREDENTIALS, { ...LOGIN, address: "10.0.0.9" } ], "and it appends, because an original address that names no item is an add");
+  });
+
+  test("the comparison folds letter case and surrounding space, and an address differing in any other character is accepted and stored as typed", () => {
+
+    const config: TestConfig = { controllers: [ { ...LOGIN, address: "unifi.local" }, { ...LOGIN, address: "fe80::1" } ] };
+
+    for(const address of [ "UNIFI.LOCAL", " unifi.local", "unifi.local\t", "  Unifi.Local  ", "FE80::1" ]) {
+
+      assertRefused(config, { ...LOGIN, address }, "an add at " + JSON.stringify(address) + " names a held address in another case or with surrounding space");
+    }
+
+    // Each of these names the same machine in some readings, and each is accepted, because the comparison folds letter case and surrounding space and nothing else.
+    for(const address of [ "unifi.local.", "unifi.local:443", "[fe80::1]" ]) {
+
+      assert.deepEqual(accepted(config, { ...LOGIN, address }, "an add at " + JSON.stringify(address) + " differs in a character the form keeps").at(-1),
+        { ...LOGIN, address }, "and it appends exactly as typed");
+    }
+
+    assert.deepEqual(accepted({ controllers: [{ ...CREDENTIALS }] }, { ...LOGIN, address: " 10.0.0.9 " }, "a padded free address is accepted").at(-1),
+      { ...LOGIN, address: " 10.0.0.9 " }, "and is stored with its padding, because the fold is for comparing and never for writing");
+  });
+
+  test("the fold reads the stored side too, so a stored address carrying padding and another case still holds its form", () => {
+
+    // The stored spelling is the padded, mixed-case one and the written spelling is plain, so a rule that folded only the written address would accept these.
+    const config: TestConfig = { controllers: [{ ...LOGIN, address: "  UniFi.Local\t" }] };
+
+    for(const address of [ "unifi.local", "UNIFI.LOCAL", " unifi.local " ]) {
+
+      assertRefused(config, { ...LOGIN, address }, "an add at " + JSON.stringify(address) + " names the stored address once both sides are folded");
+    }
+  });
+
+  test("an entry with no address, an empty one, or one that is not a string never matches, and an empty or blank written address is never listed", () => {
+
+    const entries: ProtectControllerConfig[] = [ { ...LOGIN }, { ...LOGIN, address: "" }, { ...LOGIN, address: 42 } ];
+
+    for(const entry of entries) {
+
+      const label = "beside an entry whose address is " + JSON.stringify(entry.address ?? null);
+
+      assert.deepEqual(accepted({ controllers: [entry] }, { ...LOGIN, address: "42" }, "an add of \"42\" " + label + " is accepted"),
+        [ entry, { ...LOGIN, address: "42" } ], "and it appends " + label);
+    }
+
+    const unaddressed: TestConfig = { controllers: [ { ...LOGIN, address: "" }, { ...LOGIN } ] };
+
+    for(const address of [ "", "   " ]) {
+
+      accepted(unaddressed, { ...LOGIN, address }, "a written address of " + JSON.stringify(address) + " has no form, so it is never listed");
+    }
+  });
+
+  test("first run is refused at an address a later controller holds, and accepted at the primary's own stored address, writing the primary alone beside a repeat", () => {
+
+    const later = { ...LOGIN, address: ADDRESS, mqttUrl: LEGACY_BROKER };
+    const primary = { address: "10.0.0.9", name: "Front Gate", password: "old secret", username: CREDENTIALS.username };
+    const written = withPrimaryCredentials({ controllers: [ primary, { ...LOGIN, address: "10.0.0.2" } ] }, { ...LOGIN, address: "10.0.0.8" });
+
+    assert.ok(written, "an address no other controller holds is written onto the primary");
+    assert.deepEqual(written.controllers, [ { ...primary, ...LOGIN, address: "10.0.0.8" }, { ...LOGIN, address: "10.0.0.2" } ],
+      "the primary keeps its other keys and every later controller stands");
+    assert.equal(primaryListedElsewhere({ controllers: [ primary, { ...LOGIN, address: "10.0.0.2" } ] }, { address: "10.0.0.8" }), false,
+      "and the early check agrees");
+
+    assert.equal(withPrimaryCredentials({ controllers: [ primary, later ] }, { ...CREDENTIALS }), null, "an address a later controller holds is refused");
+    assert.equal(primaryListedElsewhere({ controllers: [ primary, later ] }, { address: ADDRESS }), true, "and the early check agrees");
+
+    // The usual first run writes the address the primary already stores, alone or beside a later entry repeating it, and neither may be refused. The page reads
+    // the primary alone at its address, so the write beside a repeat holds the primary alone.
+    for(const others of [ [], [later] ]) {
+
+      const config: TestConfig = { controllers: [ { ...CREDENTIALS }, ...others ] };
+      const label = others.length ? " beside a later entry repeating it" : " alone";
+      const own = withPrimaryCredentials(config, { ...CREDENTIALS, password: "new secret" });
+
+      assert.ok(own, "the primary's own stored address is accepted" + label);
+      assert.deepEqual(own.controllers, [{ ...CREDENTIALS, password: "new secret" }], "and written onto the primary, which the write holds alone" + label);
+      assert.equal(primaryListedElsewhere(config, { address: ADDRESS }), false, "and the early check agrees" + label);
+    }
+
+    assert.equal(primaryListedElsewhere({}, { address: ADDRESS }), false, "and a fresh configuration has nothing to refuse");
+  });
+
+  test("first run accepts a case-only change of the primary's address, and beside a later entry at its form writes the primary alone", () => {
+
+    const primary = { ...LOGIN, address: "unifi.local" };
+    const alone = withPrimaryCredentials({ controllers: [primary] }, { ...LOGIN, address: "UNIFI.LOCAL" });
+
+    assert.ok(alone, "a case-only change of the primary's address is accepted when no later controller holds its form");
+    assert.deepEqual(alone.controllers, [{ ...LOGIN, address: "UNIFI.LOCAL" }], "and stored exactly as typed");
+    assert.equal(primaryListedElsewhere({ controllers: [primary] }, { address: "UNIFI.LOCAL" }), false, "and the early check agrees");
+
+    // A later entry at the primary's form repeats the primary, which the page reads as the primary alone, so the change is accepted and the write leaves the later
+    // entry out.
+    const shared: TestConfig = { controllers: [ primary, { ...LOGIN, address: "Unifi.Local" } ] };
+    const beside = withPrimaryCredentials(shared, { ...LOGIN, address: "UNIFI.LOCAL" });
+
+    assert.ok(beside, "a case-only change is accepted beside a later entry at the primary's form");
+    assert.deepEqual(beside.controllers, [{ ...LOGIN, address: "UNIFI.LOCAL" }], "and the write holds the primary alone, stored exactly as typed");
+    assert.equal(primaryListedElsewhere(shared, { address: "UNIFI.LOCAL" }), false, "and the early check agrees");
+  });
+});
+
+// The controllers values a hand edit can leave that are not a list, each beside the label its assertions name it by.
+const NOT_A_LIST = [ [ undefined, "undefined" ], [ null, "null" ], [ { address: ADDRESS }, "an object" ], [ "unifi.local", "a non-empty string" ],
+  [ "", "an empty string" ], [ 42, "a number" ] ] as [ unknown, string ][];
+
+describe("protect webUI configured controllers, one entry per listed address", () => {
+
+  test("a controllers value that is not a list reads as no controllers", () => {
+
+    for(const [ value, label ] of NOT_A_LIST) {
+
+      assert.deepEqual(controllers({ controllers: value }), [], label + " reads as an empty list");
+    }
+  });
+
+  // Every reader of the list goes through the helper, so a value that is not a list reaches none of them as anything but an empty list. The credentials gate is a
+  // control that answers the same for these values whether or not the helper checks for a list.
+  test("over a controllers value that is not a list, first run is required, passable, and writes a list holding the one new entry", () => {
+
+    for(const [ value, label ] of NOT_A_LIST) {
+
+      const config: ProtectConfig = { controllers: value };
+
+      assert.equal(hasValidCredentials(config), false, label + " holds no valid credentials, so first run is required");
+      assert.equal(primaryListedElsewhere(config, { address: ADDRESS }), false, label + " lists no address, and the early check answers without throwing");
+      assert.deepEqual(withPrimaryCredentials(config, { ...CREDENTIALS })?.controllers, [CREDENTIALS], label + " is written as a list holding the one new entry");
+    }
+  });
+
+  test("an entry that is not an object is left out, and the object entries beside it are kept in their stored order as the stored objects", () => {
+
+    const first = { ...CREDENTIALS };
+    const second = { ...LOGIN, address: "10.0.0.2" };
+    const read = controllers({ controllers: [ null, first, "unifi.local", second, 42 ] });
+
+    assert.equal(read.length, 2, "null, a string, and a number are left out");
+    assert.equal(read[0], first, "the first object entry is kept as the stored object itself");
+    assert.equal(read[1], second, "and so is the second, in its stored order");
+  });
+
+  // The comparison form is the listed-address rule's own, so the list the page reads and the refusal a save meets agree on which entries are one controller.
+  test("the first entry at an address is kept and every later entry at it is left out, by the form the listed-address rule compares in", () => {
+
+    const first = { ...LOGIN, address: "unifi.local" };
+
+    for(const [ repeat, label ] of [ [ "unifi.local", "the exact address" ], [ "UNIFI.Local", "the address in another case" ],
+      [ "  unifi.local\t", "the address with surrounding space" ] ] as [ string, string ][]) {
+
+      const read = controllers({ controllers: [ first, { ...LOGIN, address: repeat } ] });
+
+      assert.equal(read.length, 1, "a later entry at " + label + " is left out");
+      assert.equal(read[0], first, "and the first entry is kept as the stored object, beside a later entry at " + label);
+    }
+
+    // An entry whose address has no form never repeats another, so every one of these is kept, an absent address and an empty one each appearing more than once.
+    const distinct: ProtectControllerConfig[] = [ { ...LOGIN, address: "10.0.0.2" }, { ...LOGIN, address: "10.0.0.1" }, { ...LOGIN, address: "unifi.local." } ];
+    const formless: ProtectControllerConfig[] = [ { ...LOGIN }, { ...LOGIN, address: "" }, { ...LOGIN, address: "   " }, { ...LOGIN, address: 42 }, { ...LOGIN },
+      { ...LOGIN, address: "" } ];
+
+    assert.deepEqual(controllers({ controllers: distinct }).map((item) => distinct.indexOf(item)), [ 0, 1, 2 ],
+      "entries at different addresses are each kept as the stored object, in their stored order");
+    assert.deepEqual(controllers({ controllers: formless }).map((item) => formless.indexOf(item)), [ 0, 1, 2, 3, 4, 5 ],
+      "and every entry whose address has no form is kept as the stored object, in its stored order");
+  });
+
+  test("a save over a repeated address writes the edited first entry and no entry at the address after it, and a removal takes every spelling of its address", () => {
+
+    const other = { ...LOGIN, address: "10.0.0.2" };
+    const saved = withControllerSaved({ controllers: [ { ...CREDENTIALS }, other, { ...CREDENTIALS, username: "twin@example.com" } ] },
+      { ...CREDENTIALS, originalAddress: ADDRESS, password: "new secret" });
+
+    assert.ok(saved, "the edit is written");
+    assert.deepEqual(saved.controllers, [ { ...CREDENTIALS, password: "new secret" }, other ],
+      "with the edited first entry, the other address's entry, and no entry at the edited address after them");
+
+    const removed = withControllerRemoved({ controllers: [ { ...LOGIN, address: "unifi.local" }, { ...LOGIN, address: "UNIFI.local" }, other ] },
+      { address: "unifi.local" });
+
+    assert.deepEqual(removed.controllers, [other], "a removal takes the address's first entry, and the entry differing from it only in letter case leaves with it");
+  });
+
+  test("the controllers awaiting migration are read one entry per listed address, and a repeated entry alone causes no write", () => {
+
+    const both: TestConfig = { controllers: [ { ...CREDENTIALS, mqttUrl: LEGACY_BROKER },
+      { ...CREDENTIALS, mqttUrl: "mqtt://10.0.0.5:1883", username: "twin@example.com" } ] };
+    const laterOnly: TestConfig = { controllers: [ { ...CREDENTIALS }, { ...CREDENTIALS, mqttUrl: LEGACY_BROKER, username: "twin@example.com" } ] };
+
+    assert.deepEqual(controllersAwaitingMigration(both), [CREDENTIALS],
+      "where every entry at an address carries a legacy setting, the first entry's triple alone awaits migration");
+    assert.deepEqual(controllersAwaitingMigration(laterOnly), [], "where only the later entry carries one, nothing awaits migration");
+    assert.equal(protectConfig.migrate(laterOnly, RESOLVED), null, "and the migration over it has nothing to do, so the repeated entry stays where it is");
+  });
+
+  test("the migration over a repeated address composes the first entry's value alone and writes one successor there", () => {
+
+    const config: TestConfig = { controllers: [ { ...CREDENTIALS, mqttUrl: LEGACY_BROKER },
+      { ...CREDENTIALS, mqttUrl: "mqtt://10.0.0.5:1883", username: "twin@example.com" } ] };
+    const patch = migrated(config, RESOLVED);
+
+    assert.equal(engineWith(patch.options).value("Mqtt.Url", undefined, CONTROLLER_MAC), LEGACY_BROKER, "the first entry's broker composes at the controller's scope");
+    assert.equal(entriesFor(patch.options, "Mqtt.Url").length, 1, "and the later entry's broker composes nothing");
+    assert.deepEqual(patch.controllers, [CREDENTIALS], "and one successor is written at the address, the first entry's");
+
+    // A topic equal to the registered default composes nothing, which leaves the controller's scope open, so a later entry read here would compose its own topic.
+    const defaulted: TestConfig = { controllers: [ { ...CREDENTIALS, mqttTopic: PROTECT_MQTT_TOPIC },
+      { ...CREDENTIALS, mqttTopic: LEGACY_TOPIC, username: "twin@example.com" } ] };
+    const defaultedPatch = migrated(defaulted, RESOLVED);
+
+    assert.equal(engineWith(defaultedPatch.options).scope("Mqtt.Topic", undefined, CONTROLLER_MAC), "none",
+      "the later entry's topic composes nothing where the first entry's default composed nothing");
+    assert.deepEqual(defaultedPatch.controllers, [CREDENTIALS], "and one successor is written at the address");
+  });
+
+  test("the migration over an entry that is not an object, beside a controller with nothing to migrate, writes nothing", () => {
+
+    assert.equal(protectConfig.migrate({ controllers: [ "unifi.local", { ...CREDENTIALS } ] }, RESOLVED), null,
+      "an entry that is not an object causes no write, because the migration reads the list the page reads");
+  });
+});
+
+// The headlines, reasons, and guidance each device-list outcome renders under, transcribed rather than referenced so a sentence that drifts by a character in its
+// one home reddens a row.
+const CONNECTION_FAILURE_HEADLINE = "Unable to connect to the UniFi Protect controller.";
+const SERVER_FAILURE_HEADLINE = "The plugin's UI server did not answer as expected.";
+const SERVER_FAILURE_MESSAGE = "The plugin's UI server answered in an unrecognized shape.";
+const SERVER_FAILURE_GUIDANCE = "Reload this page. If it keeps happening, restart Homebridge and check its log for the reason.";
+
+// The device list a reachable controller answers, opening with the controller's own record as every list the UI server answers does.
+const LISTED_DEVICES = [ { mac: CONTROLLER_MAC, modelKey: "nvr" }, { mac: CAMERA_MAC, modelKey: "camera" } ];
+
+// The server's answer as the bridge resolved it, and the request the bridge rejected, in the settlement shape the reading takes.
+const answered = (value: unknown): PromiseSettledResult<unknown> => ({ status: "fulfilled", value });
+const rejected = (reason: unknown): PromiseSettledResult<unknown> => ({ reason, status: "rejected" });
+
+describe("protect webUI device-list outcomes", () => {
+
+  test("a device list with an empty error is the list, and its result carries the devices and no copy at all", () => {
+
+    const verdict = readDeviceListAnswer(answered({ devices: LISTED_DEVICES, error: "" }));
+    const result = deviceListResult(verdict);
+
+    assert.deepEqual(verdict, { devices: LISTED_DEVICES, kind: "list", message: "" }, "the list reads as itself");
+    assert.deepEqual(result, { devices: LISTED_DEVICES, error: "" }, "and hands the framework its devices with an empty error");
+    assert.deepEqual(Object.keys(result).sort(), [ "devices", "error" ], "a success carries no headline and no guidance");
+  });
+
+  test("an empty list with the server's reason is the unreachable controller, under its own headline and with no guidance", () => {
+
+    const verdict = readDeviceListAnswer(answered({ devices: [], error: "Invalid username or password." }));
+    const result = deviceListResult(verdict);
+
+    assert.deepEqual(verdict, { devices: [], headline: CONNECTION_FAILURE_HEADLINE, kind: "unreachable", message: "Invalid username or password." },
+      "the verdict carries the server's own reason under the headline that names the controller");
+    assert.deepEqual(result, { devices: [], error: "Invalid username or password.", headline: CONNECTION_FAILURE_HEADLINE },
+      "and its result carries no devices and no guidance, so the page's own guidance line stands beneath the server's text");
+  });
+
+  test("an empty list with an empty error reads as unreachable and maps to an empty hook error", () => {
+
+    const verdict = readDeviceListAnswer(answered({ devices: [], error: "" }));
+
+    assert.deepEqual(verdict, { devices: [], headline: CONNECTION_FAILURE_HEADLINE, kind: "unreachable", message: "" },
+      "a failure whose reason the server could not capture is still the unreachable controller");
+    assert.deepEqual(deviceListResult(verdict), { devices: [], error: "", headline: CONNECTION_FAILURE_HEADLINE },
+      "and its result carries no devices, an empty error, and no guidance, so the page shows what it shows for that answer from the server directly");
+  });
+
+  test("an answer in any shape the server never writes is the UI server failure, carrying the unrecognized-shape sentence", () => {
+
+    const malformed: unknown[] = [ undefined, null, "a string", 42, [], {}, { error: "" }, { error: 42 }, { devices: "a string", error: "" },
+      { devices: [], error: 42 }, { devices: LISTED_DEVICES, error: "a reason beside a list" } ];
+
+    for(const answer of malformed) {
+
+      const label = JSON.stringify(answer) ?? "undefined";
+      const verdict = readDeviceListAnswer(answered(answer));
+
+      assert.deepEqual(verdict, { devices: [], guidance: SERVER_FAILURE_GUIDANCE, headline: SERVER_FAILURE_HEADLINE, kind: "serverFailure",
+        message: SERVER_FAILURE_MESSAGE }, label + " reads as the UI server failure rather than as an empty controller");
+      assert.deepEqual(deviceListResult(verdict), { devices: [], error: SERVER_FAILURE_MESSAGE, guidance: SERVER_FAILURE_GUIDANCE, headline: SERVER_FAILURE_HEADLINE },
+        label + " maps to a failure with no devices, its sentence, its headline, and its own guidance");
+    }
+  });
+
+  test("a rejected request is the UI server failure carrying the rejection's own message, or the unrecognized-shape sentence when it has none", () => {
+
+    assert.deepEqual(deviceListResult(readDeviceListAnswer(rejected(new Error("The UI server did not respond.")))),
+      { devices: [], error: "The UI server did not respond.", guidance: SERVER_FAILURE_GUIDANCE, headline: SERVER_FAILURE_HEADLINE },
+      "a rejection with a message carries that message under the UI server's headline");
+    assert.deepEqual(deviceListResult(readDeviceListAnswer(rejected({ message: "Not Found", path: "/getDevices" }))),
+      { devices: [], error: "Not Found", guidance: SERVER_FAILURE_GUIDANCE, headline: SERVER_FAILURE_HEADLINE },
+      "a plain-object rejection, the shape the host's bridge rejects with, carries its own message rather than the object rendered as text");
+
+    // An empty failure message reads as a healthy controller, so a rejection that carries no message of its own carries the unrecognized-shape sentence.
+    for(const [ reason, label ] of [ [ { error: "a detail with no message" }, "a plain-object rejection with no message" ], [ undefined, "a rejection of undefined" ],
+      [ new Error(""), "an error with an empty message" ] ] as [ unknown, string ][]) {
+
+      assert.deepEqual(deviceListResult(readDeviceListAnswer(rejected(reason))),
+        { devices: [], error: SERVER_FAILURE_MESSAGE, guidance: SERVER_FAILURE_GUIDANCE, headline: SERVER_FAILURE_HEADLINE },
+        label + " carries the unrecognized-shape sentence");
+    }
+  });
+
+  test("a sidebar entry whose controller left the configuration states its own headline, reason, and guidance", () => {
+
+    assert.deepEqual(deviceListResult(staleSelectionVerdict()), { devices: [], error: "Its entry left the configuration after the sidebar was built.",
+      guidance: "Refresh the controller list to take it off the sidebar.", headline: "This controller is no longer in the plugin configuration." },
+    "the stale entry carries no devices and all of its own copy");
+  });
+
+  test("no two results share a device array", () => {
+
+    assert.notEqual(staleSelectionVerdict().devices, staleSelectionVerdict().devices, "every stale verdict composes a fresh array");
+    assert.notEqual(readDeviceListAnswer(answered({})).devices, readDeviceListAnswer(answered({})).devices, "as does every UI server failure");
+    assert.notEqual(readDeviceListAnswer(answered({ devices: [], error: "" })).devices, readDeviceListAnswer(answered({ devices: [], error: "" })).devices,
+      "and every unreachable verdict");
   });
 });
 

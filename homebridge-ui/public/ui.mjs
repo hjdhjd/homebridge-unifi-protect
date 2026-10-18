@@ -4,19 +4,15 @@
  */
 "use strict";
 
-import { controllers, controllersAwaitingMigration, hasValidCredentials, makeProtectConfig, primaryController, withControllerRemoved, withControllerSaved,
-  withPrimaryCredentials } from "./protect-config.mjs";
+import { CONTROLLER_LISTED_WARNING, controllerListedElsewhere, controllers, controllersAwaitingMigration, deviceListResult, hasValidCredentials, makeProtectConfig,
+  primaryController, primaryListedElsewhere, readDeviceListAnswer, staleSelectionVerdict, withControllerRemoved, withControllerSaved, withPrimaryCredentials }
+  from "./protect-config.mjs";
+import { createActionGuard, withDeadline } from "homebridge-plugin-utils/webUi-liveness.mjs";
+import { makeControllerActions, makeControllerLogin } from "./controller-actions.mjs";
 import { FeatureOptions } from "homebridge-plugin-utils/featureOptions.js";
 import { PluginConfigSession } from "homebridge-plugin-utils/pluginConfigSession.mjs";
+import { createSaveFlow } from "homebridge-plugin-utils/webui/saveflow.js";
 import { webUi } from "homebridge-plugin-utils/webUi.mjs";
-import { withDeadline } from "homebridge-plugin-utils/webUi-liveness.mjs";
-
-/* The bound in seconds on the option-catalog fetch below. The bound exists so a bridge call that never settles rejects rather than wedging the cached promise for the
- * life of the session. The trade it carries: a fetch that is legitimately slow but would eventually have settled costs a retry cycle rather than resolving, which is
- * cheap beside the permanent wedge the bound prevents, because the cache clears on rejection and a later read refetches fresh. It is deliberately its own constant
- * rather than the wiring bound below, so the inner fetch and the envelope around it cannot expire together.
- */
-const CATALOG_DEADLINE = 5;
 
 /* The bound in seconds on each individual controller probe. This is not a worst-case bound and does not pretend to be one: the Protect transport caps each HTTP call
  * at three and a half seconds, and a probe's first-ever login runs up to four calls in sequence - a login attempt, a token fetch, the login retry, and then the
@@ -35,42 +31,18 @@ const PROBE_DEADLINE = 5;
  */
 const WIRING_DEADLINE = 8;
 
-/* The option catalog, fetched once per session from the plugin's own UI server (a local request to /getOptions, never a cloud call). The framework fetches the same
- * endpoint for its own catalog on every show cycle; the two reads are independent by design, since the framework exposes no handle to its copy. The cached promise is
- * cleared on failure so a later read retries rather than pinning a transient fault for the session, and the bound above is what makes a call that never answers into
- * a failure the clear can act on.
+/* The bound in seconds on a controller login check. The Protect transport caps each HTTP call, and a first login runs several calls in sequence, so the bound sits
+ * well past a slow login and is reached only by a check whose answer is not coming. A check that outlasts it answers as the UI server's failure, carrying the
+ * deadline's own sentence, rather than leaving the card waiting on a request that never settles.
  */
-let catalogPromise = null;
-
-const getCatalog = () => {
-
-  catalogPromise ??= withDeadline({ promise: homebridge.request("/getOptions"), seconds: CATALOG_DEADLINE }).then((response) => {
-
-    // A response without the catalog shape the server publishes is a failure, not a default. Shaping it into an empty catalog would let the migration read every
-    // option as unconfigured and compose entries against a catalog that never described them, so a malformed response throws and the wiring declines instead.
-    if(!Array.isArray(response?.categories) || !response.categories.length || !response?.options || (typeof response.options !== "object")) {
-
-      throw new Error("Received a malformed response from the plugin option catalog.");
-    }
-
-    return { categories: response.categories, options: response.options };
-  }).catch((error) => {
-
-    catalogPromise = null;
-
-    throw error;
-  });
-
-  return catalogPromise;
-};
+const LOGIN_DEADLINE = 30;
 
 // Execute our first run screen if we don't have valid Protect login credentials and a controller. The framework injects our primary platform-config entry, so this is
 // a pure predicate over the persisted config rather than a reach into the feature-options page's state.
 const firstRunIsRequired = ({ config }) => !hasValidCredentials(config);
 
 // Initialize our first run screen with any information from our existing configuration. The injected config is the primary platform entry; we pre-populate the form
-// from its primary controller, if one is already configured. Populating also blanks the card's verdict line, which is what a verdict a prior module copy painted
-// wants: the frame and its elements outlive any single copy, so the line opens blank.
+// from its primary controller, if one is already configured.
 const firstRunOnStart = ({ config }) => {
 
   const controller = primaryController(config);
@@ -115,77 +87,37 @@ const renderVerdict = ({ detail = "", lines = [], row, tone = "" }) => {
   row.replaceChildren(...nodes);
 };
 
-/* Validate a controller login against the UI server and paint the outcome, shared by every card's validate control, every card's Save, and the first-run submit
- * so none of them can drift apart. The browser cannot reach the Protect controller directly, so the request bridges through the plugin's UI server. Returns the
- * discovered device list on
- * success and null on any failure - a missing field, a rejected login, or a request that threw - with the result line already painted for every outcome but
- * success, whose message belongs to the caller (the validate control says so in words; the submit moves straight on to committing).
- *
- * The verdict surface arrives from the card that asked, so a page holding several cards paints each answer on the card it belongs to and no card's slow response
- * can paint over another's.
- */
-const requestControllerLogin = async ({ address, password, username, verdict }) => {
-
-  // This request is the newest the moment it starts: the bump retires any response still in flight, and the value it answers is what this request's own resolution
-  // checks against below. Whatever the last validation said is stale now too, so the line is blanked before the call rather than after it - a call that never
-  // resolves must not leave an older verdict standing beside newer input.
-  const generation = verdict.invalidate();
-
-  if(!address?.length || !username?.length || !password?.length) {
-
-    verdict.render({ lines: ["Please enter a valid UniFi Protect controller address, username and password."], tone: "text-danger" });
-
-    return null;
-  }
-
-  try {
-
-    const { devices, error } = await homebridge.request("/getDevices", { address: address, password: password, username: username });
-
-    // A reopened panel mints a successor copy of this module, and an edit or a newer request retires this one within it - either way, a retired request must not
-    // paint over what the copy or the request the user is looking at is showing.
-    if(ui.epochSignal.aborted || !verdict.isCurrent(generation)) {
-
-      return null;
-    }
-
-    // Couldn't connect to the Protect controller. The two guidance sentences frame the failure and the controller-sourced error detail arrives with the device-list
-    // response, rendered as text so it is never interpreted as markup.
-    if(!devices?.length) {
-
-      verdict.render({ detail: error, lines: [ "Unable to login to the UniFi Protect controller.", "Please check your controller address, username, and password." ],
-        tone: "text-danger" });
-
-      return null;
-    }
-
-    return devices;
-  } catch(err) {
-
-    // A retired request's failure is nobody's news - the epoch and generation rules above govern this paint too.
-    if(ui.epochSignal.aborted || !verdict.isCurrent(generation)) {
-
-      return null;
-    }
-
-    // The UI server failing to start or respond lands here. Painting into the result line keeps the user on the form with the specific failure, while the
-    // framework's toast stays the generic net for consumers without their own handling.
-    verdict.render({ detail: (err instanceof Error) ? err.message : String(err), lines: ["Unable to validate your controller login."], tone: "text-danger" });
-
-    return null;
-  }
-};
+// The controller login check every card's validate control, every card's Save, and the first-run submit share, bounded by LOGIN_DEADLINE. The bridge's request is
+// reached through a closure rather than handed over as a reference, because the method reads its own object.
+const requestControllerLogin = makeControllerLogin({ deadline: LOGIN_DEADLINE, readDeviceListAnswer, request: (path, body) => homebridge.request(path, body),
+  withDeadline });
 
 // Validate our Protect credentials and commit them.
 const firstRunOnSubmit = async ({ commit, config }) => {
 
   const { address, password, username } = firstRunCard.values();
+  const action = firstRunCard.verdict.start();
 
-  const devices = await requestControllerLogin({ address, password, username, verdict: firstRunCard.verdict });
+  /* An address a controller after the primary already holds is refused before the login check, by the rule a controller save is refused under, because the
+   * answer needs no controller and the user should not wait on a login whose result would be thrown away. The card's action is started first, as a save's is,
+   * so a validation still in flight cannot paint over the refusal.
+   */
+  if(primaryListedElsewhere(config, { address })) {
 
-  if(!devices) {
+    firstRunCard.verdict.render({ lines: [CONTROLLER_LISTED_WARNING], tone: "text-warning" });
 
-    homebridge.hideSpinner();
+    return false;
+  }
+
+  const login = await requestControllerLogin({ address, password, signal: action.signal, username });
+
+  // A failed login is delivered through the action the submit started, which paints while the card presents it, and a retired one says nothing.
+  if(login.kind !== "passed") {
+
+    if(login.kind === "failed") {
+
+      action.report({ ...login.outcome, tone: "text-danger" });
+    }
 
     return false;
   }
@@ -193,7 +125,8 @@ const firstRunOnSubmit = async ({ commit, config }) => {
   try {
 
     // Persist the validated credentials through the session's single write hook. We own the shape of the write - credentials live under the primary controller, which
-    // withPrimaryCredentials encodes while preserving any additional controllers - and the session owns persistence and the preservation of sibling platform entries.
+    // withPrimaryCredentials encodes while preserving the additional controllers the configured list holds - and the session owns persistence and the preservation of
+    // sibling platform entries.
     await commit(withPrimaryCredentials(config, { address, password, username }));
 
     return true;
@@ -203,7 +136,6 @@ const firstRunOnSubmit = async ({ commit, config }) => {
     // first, so the framework's generic toast never fires for this plugin.
     firstRunCard.verdict.render({ detail: (err instanceof Error) ? err.message : String(err), lines: ["Unable to complete the plugin configuration."],
       tone: "text-danger" });
-    homebridge.hideSpinner();
 
     return false;
   }
@@ -218,37 +150,16 @@ const isController = (device) => device.modelKey === "nvr";
  * itself is working from rather than a snapshot taken at load. The docked editors populate their fields from it, which is a read the framework's render path gives
  * them no other way to make: the info-panel and connection-error bags carry the selection, not the configuration behind it.
  *
- * Nothing WRITES through this copy. Every write opens a session of its own and commits against what that session reads, so a stale copy here can only ever show a
- * stale field value in a collapsed card, never persist one.
+ * Nothing WRITES through this copy. A save or a removal composes against the configuration the page's coordinated write hands its composer at the moment of the
+ * write, and the load-time migration against what its own session reads, so a stale copy here never persists. A save's listed-address check does read it, ahead
+ * of the login check, so a stale copy can refuse a save the composer would accept, which the user retries once the page has caught up. It can never let a
+ * duplicate through, because the composer asks the same rule of the configuration the write composes over, and its refusal is the one that decides.
  */
 let injectedConfig = null;
 
-/* Each controller address's device list, as this session last fetched it and already processed for the framework to render. One answer serves every reader that
- * needs it, which is why what is kept is the processed list rather than any narrower derivative of it: the device view returns it on every re-entry, a removal
- * derives from it the
- * MAC addresses a settings sweep would strip, and the sidebar reads the controller's own name from it. A controller login and bootstrap costs a user five to twenty
- * seconds of dead air, and almost nothing about a controller changes between one re-entry and the next, so that price is paid once per address per session and the
- * Refresh control is how a user asks to pay it again.
- *
- * Only an answer that actually arrived is ever kept. A fetch that fails answers no devices at all and writes nothing here, so the connection-error view and the
- * framework's own retry cycle always act on a live attempt rather than on a hopeful memory of one. The map lives as long as this module copy, which is the page's
- * own lifetime, so a reopened panel connects afresh.
- */
-const devicesByAddress = new Map();
-
-/* The generation the map above is on, bumped by every event that retires what it holds: a controller saved, a controller removed, and the Refresh control. A fetch
- * captures this value before it calls the bridge and compares it after, writing only when the two still agree.
- *
- * The bridge offers no cancellation, so a fetch issued before an invalidation cannot be recalled and would otherwise be free to land its pre-invalidation answer
- * afterwards - the same supersession problem a card's login verdict solves the same way. A retired fill costs one extra fetch at the next selection, where a stale
- * serve would cost the rest of the session. One counter covers every address deliberately: its only failure mode is that extra fetch, and a counter nobody can
- * misindex beats a map of counters somebody can.
- */
-let cacheGeneration = 0;
-
 /* Add the fields the webUI framework renders from, and mark the controller entry with the address the plugin reached it at. It touches the device records and
- * nothing on the page, which is what lets both writers into the map above run it: the device view's own fetch, and a save re-seeding from the answer its validation
- * just received. One helper is what keeps those two from processing the same list into two different shapes.
+ * nothing on the page, which is what lets every filler of the kept controller answers run it: the device view's own fetch, and a save seeding from the answer its
+ * login just received. One helper is what keeps them from processing the same list into shapes that differ.
  */
 const processDeviceList = ({ address, devices }) => {
 
@@ -272,8 +183,8 @@ const processDeviceList = ({ address, devices }) => {
 };
 
 /* Show a controller's own name on its sidebar entry, which is something only a controller we have connected to can tell us - the configuration records an address
- * and the sidebar has nothing else to label the entry with until then. Every device fetch runs this, whether the list came off the wire or out of the map above: a
- * served list re-asserts the same string, and one uniform path is worth more than the assignment a divergent fast path would save.
+ * and the sidebar has nothing else to label the entry with until then. Every device fetch runs this, whether the list came off the wire or out of the kept
+ * answers: a served list re-asserts the same string, and one uniform path is worth more than the assignment a divergent fast path would save.
  */
 const patchControllerLabel = ({ address, devices }) => {
 
@@ -292,6 +203,29 @@ const patchControllerLabel = ({ address, devices }) => {
   }
 };
 
+/* The settings page's kept controller answers and the controller save and removal that write them, built once for this page copy. Everything those actions reach
+ * outside themselves is handed in from here, because each of those reaches is the page's to own: the framework's coordinated write, the host's toast, the login
+ * request over the UI-server bridge, the configuration the page last received, the configuration writers, the listed-address rule and its sentence, and the
+ * device-list processing. What the actions keep about each controller stays theirs, and the page reads it back through the handle alone.
+ */
+// The page's coordinated write, stated once and handed to the controller actions and to each card's save flow. It is reached through a closure rather than
+// handed over as a reference, because the framework page is constructed further down and the method reads its own object: taking the reference at call time
+// is what binds it to the page that exists by then.
+const commitConfig = (compose, options) => ui.featureOptions.commitConfig(compose, options);
+
+const { answers, removeController, saveController } = makeControllerActions({
+
+  commitConfig,
+  controllerListedElsewhere,
+  controllerListedWarning: CONTROLLER_LISTED_WARNING,
+  platformConfig: () => injectedConfig,
+  processDeviceList,
+  requestControllerLogin,
+  toast: homebridge.toast,
+  withControllerRemoved,
+  withControllerSaved
+});
+
 // Return the list of controllers from our plugin configuration, paired with a clean connection outcome - the list is configuration-derived, so no fetch is involved
 // and no failure can occur. The framework injects our primary platform-config entry; we map each configured controller to the sidebar shape, deliberately carrying
 // no credentials into the rendered list.
@@ -299,20 +233,13 @@ const getControllers = ({ config }) => {
 
   injectedConfig = config;
 
-  /* Close an open Add Controller card here, which is the one place that covers every way the view can be rebuilt underneath it. Every rebuild routes through this
-   * hook - a menu round trip's show(), an explicit refreshControllers(), and the connection-error view's own Retry, which re-enters show() without touching a menu
-   * button - so closing here needs no per-path wiring and can miss none of them. The card's region is outside the framework's own reveal cycle, so its lifetime is
-   * ours to end: a rebuild discards whatever was typed into it, which is what a view rebuilding out from under an unsaved form should do.
-   */
-  closeControllerEditor();
-
   /* Each entry is labeled with the controller's own name once this session has heard it, and with the configured address until then. The device list this session
    * already fetched is where that name comes from, so a repaint of the sidebar arrives carrying the same labels the user was already reading rather than reverting
    * every entry to its raw address until a controller is selected again.
    */
   return {
 
-    controllers: controllers(config).map((controller) => ({ name: devicesByAddress.get(controller.address)?.find(isController)?.name ?? controller.address,
+    controllers: controllers(config).map((controller) => ({ name: answers.get(controller.address)?.find(isController)?.name ?? controller.address,
       serialNumber: controller.address })),
     error: ""
   };
@@ -331,16 +258,16 @@ const getDevices = async (selectedController, { config }) => {
     return { devices: [], error: "" };
   }
 
-  // Find the entry in our plugin configuration. A sidebar entry can outlive a Settings-tab edit that removed its controller, so a miss is a carried failure with an
-  // actionable message rather than a silent empty result that would render nothing the user can act on.
+  // Find the entry in our plugin configuration. A sidebar entry can outlive a Settings-tab edit that removed its controller, so a miss is a carried failure whose
+  // copy names what became of the entry and what to do about it, rather than a silent empty result that would render nothing the user can act on.
   const controller = controllers(config).find((c) => c.address === selectedController.serialNumber);
 
   if(!controller) {
 
-    return { devices: [], error: "The selected controller is no longer in the plugin configuration." };
+    return deviceListResult(staleSelectionVerdict());
   }
 
-  const cached = devicesByAddress.get(controller.address);
+  const cached = answers.get(controller.address);
 
   // A controller this session has already reached answers from what it said then, ahead of any bridge call at all. Every tab re-entry and every re-select passes
   // through here, and repeating a full login and bootstrap for each of them is the wait the user notices most, for data that is almost never different.
@@ -353,24 +280,23 @@ const getDevices = async (selectedController, { config }) => {
 
   // The generation this fetch belongs to, read before the call and checked against after it, so an answer that an invalidation has overtaken can complete without
   // being kept.
-  const generation = cacheGeneration;
+  const generation = answers.generation();
 
-  // The browser cannot reach the Protect controller directly, so we bridge the request through the plugin's UI server, which holds the controller credentials. The
-  // server returns the device list and the connection error together.
-  const { devices, error } = await homebridge.request("/getDevices", { address: controller.address, password: controller.password, username: controller.username });
+  /* The browser cannot reach the Protect controller directly, so we bridge the request through the plugin's UI server, which holds the controller credentials. The
+   * server returns the device list and the connection error together. A request the bridge rejects is read too rather than thrown at the framework, whose copy for
+   * a hook that throws sends the user after the controller when the fault is the UI server's own.
+   */
+  const [settled] = await Promise.allSettled([homebridge.request("/getDevices", { address: controller.address, password: controller.password,
+    username: controller.username })]);
+  const verdict = readDeviceListAnswer(settled);
 
-  processDeviceList({ address: controller.address, devices });
-  patchControllerLabel({ address: controller.address, devices });
+  processDeviceList({ address: controller.address, devices: verdict.devices });
+  patchControllerLabel({ address: controller.address, devices: verdict.devices });
 
-  // Remember what this controller answered with, so every later re-entry is served from it. A fetch that failed answers no devices at all and is never kept, which
-  // is what keeps the connection-error view and its retry acting on live attempts; an answer a save or a removal overtook while it was in flight is dropped for the
-  // same reason, at the cost of one more fetch the next time this controller is selected.
-  if(devices.length && (generation === cacheGeneration)) {
+  // Offer what this controller answered for keeping, so every later re-entry is served from it. Whether it is worth keeping is the kept answers' own rule.
+  answers.keep({ address: controller.address, answer: verdict.devices, generation });
 
-    devicesByAddress.set(controller.address, devices);
-  }
-
-  return { devices, error };
+  return deviceListResult(verdict);
 };
 
 // Only show feature options that are valid for the capabilities of this device.
@@ -510,12 +436,14 @@ let cardInstances = 0;
  * @param options.noSweepReason  - What the removal confirmation says when there are no device settings it can offer to strip.
  * @param options.onCancel       - Invoked by the Cancel control, when the caller offers one.
  * @param options.onRemove       - Invoked with the MAC addresses to strip once a removal is confirmed, when the caller offers removal.
- * @param options.onSave         - Invoked by the Save control, when the caller offers one.
+ * @param options.onSave         - Invoked by the Save control, when the caller offers one. A card offering a Save carries the save flow its presses run through.
+ * @param options.removalAddress - A read of the configured address the card stands for, which a removal acts on and its confirmation names, when the caller offers
+ *                                 removal.
  * @param options.signal         - The caller's own lifecycle, when it has one. The card's teardown composes with it.
  *
- * @returns The card's surface: close, populate, values, and the verdict line.
+ * @returns The card's surface: close, its save flow or null, populate, values, and the verdict line.
  */
-const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", onCancel, onRemove, onSave, signal }) => {
+const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", onCancel, onRemove, onSave, removalAddress, signal }) => {
 
   const card = document.getElementById("hbupConnectionCard").content.firstElementChild.cloneNode(true);
   const fields = {};
@@ -541,45 +469,100 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
   const teardown = new AbortController();
   const cardSignal = signal ? AbortSignal.any([ signal, teardown.signal ]) : teardown.signal;
 
-  /* The generation of this card's newest login validation. It belongs to the card rather than to the module so two mounted cards cannot invalidate each other's
-   * verdicts: each request captures the value as it starts and checks it after resolving, so only the newest request ON THIS CARD can paint - an older response
-   * that loses the race discards itself rather than painting over what newer input or a newer request has put on screen. An edit bumps the generation too, which
-   * is what keeps a slow verdict from landing beside input it no longer describes. The UI-server bridge carries no abort surface, so supersession is enforced at
-   * the paint rather than on the wire.
+  /* This card's latest-action-wins guard over its validations, including the one every Save runs before it writes. It belongs to the card rather than to the
+   * module so two mounted cards cannot retire each other's actions: each action takes the guard's signal as it starts and reads it after resolving, so only the
+   * newest action ON THIS CARD acts on its answer - an older one that loses the race discards itself rather than painting over what newer input or a newer action
+   * has put on screen, and a Save waiting on it writes nothing. An edit retires the action in flight too, which is what keeps a slow verdict from landing beside
+   * input it no longer describes.
+   *
+   * The guard has no parent, because only this card's own acts retire an action: an edit, a Validate press, or another Save. Closing the card, hiding it, or
+   * populating it with another controller is moving on rather than retiring, so none of them stops a pressed Save, which goes on to write if its check passes;
+   * where each answer lands is the presentation rule start() states below. The UI-server bridge carries no abort surface, so a retired request still runs to its
+   * answer and is dropped there rather than cancelled on the wire.
    */
-  let generation = 0;
+  const guard = createActionGuard();
+
+  // The population the card is presenting, which every populate moves on. An action captures it when it starts, which is how the card tells an answer about what it
+  // shows now from an answer about what it showed when the action began.
+  let population = 0;
 
   // The MAC addresses a removal would offer to strip settings for, as the caller's last population named them.
   let removalMacs = [];
 
   const verdict = {
 
-    // Retire any validation still in flight, blank the line, and answer the generation this card is now on.
-    invalidate: () => {
+    render: (options = {}) => renderVerdict({ ...options, row }),
+
+    // Retire any action still in flight without starting another, and blank the line. An edit calls for this, because the verdict standing there describes input the
+    // card no longer holds.
+    retire: () => {
+
+      renderVerdict({ row });
+      guard.cancel();
+    },
+
+    /* Blank the line and begin an action, answering its signal, whether the card presents it, and the paint that lands an outcome on the line only while it does.
+     * The card presents an action while the card is open, the action has not been retired, the card still holds the population it held when the action began, and
+     * the line is on screen, all read at the moment it is asked or an outcome is painted. A validation's outcome that the card no longer presents is dropped,
+     * because nothing it found changed anything. A Save delivers through its save flow instead, which reads this same rule and raises the host's toast where the
+     * paint would drop, because the Save writes whether or not anyone is still looking at its card.
+     *
+     * Whether the line is on screen is read at delivery rather than tracked, because a card leaves the screen without closing in many ways, and most of them run
+     * none of this page's code: a device selection hides the docked editor, a disclosure collapses over it, another tab hides the whole view, and the
+     * connection-error view's panel is detached when the framework leaves that view. checkVisibility() answers false for every one of them - a detached element, a
+     * display: none ancestor, and hidden content alike.
+     */
+    start: () => {
 
       renderVerdict({ row });
 
-      return ++generation;
-    },
+      const signal = guard.start();
+      const startedUnder = population;
+      const presented = () => !cardSignal.aborted && !signal.aborted && (population === startedUnder) && row.checkVisibility();
 
-    // Whether a validation that started at the supplied generation is still the newest one this card issued.
-    isCurrent: (mark) => mark === generation,
-    render: (options = {}) => renderVerdict({ ...options, row })
+      return {
+
+        presented,
+        report: (outcome) => {
+
+          if(presented()) {
+
+            renderVerdict({ ...outcome, row });
+          }
+        },
+        signal
+      };
+    }
   };
+
+  /* This card's save flow, built once beside its guard when the caller offers a Save. The flow's one piece of state across presses is whether a write is in flight,
+   * so a flow belongs to the card it serves: a press during this card's write starts nothing and the card's Save control is not pressable for that span, while
+   * another card's write refuses nothing here. It begins each press through the card's own starter, so a Save retires and is retired by the card's other actions
+   * exactly as they retire each other, and it delivers each outcome under the presentation rule that starter answers.
+   */
+  const flow = onSave ? createSaveFlow({
+
+    commit: commitConfig,
+    control: control("save"),
+    start: verdict.start,
+    toast: homebridge.toast
+  }) : null;
 
   // Put the removal confirmation away. Every path that changes what the card is describing takes it back to its unarmed state, so a confirmation can never outlive
   // the controller it was naming.
   const disarmRemoval = () => removeConfirm.classList.add("d-none");
 
-  /* Arm the removal confirmation, naming the controller in words rather than in a browser dialog. The sweep is offered as the follow-on choice it is: the settings
-   * a user configured for a controller's devices are worth keeping when that controller is coming back under a new address, and worth deleting when it is gone for
-   * good, and only the user knows which. Without a device list there is nothing to offer, so the card says why instead of pretending the choice exists.
+  /* Arm the removal confirmation, naming the controller in words rather than in a browser dialog. The name is the configured address the removal acts on, read as
+   * the confirmation arms, rather than whatever the address field holds, so an unsaved edit of the field cannot make the prompt name one controller while the
+   * removal drops another. The sweep is offered as the follow-on choice it is: the settings a user configured for a controller's devices are worth keeping when
+   * that controller is coming back under a new address, and worth deleting when it is gone for good, and only the user knows which. Without a device list there
+   * is nothing to offer, so the card says why instead of pretending the choice exists.
    */
   const armRemoval = () => {
 
     const sweepable = removalMacs.length > 0;
 
-    card.querySelector("[data-role='removePrompt']").textContent = "Remove " + fields.address.value + " from this plugin? " + (sweepable ?
+    card.querySelector("[data-role='removePrompt']").textContent = "Remove " + removalAddress() + " from this plugin? " + (sweepable ?
       "You can also delete every feature option that was set for this controller and the devices it brought with it." : noSweepReason);
     control("removeSwept").classList.toggle("d-none", !sweepable);
     removeConfirm.classList.remove("d-none");
@@ -610,8 +593,12 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
       card.remove();
     },
 
+    // The save flow this card's Save presses run through, or null for a card that offers no Save.
+    flow,
+
     /* Fill the card in from a configured controller, and name what a removal would strip alongside it. Populating is also what disarms a standing removal
-     * confirmation and blanks the verdict line: both describe whatever the card was showing a moment ago, and the card is now describing something else.
+     * confirmation and blanks the verdict line: both describe whatever the card was showing a moment ago, and the card is now describing something else. It moves
+     * the card to a new population and retires nothing, so an action still in flight goes on and the presentation rule in start() decides where its answers land.
      */
     populate: ({ address, macs = [], password, username }) => {
 
@@ -619,9 +606,10 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
       fields.password.value = password;
       fields.username.value = username;
       removalMacs = macs;
+      population++;
 
       disarmRemoval();
-      verdict.invalidate();
+      renderVerdict({ row });
     },
 
     // What the user has typed, which is what every validation and every write reads.
@@ -632,42 +620,42 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
   // Each masked credential's reveal, bound from the markup itself: a toggle declares the field it serves, so the card grows a reveal without this wiring changing.
   for(const toggle of card.querySelectorAll("[data-reveal]")) {
 
-    ui.on(toggle, "click", () => toggleReveal({ input: fields[toggle.dataset.reveal], toggle }), { signal: cardSignal });
+    toggle.addEventListener("click", () => toggleReveal({ input: fields[toggle.dataset.reveal], toggle }), { signal: cardSignal });
   }
 
   // An edit to any credential retires the verdict standing beside it, so the line never describes anything but the current input.
   for(const field of Object.values(fields)) {
 
-    ui.on(field, "input", () => verdict.invalidate(), { signal: cardSignal });
+    field.addEventListener("input", () => verdict.retire(), { signal: cardSignal });
   }
 
-  ui.on(control("validate"), "click", () => void onValidateLogin({ button: control("validate"), card: surface }), { signal: cardSignal });
+  control("validate").addEventListener("click", () => void onValidateLogin({ button: control("validate"), card: surface }), { signal: cardSignal });
 
   if(onCancel) {
 
     control("cancel").classList.remove("d-none");
-    ui.on(control("cancel"), "click", onCancel, { signal: cardSignal });
+    control("cancel").addEventListener("click", onCancel, { signal: cardSignal });
   }
 
   if(onSave) {
 
     control("save").classList.remove("d-none");
-    ui.on(control("save"), "click", () => void onSave(), { signal: cardSignal });
+    control("save").addEventListener("click", () => void onSave(), { signal: cardSignal });
   }
 
   if(onRemove) {
 
     control("remove").classList.remove("d-none");
-    ui.on(control("remove"), "click", armRemoval, { signal: cardSignal });
-    ui.on(control("removeCancel"), "click", disarmRemoval, { signal: cardSignal });
+    control("remove").addEventListener("click", armRemoval, { signal: cardSignal });
+    control("removeCancel").addEventListener("click", disarmRemoval, { signal: cardSignal });
 
-    ui.on(control("removeConfirmed"), "click", () => {
+    control("removeConfirmed").addEventListener("click", () => {
 
       disarmRemoval();
       void onRemove({ macs: [] });
     }, { signal: cardSignal });
 
-    ui.on(control("removeSwept"), "click", () => {
+    control("removeSwept").addEventListener("click", () => {
 
       disarmRemoval();
       void onRemove({ macs: removalMacs });
@@ -677,123 +665,6 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
   container.replaceChildren(card);
 
   return surface;
-};
-
-/* Validate a card's login and persist it, which is the whole of what Save means.
- *
- * Validation comes first and a failure writes nothing at all: a controller the plugin cannot log into is not a configuration worth saving, and the card's own
- * verdict line already says why. The write then opens a session of its own rather than riding the feature-options page's long-lived one, because that page's
- * session is driven by its debounced option-persist effect and a card has no business staging anything behind it.
- *
- * The re-entry through refreshControllers() at the end is a correctness step rather than a repaint. The page's own session holds a replica of the configuration
- * that its option-persist effect writes from, and a save through an independent session leaves that replica describing the controllers as they were - so the next
- * option edit would quietly write the pre-save controller list back over this one. Re-entry re-reads the host configuration into that session before it repaints.
- * The window it cannot close is the instant between this commit and that re-read: an option edit whose debounce flushes inside it can still clobber, the same
- * in-flight instant every write on this page carries.
- *
- * @returns The address that was written, or null when nothing was.
- */
-const saveController = async ({ card, originalAddress }) => {
-
-  const { address, password, username } = card.values();
-  const devices = await requestControllerLogin({ address, password, username, verdict: card.verdict });
-
-  if(!devices) {
-
-    return null;
-  }
-
-  try {
-
-    const session = await PluginConfigSession.open({ host: homebridge, name: webUiParams.name });
-
-    // The epoch is read immediately before the write, and again after it, on the same terms the load-time wiring reads it: a reopened panel retires this copy, and
-    // a retired copy must not write configuration underneath the copy the user is looking at.
-    if(ui.epochSignal.aborted) {
-
-      return null;
-    }
-
-    await session.commit(withControllerSaved(session.platform, { address, originalAddress, password, username }));
-
-    if(ui.epochSignal.aborted) {
-
-      return null;
-    }
-
-    await homebridge.savePluginConfig();
-  } catch(err) {
-
-    card.verdict.render({ detail: (err instanceof Error) ? err.message : String(err), lines: ["Unable to save this controller."], tone: "text-danger" });
-
-    return null;
-  }
-
-  card.verdict.render({ lines: ["This controller has been saved."], tone: "text-success" });
-
-  /* What this session remembers about the controllers is now a write behind, so the generation moves and every fetch still in flight loses its claim to be kept.
-   * An address change also strands whatever was remembered under the address the user replaced, which names nothing the configuration holds any more; the Add
-   * Controller path has no previous address and strands nothing.
-   */
-  cacheGeneration++;
-
-  if(originalAddress && (originalAddress !== address)) {
-
-    devicesByAddress.delete(originalAddress);
-  }
-
-  /* The address that was just written is then re-seeded from this save's own validation, which logged into the controller with exactly these credentials moments
-   * ago and came back with its device list. That is newer than anything a deletion would have left behind, so the repaint below labels the entry with the
-   * controller's live name rather than falling back to the raw address, and the next selection is served rather than reconnecting.
-   */
-  devicesByAddress.set(address, processDeviceList({ address, devices }));
-
-  await ui.featureOptions.refreshControllers();
-
-  return address;
-};
-
-/* Remove a controller from the configuration, with the settings sweep the user chose.
- *
- * The write closes with the same re-entry Save makes, for the same reason, and then lands the page on the global view. That landing is not cosmetic: the node the
- * page was showing has just left the configuration, and the sidebar repaint replaces the controller list without moving the selection, so a page left alone would
- * go on showing a controller that no longer exists. The framework's own Global Options link is the affordance for that, so the landing is a click on the page's
- * own navigation rather than a reach into state the framework owns.
- */
-const removeController = async ({ address, card, macs }) => {
-
-  try {
-
-    const session = await PluginConfigSession.open({ host: homebridge, name: webUiParams.name });
-
-    if(ui.epochSignal.aborted) {
-
-      return;
-    }
-
-    await session.commit(withControllerRemoved(session.platform, { address, macs }));
-
-    if(ui.epochSignal.aborted) {
-
-      return;
-    }
-
-    await homebridge.savePluginConfig();
-  } catch(err) {
-
-    card.verdict.render({ detail: (err instanceof Error) ? err.message : String(err), lines: ["Unable to remove this controller."], tone: "text-danger" });
-
-    return;
-  }
-
-  // The controller is gone from the configuration, so what this session remembered about it goes with it, and the generation moves so a fetch that was already in
-  // flight for that address cannot put it back. The settings sweep read its MAC addresses long before this, when the card was populated.
-  cacheGeneration++;
-  devicesByAddress.delete(address);
-
-  await ui.featureOptions.refreshControllers();
-
-  document.querySelector("#controllersContainer .nav-link[data-navigation='global']")?.click();
 };
 
 /* Mount a card that edits a controller already in the configuration, in whichever home the caller names.
@@ -842,15 +713,20 @@ const mountControllerEditor = ({ collapsible = false, container, heading, helper
     onRemove: ({ macs }) => removeController({ address: configAddress, card, macs }),
     onSave: async () => {
 
-      const saved = await saveController({ card, originalAddress: configAddress });
+      const edited = configAddress;
+      const saved = await saveController({ card, originalAddress: edited });
 
-      // The card now stands for the address it just wrote. Following it is what keeps an address change an edit: without this, a second save would look for the
-      // address the user replaced, find nothing, and append a duplicate controller beside the one it meant to edit.
-      if(saved !== null) {
+      /* The card now stands for the address it just wrote. Following it is what keeps an address change an edit: without this, a second save would look for the
+       * address the user replaced, find nothing, and append a duplicate controller beside the one it meant to edit. A save outlives a repopulation, so the card
+       * follows only while it still stands for the item this save edited...once it has been pointed at another controller, following would aim that controller's
+       * next save or removal at the item this one wrote.
+       */
+      if((saved !== null) && (configAddress === edited)) {
 
         configAddress = saved;
       }
     },
+    removalAddress: () => configAddress,
     signal
   });
 
@@ -878,7 +754,7 @@ const mountControllerEditor = ({ collapsible = false, container, heading, helper
       card.populate({
 
         address: address,
-        macs: sweepable ? (devicesByAddress.get(address)?.map((device) => device.mac).filter((mac) => typeof mac === "string") ?? []) : [],
+        macs: sweepable ? (answers.get(address)?.map((device) => device.mac).filter((mac) => typeof mac === "string") ?? []) : [],
         password: item?.password ?? "",
         username: item?.username ?? ""
       });
@@ -1013,7 +889,7 @@ const featureOptionsParams = {
 
     controllerLabel: "Protect Controllers",
 
-    /* The refresh action the framework docks on the controller-list heading. Reloading the world is one generation bump and one cleared map: the handler is
+    /* The refresh action the framework docks on the controller-list heading. Reloading the world is clearing the kept controller answers: the handler is
      * invalidation and nothing more, because the framework owns everything around it - the re-entry through its own show(), the boot affordance that clothes the
      * refetch, and the control's in-flight state. The selection landing back on the first controller is what reloading costs, the same landing every framework
      * re-entry makes.
@@ -1021,11 +897,7 @@ const featureOptionsParams = {
     refresh: {
 
       label: "Refresh controllers",
-      onRefresh: () => {
-
-        cacheGeneration++;
-        devicesByAddress.clear();
-      }
+      onRefresh: () => answers.clear()
     }
   },
   ui: {
@@ -1109,10 +981,9 @@ const webUiParams = {
 const ui = new webUi(webUiParams);
 
 /* Adopt the framework's theming for this page - the design tokens, the themed canvas, the dark-mode corrections, the page-kit classes, and the host's own accent -
- * with one call that holds for as long as this module copy owns the window. Theming is a page concern rather than a view one, so the first-run page, the
- * feature-options view, and the support tab all wear it from here. The promise is voided rather than awaited because the framework owns its rejection posture: a
- * failed initial lighting-mode read still leaves the sheets adopted and the host's theme signals followed, so the next announcement the host makes brings the page
- * into step.
+ * with one call that holds for the life of the page. Theming is a page concern rather than a view one, so the first-run page, the feature-options view, and the
+ * support tab all wear it from here. The promise is voided rather than awaited because the framework owns its rejection posture: a failed initial lighting-mode read
+ * still leaves the sheets adopted and the host's theme signals followed, so the next announcement the host makes brings the page into step.
  */
 void ui.registerTheming();
 
@@ -1126,19 +997,36 @@ const onValidateLogin = async ({ button, card }) => {
 
   try {
 
-    const devices = await requestControllerLogin({ ...card.values(), verdict: card.verdict });
+    const action = card.verdict.start();
+    const login = await requestControllerLogin({ ...card.values(), signal: action.signal });
 
-    // The epoch signal is read after the await: a reopened panel mints a successor copy of this module, and a retired copy must not paint over what the copy the
-    // user is looking at is showing. The helper paints every failure itself, so only the success verdict is ours to say.
-    if(ui.epochSignal.aborted || !devices) {
+    // Every outcome is said through the same action the check ran under, so an answer about a controller the card has moved on from, or about a card that has left
+    // the screen, is dropped rather than painted where nobody asked for it.
+    switch(login.kind) {
 
-      return;
+      case "passed": {
+
+        action.report({ lines: ["Your UniFi Protect controller login is valid."], tone: "text-success" });
+
+        break;
+      }
+
+      case "failed": {
+
+        action.report({ ...login.outcome, tone: "text-danger" });
+
+        break;
+      }
+
+      // A retired login belongs to an action a newer act on the card already replaced, so it says nothing at all.
+      default: {
+
+        break;
+      }
     }
-
-    card.verdict.render({ lines: ["Your UniFi Protect controller login is valid."], tone: "text-success" });
   } finally {
 
-    // The re-enable is unconditional, superseded copy or not: the invocation that disabled the control is the only thing that can balance its own disable.
+    // The re-enable is unconditional: the invocation that disabled the control is the only thing that can balance its own disable.
     button.disabled = false;
   }
 };
@@ -1167,83 +1055,77 @@ const toggleReveal = ({ input, toggle }) => {
  */
 const firstRunCard = mountConnectionCard({ container: document.getElementById("hbupFirstRunCard") });
 
-/* The card the Add Controller affordance opens, or null when the affordance is closed.
+/* The takeover handle the open Add Controller card holds the page's content area with, or null when the affordance is closed.
  *
- * Its region sits outside the framework's own reveal cycle, so nothing the framework does opens or closes it and its whole lifetime is ours. That is why it closes
- * on every exit path rather than being left standing: an unsaved card that survived a view rebuild would be describing a page that no longer exists behind it.
+ * The card stands in the content area through the framework's takeover, so the framework hides and restores its own regions around the card and ends the takeover
+ * itself when the user moves the selection in the sidebar, another open takes the area, or the page cycle ends - a navigate-away, or a write that re-enters the
+ * page. A save or a removal the page re-establishes in place leaves it standing. Whatever ends it, the handle's abort is the one place this reference is cleared
+ * and the card torn down, so no exit path can leave the reference naming a card that is gone.
  */
-let addCard = null;
+let addCardTakeover = null;
 
-// Put the Add Controller card away and give the feature-options view back its main content, discarding whatever was typed into it. Closing an already-closed
-// affordance is nothing at all, which is what lets every exit path call it without first asking whether it is open.
+// Put the Add Controller card away by giving the page's content area back, discarding whatever was typed into it. With no card open there is no takeover to
+// release, so every exit path can call this without first asking whether the affordance is open.
 const closeControllerEditor = () => {
 
-  if(!addCard) {
-
-    return;
-  }
-
-  addCard.close();
-  addCard = null;
-
-  document.getElementById("hbupControllerEditor").style.display = "none";
-  document.getElementById("hbupFeatureContent").style.display = "";
+  addCardTakeover?.release();
 };
 
 /* Open a blank card as the whole of the feature-options view's main content.
  *
- * The framework's own regions are hidden by hiding the wrapper this plugin put around them, never by writing on the regions themselves: the framework sets their
- * display on its own teardown-and-reveal schedule, and two writers on one element would eventually disagree. Hiding a wrapper of our own leaves everything the
- * framework wrote exactly as it wrote it, so restoring the view is a single assignment and the framework never notices the card was there.
+ * The card is handed to the framework's takeover inside an element of its own, made fresh for each open and carrying the compact-card class the page's style
+ * block keys on, and the framework hides its own regions while the card holds the area and restores them when the takeover ends. The handle's signal is the
+ * card's lifetime, so the card's listeners leave with the takeover however it ends. A second open takes the area again and the framework ends the first card's
+ * takeover as it does, so the area passes from one card to the next with no flash of the page beneath.
  */
 const openControllerEditor = () => {
 
-  const region = document.getElementById("hbupControllerEditor");
+  const element = document.createElement("div");
 
-  // A second click while the affordance is already open would otherwise mount a second card over the first and leak the first one's wiring.
-  closeControllerEditor();
+  element.className = "hbup-compact-card";
 
-  addCard = mountConnectionCard({
+  const takeover = ui.featureOptions.takeover(element);
 
-    container: region,
+  const card = mountConnectionCard({
+
+    container: element,
     heading: "Add a UniFi Protect controller",
     helper: "Enter the controller's address and a local user's login. The login is validated against the controller before anything is saved.",
     onCancel: () => closeControllerEditor(),
-    onSave: () => saveController({ card: addCard, originalAddress: undefined })
+    onSave: async () => {
+
+      const saved = await saveController({ card, originalAddress: undefined });
+
+      /* A save that wrote something gives the area back itself, whatever the write did to the page: an in-place re-establishment leaves the takeover standing, and
+       * a re-entry has already ended it, where the release does nothing. It releases this card's own handle rather than going through the close above, because the
+       * save resolves after an await and by then the area may belong to a later open.
+       */
+      if(saved !== null) {
+
+        takeover.release();
+      }
+    },
+    signal: takeover.signal
   });
 
-  document.getElementById("hbupFeatureContent").style.display = "none";
-  region.style.display = "";
+  addCardTakeover = takeover;
+
+  // Every end of the takeover arrives here as one abort - this plugin's own release, a sidebar selection, a later open, or the page cycle ending - so the reference
+  // is cleared and the card torn down along a single path whichever of them it was.
+  takeover.signal.addEventListener("abort", () => {
+
+    addCardTakeover = null;
+    card.close();
+  }, { once: true });
 };
 
-/* Wire the plugin's own page controls. Every binding registers through the facade, so a superseded module copy's handlers die when a newer copy claims the window.
- *
- * The lookups hand their result straight to the facade: a nullish target declares that surface absent, so registering against a control this page's markup omits
- * is the facade's own documented no-op and costs that control's wiring alone.
- */
-ui.on(document.getElementById("hbupAddController"), "click", () => openControllerEditor());
-
-/* A sidebar navigation click closes the Add Controller card, so choosing somewhere else to be takes effect at once rather than at the next rebuild. The rebuild
- * paths close it too, at the controller hook they all pass through; this is for the immediacy the rebuild cannot give, since navigating within an already-rendered
- * view rebuilds nothing. The binding is delegated from the plugin's own column, so it survives every repaint the framework makes to the sidebar inside it.
- */
-ui.on(document.getElementById("hbupSidebarColumn"), "click", (event) => {
-
-  if(event.target.closest(".nav-link[data-navigation]")) {
-
-    closeControllerEditor();
-  }
-});
+// Wire the plugin's own page controls. The controls are part of this page's markup and live as long as the page does, so their listeners carry no signal.
+document.getElementById("hbupAddController").addEventListener("click", () => openControllerEditor());
 
 // The load-time wiring's own lifecycle. Aborting it is how an envelope that failed or expired tells a continuation still running underneath it that it must not stage
-// anything after the fact.
+// anything after the fact, and its signal is the one every cancellation point below reads.
 const wiringController = new AbortController();
-
-/* The signal the wiring's cancellation points read: the envelope's own controller, bounded by this module copy's claim on the window. The epoch half matters because
- * a reopened settings panel mints a successor copy and retires this one, so whichever of the two aborts first cancels a superseded copy's wiring at the same
- * chokepoints the deadline uses, rather than letting a retired copy write configuration underneath the copy the user is looking at.
- */
-const wiringSignal = ui.epochBounded(wiringController.signal);
+const wiringSignal = wiringController.signal;
 
 /* Run the legacy-settings migration, once, at load.
  *
@@ -1263,7 +1145,7 @@ const wiringSignal = ui.epochBounded(wiringController.signal);
  * whatever the earlier pass migrated is still sitting in the configuration the later one read, and the next open migrates it again.
  *
  * One further bound, stated plainly: the check before the commit is the last cancellation point. A commit whose bridge round trip is already in flight cannot be
- * recalled, because the session takes no signal and the deadline bounds only the await, so composing the epoch into the signal narrows the stale-write window to
+ * recalled, because the session takes no signal and the deadline bounds only the await, so the check narrows the window in which an expired envelope still writes to
  * that in-flight instant rather than closing it.
  *
  * When the envelope fails, nothing has been written and the page loads exactly as it otherwise would. No read this webUI performs consults the consolidated
@@ -1272,7 +1154,12 @@ const wiringSignal = ui.epochBounded(wiringController.signal);
  */
 const wireProtectConfig = async () => {
 
-  const protectConfig = makeProtectConfig({ FeatureOptions, catalog: await getCatalog() });
+  /* The catalog is the framework's own page-lifetime read of it, the one its feature-options boot shares, so the migration composes against exactly what the page
+   * renders. That read rejects an answer without the catalog shape the server publishes rather than shaping it into an empty catalog, because an empty one would let
+   * the migration read every option as unconfigured and compose entries against a catalog that never described them. A malformed answer, a missed deadline, and a
+   * failed request each decline the wiring here, before the session opens, so nothing is written and the page loads as it otherwise would.
+   */
+  const protectConfig = makeProtectConfig({ FeatureOptions, catalog: await ui.featureOptions.catalog() });
 
   // The library's session is the single conduit the framework's own writes use, so the patch merges onto a replica synced just now rather than onto a snapshot taken
   // before the page opened. The name seeds the primary platform entry, and it is read from the same constant the framework is configured with so the two cannot drift.
@@ -1291,11 +1178,12 @@ const wireProtectConfig = async () => {
 
   await Promise.all(controllersAwaitingMigration(session.platform).map(async ({ address, password, username }) => {
 
-    const response = await withDeadline({ promise: homebridge.request("/getDevices", { address, password, username }), seconds: PROBE_DEADLINE,
-      signal: wiringSignal }).catch(() => null);
+    const [settled] = await Promise.allSettled([withDeadline({ promise: homebridge.request("/getDevices", { address, password, username }),
+      seconds: PROBE_DEADLINE, signal: wiringSignal })]);
 
-    // The controller reports itself as a device whose model key is "nvr", so it is found by that key rather than by its position in the list.
-    const mac = response?.devices?.find(isController)?.mac;
+    // The controller reports itself as a device whose model key is "nvr", so it is found by that key rather than by its position in the list. A probe that failed
+    // in any way reads as a verdict with no devices, so it finds nothing.
+    const mac = readDeviceListAnswer(settled).devices.find(isController)?.mac;
 
     if(mac) {
 
@@ -1327,15 +1215,9 @@ const wireProtectConfig = async () => {
 
     const topology = (await Promise.all(controllers(session.platform).map(async ({ address, password, username }) => {
 
-      const response = await withDeadline({ promise: homebridge.request("/getDevices", { address, password, username }), seconds: PROBE_DEADLINE,
-        signal: wiringSignal }).catch(() => null);
-      const devices = response?.devices;
-
-      if(!Array.isArray(devices)) {
-
-        return null;
-      }
-
+      const [settled] = await Promise.allSettled([withDeadline({ promise: homebridge.request("/getDevices", { address, password, username }),
+        seconds: PROBE_DEADLINE, signal: wiringSignal })]);
+      const { devices } = readDeviceListAnswer(settled);
       const mac = devices.find(isController)?.mac;
 
       return mac ? { devices: devices.filter((device) => !isController(device) && device?.mac).map((device) => ({ mac: device.mac })), mac } : null;
@@ -1350,8 +1232,7 @@ const wireProtectConfig = async () => {
     }
   }
 
-  // The signal is read immediately before the write, so an envelope that expired while the probes were still running - or a copy the window has retired - cannot
-  // stage a patch after the fact.
+  // The signal is read immediately before the write, so an envelope that expired while the probes were still running cannot stage a patch after the fact.
   if(patch && !wiringSignal.aborted) {
 
     await session.commit(patch);
@@ -1360,14 +1241,14 @@ const wireProtectConfig = async () => {
     // rather than forced, which leaves the migration staged for the user's own save - the weaker outcome, and the honest one.
     if(!wiringSignal.aborted) {
 
-      await homebridge.savePluginConfig();
+      await session.persist();
     }
   }
 };
 
 try {
 
-  await withDeadline({ promise: wireProtectConfig(), seconds: WIRING_DEADLINE, signal: wiringSignal });
+  await withDeadline({ promise: wireProtectConfig(), seconds: WIRING_DEADLINE });
 } catch(error) {
 
   wiringController.abort(error);

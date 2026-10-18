@@ -15,6 +15,29 @@ import { analyzeLegacyFeatureOptions } from "./options-legacy.ts";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import { streamingDelegateFactory } from "./media/stream.ts";
 
+/* The form an address is compared in to tell whether two configured entries name one controller: surrounding space removed and letters lowercased. An address
+ * that is absent, not a string, or empty once trimmed has no form and never repeats another. It is the settings page's listed-address form, so the page and the
+ * plugin agree on which entry at an address is the first.
+ */
+function listingForm(address: unknown): Nullable<string> {
+
+  if(typeof address !== "string") {
+
+    return null;
+  }
+
+  const trimmed = address.trim();
+
+  return trimmed.length ? trimmed.toLowerCase() : null;
+}
+
+// Whether a configured entry is an object, which an entry has to be before anything in it can be read. A hand edit can leave anything in the list, and the type the
+// configuration is read through cannot say so, so the check takes the entry as unknown.
+function isObject(entry: unknown): entry is object {
+
+  return (typeof entry === "object") && (entry !== null);
+}
+
 // The Homebridge dynamic platform plugin for UniFi Protect. Owns FFmpeg capability detection, the RTP port allocator, and the per-controller ProtectNvr
 // instances the plugin manages.
 export class ProtectPlatform implements DynamicPlatformPlugin {
@@ -74,7 +97,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     // Plugin options into our config variables.
     this.config = {
 
-      controllers: config?.controllers ?? [],
+      // A hand edit can leave anything under controllers, and a value that is not a list names no controller at all.
+      controllers: Array.isArray(config?.controllers) ? config.controllers : [],
       debugAll: config?.debug === true,
       options: config?.options ?? [],
       ringDelay: config?.ringDelay ?? 0,
@@ -99,8 +123,41 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
       this.log.info("Verbose logging of video streaming sessions enabled. Expect a lot of data.");
     }
 
+    /* The first entry at each listed address, keyed by its listing form, and whether a later entry repeating it has been reported. A controller is reached by its
+     * address, so the first entry at an address is the one we read, and every later entry there is skipped ahead of the checks below, with one warning per address
+     * however many entries repeat it.
+     */
+    const firstEntries = new Map<string, { address: string; warned: boolean }>();
+
     // Loop through each configured NVR and instantiate it.
     for(const controllerConfig of this.config.controllers) {
+
+      // An entry that is not an object carries nothing to start.
+      if(!isObject(controllerConfig)) {
+
+        continue;
+      }
+
+      const form = listingForm(controllerConfig.address);
+
+      if(form !== null) {
+
+        const first = firstEntries.get(form);
+
+        if(first) {
+
+          if(!first.warned) {
+
+            first.warned = true;
+            this.log.warn("The controller %s is listed more than once in the plugin configuration. Only its first entry is used. Saving that controller in the plugin " +
+              "settings removes the extra entries.", first.address);
+          }
+
+          continue;
+        }
+
+        firstEntries.set(form, { address: controllerConfig.address, warned: false });
+      }
 
       // We need an address, or there's nothing to do.
       if(!controllerConfig.address) {
