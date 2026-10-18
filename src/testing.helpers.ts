@@ -1476,7 +1476,7 @@ export interface TestTimeshiftBuffer {
 export interface TestTimeshiftSupervisor {
 
   readonly buffer: TestTimeshiftBuffer;
-  reconcile: () => Promise<boolean>;
+  reconcile: () => Promise<void>;
   reconcileCalls: number;
   shutdown: () => void;
   shutdownCalls: number;
@@ -1497,11 +1497,11 @@ export function makeTimeshiftSupervisorDouble(): TestTimeshiftSupervisor {
   const supervisor: TestTimeshiftSupervisor = {
 
     buffer,
-    reconcile: (): Promise<boolean> => {
+    reconcile: (): Promise<void> => {
 
       supervisor.reconcileCalls++;
 
-      return Promise.resolve(true);
+      return Promise.resolve();
     },
     reconcileCalls: 0,
     shutdown: (): void => { supervisor.shutdownCalls++; },

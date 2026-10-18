@@ -137,18 +137,10 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     // Push the updated demand to the supervisor and reconcile the timeshift buffer against it. The demand setter owns the per-episode narration resets on the
     // disable edge, so they land synchronously with the demand write even when reconcile passes coalesce. The reconciler is bidirectional, concurrency-safe, and
-    // safe to call more than once...see the supervisor for the rules it holds to.
-    if(!(await this.supervisor.setRecordingDemand({ config: this.recordingConfig, isRecording: active }))) {
-
-      return;
-    }
-
-    // Nothing further to do when disabling recording...the reconciler has handled the teardown. The enable-acknowledgment log lives in the supervisor's
-    // successful-start path (its single source of truth - the configuration event), so it fires once per enable episode on whatever path first configures the timeshift.
-    if(!active) {
-
-      return;
-    }
+    // safe to call more than once...see the supervisor for the rules it holds to. On a disable the reconciler has handled the teardown, and the enable-acknowledgment
+    // log lives in the supervisor's successful-start path (its single source of truth - the configuration event), so it fires once per enable episode on whatever path
+    // first configures the timeshift.
+    await this.supervisor.setRecordingDemand({ config: this.recordingConfig, isRecording: active });
   }
 
   // Process updated recording configuration settings from HomeKit Secure Video.
@@ -384,9 +376,9 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
   }
 
   // Reconcile the timeshift buffer against current demand - the delegate-facing join for the recording-request lazy backstop and the test suites. A direct
-  // synchronous return of the supervisor's promise: no async wrapper, so joining callers preserve the reconciler's check-and-set atomicity with no added
-  // microtask boundary.
-  public configureTimeshifting(): Promise<boolean> {
+  // synchronous return of the supervisor's promise: no async wrapper, so a caller joining here holds the very promise every other caller of the pass in flight
+  // holds, with no added microtask boundary.
+  public configureTimeshifting(): Promise<void> {
 
     return this.supervisor.reconcile();
   }

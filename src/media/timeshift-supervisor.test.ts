@@ -2,11 +2,11 @@
  *
  * timeshift-supervisor.test.ts: Behavior coverage of the timeshift buffer supervisor - the reconciler's lifecycle authority over the standing buffer.
  *
- * The supervisor owns the reconcile loop, the pushed recording demand, the per-episode narration state, and the terminal shutdown latch; the recording delegate
- * consumes it through the configureTimeshifting forwarder and the setRecordingDemand pushes. This suite covers that surface from both directions: through the
+ * The supervisor owns the reconcile passes, the pushed recording demand, the per-episode narration state, and the lifetime signal shutdown aborts; the recording
+ * delegate consumes it through the configureTimeshifting forwarder and the setRecordingDemand pushes. This suite covers that surface from both directions: through the
  * delegate's public interface (the deferred-offline and resolution narration, and the enable-acknowledgment lifecycle - reconcile-only behaviors that never touch the
- * transmit path, so no recording-process factory is involved) and through the supervisor directly (the demand-edge episode resets, the shutdown latch, the buffer's
- * channel-profile lifecycle, and the forwarder's promise-identity join semantics).
+ * transmit path, so no recording-process factory is involved) and through the supervisor directly (the demand-edge episode resets, the lifetime's end at shutdown,
+ * the buffer's channel-profile lifecycle, and the forwarder's promise-identity join semantics).
  *
  * The arrangement reuses the harness's camera-host double end to end: the segment-yielding parking livestream double fills the buffer so starts genuinely succeed,
  * the controllable livestream double drives the channel-profile lifecycle's failure and out-of-band-death arms, and the recorded log sink carries the narration
@@ -54,15 +54,16 @@ function makeRecordingConfig(): CameraRecordingConfiguration {
   return { prebufferLength: 4000, videoCodec: { parameters: { bitRate: 2000 }, resolution: [ 1920, 1080, 30 ] } } as unknown as CameraRecordingConfiguration;
 }
 
-// A ChannelProfile resolved from a real G2 Pro channel, so the channel's id and fps reach the reconciler exactly as production composes them. We guard the
-// indexed access because host.ufp.channels[0] widens to ProtectCameraChannelConfig | undefined under noUncheckedIndexedAccess.
-function makeChannelProfile(host: TestCameraHost): ChannelProfile {
+// A ChannelProfile resolved from a real G2 Pro channel, so the channel's id and fps reach the reconciler exactly as production composes them. The index picks the
+// channel, the first by default, so a restart row can steer the selection onto a different stream. We guard the indexed access because host.ufp.channels[index]
+// widens to ProtectCameraChannelConfig | undefined under noUncheckedIndexedAccess.
+function makeChannelProfile(host: TestCameraHost, index = 0): ChannelProfile {
 
-  const channel = host.ufp.channels[0];
+  const channel = host.ufp.channels[index];
 
   if(!channel) {
 
-    throw new Error("The G2 Pro channel fixture is missing its first channel.");
+    throw new Error("The G2 Pro channel fixture is missing the requested channel.");
   }
 
   return { channel, name: channel.name, resolution: [ 1920, 1080, 30 ], url: "rtsps://test" };
@@ -194,7 +195,7 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
   });
 
   // The settling tail's far edge. The same running-phase deferral, but the observed reboot is older than the window, so the tail does not explain this camera and the
-  // deferral is organic at WARN. Paired with the arm above, this pins the tail as a window rather than a permanent quieting of everything that follows a reboot.
+  // deferral is organic at WARN. Paired with the arm above, this holds the tail to a window rather than a permanent quieting of everything that follows a reboot.
   test("logs the deferred-offline notice at warn once an observed reboot's settling tail has elapsed", async () => {
 
     const { delegate, logEntries, nvr } = arrangeDeferralDelegate();
@@ -263,8 +264,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
 
   // No resolution when recording cannot actually run. A recording is deferred offline, then the camera becomes reachable BUT the timeshift start fails (the livestream
   // double yields no segments, so whenEstablished resolves false and the buffer's start returns false, taking the early return before the successful-start path). The
-  // resumption must NOT be announced - recording did not actually resume - at either level. This pins the decisive correction: the announcement is past the start
-  // success, not on the bare reachability edge.
+  // resumption must NOT be announced - recording did not actually resume - at either level. This holds the announcement past the start success rather than on the
+  // bare reachability edge.
   test("does not announce a resumption when the camera is reachable but the timeshift start fails", async () => {
 
     const { delegate, host, logEntries } = arrangeDeferralDelegate();
@@ -287,10 +288,10 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "no resumption is announced at debug when the start fails");
   });
 
-  // #24: the deferred-offline resumption must survive a FAILED first post-online start and still fire on the pass that actually re-establishes. A recording is deferred
+  // The deferred-offline resumption must survive a FAILED first post-online start and still fire on the pass that actually re-establishes. A recording is deferred
   // offline, the camera comes back but the first start fails (segment-less double), then the buffer re-fills and the second start succeeds. The resumption narration is
-  // owed by the persistent episode value, not the per-pass edge-detect input, so the earlier failure does not lose it. The regression this test exists to pin: a single
-  // flag conflating both roles was cleared by the failing pass, and the resumption was permanently lost.
+  // owed by the persistent episode value, not the per-pass edge-detect input, so the earlier failure does not lose it. The failure this test exists to catch: a single
+  // flag serving both roles is cleared by the failing pass, and the resumption is lost for good.
   test("the deferred-offline resumption survives a failed first post-online start and fires on the real restart", async () => {
 
     const { delegate, host, logEntries } = arrangeDeferralDelegate();
@@ -482,11 +483,11 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     assert.equal(supervisor.pendingResolution, false, "the demand-disable cleared the pending-resolution narration field");
   });
 
-  // The reset lives at the demand EDGE, not inside a reconcile pass, and the suspension window is where those two placements part company. A pass is pinned mid-start
+  // The reset lives at the demand EDGE, not inside a reconcile pass, and the suspension window is where those two placements part company. A pass is held mid-start
   // on a gated establishment while the episode is owed; the disable then lands synchronously, so at the assert below the suspended pass predates the disable and the
   // coalesced follow-up has not begun - a reset relocated into the pass could not yet have run, and the projection would still read owed. The held start is then
-  // released against an armed shutdown latch, so it declines at its commit point and the suspended pass resumes into the guard rather than narrating from state the
-  // disable has already retired.
+  // released after the supervisor's lifetime has ended, so it declines at its commit point and the suspended pass ends on the start's failure, narrating nothing from
+  // state the disable has already retired.
   test("a demand-disable clears the pending resolution while a start is still suspended mid-pass", async () => {
 
     const { controller, host, logEntries } = makeTestCameraHost();
@@ -523,8 +524,8 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
 
     assert.equal(supervisor.pendingResolution, false, "the demand edge cleared the episode while the in-flight pass was still suspended");
 
-    // End through the decline path: the shutdown latch arms before the establishment releases, so the resumed start declines at its commit point and the suspended
-    // pass never reaches the narration blocks with the configuration the disable retired.
+    // End through the decline path: the supervisor's lifetime ends before the establishment releases, so the resumed start declines at its commit point and the
+    // suspended pass never reaches the narration blocks with the configuration the disable retired.
     supervisor.shutdown();
     double.releaseEstablishment();
 
@@ -536,16 +537,53 @@ describe("timeshift supervisor deferred-offline and resolution logging", () => {
     assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "the retired episode narrated no resolution at debug");
     assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "the declined start acknowledged no recording configuration");
   });
+
+  // A reconcile asked after shutdown runs no pass, and the order of the arrangement is what makes that observable. The supervisor is shut down first, and only then
+  // does the camera go offline under a pushed recording demand, so the pass that push would run is the one that opens a deferral: its warn line and the resolution it
+  // leaves owed are what a pass after the lifetime's end would leave behind. The second cell reads the settlement itself, on a supervisor shut down with no recording
+  // demand, whose reconcile resolves rather than carrying the task's refusal.
+  test("a reconcile asked after shutdown runs no pass", async () => {
+
+    const { controller, host, logEntries } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.stream = new TestStreamingDelegate();
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+
+    const supervisor = new InspectableSupervisor(host);
+
+    supervisor.shutdown();
+
+    // The camera goes offline after the shutdown, so a pass run for the push below would open the deferral episode.
+    host.isReachable = false;
+
+    const logCountBeforePush = logEntries.length;
+
+    await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
+    await settle();
+
+    assert.equal(logEntries.length, logCountBeforePush, "no pass ran, so no deferral line was written");
+    assert.equal(supervisor.pendingResolution, false, "no pass ran, so no deferral episode was opened");
+
+    // The second cell: on a supervisor shut down with no recording demand ever pushed to it, a reconcile resolves rather than carrying the task's refusal of a request
+    // made after the lifetime's end. Its buffer never started, so a started-state read would pass whether or not a pass ran, and the cell reads the settlement alone.
+    const undemanded = new ProtectTimeshiftSupervisor(host);
+
+    undemanded.shutdown();
+
+    await assert.doesNotReject(undemanded.reconcile(), "a reconcile after shutdown resolves rather than carrying the task's refusal");
+  });
 });
 
 describe("timeshift supervisor never-rejecting reconcile", () => {
 
-  // #17/G2-D1: a reconcile pass that throws must be caught at the loop's chokepoint - the reconcile is reached through many fire-and-forget void kicks, so an escaping
-  // rejection would float and poison the shared configurePromise every joined caller reads. We arrange a deferral edge (camera offline while recording), whose
-  // bookkeeping runs first, then make the buffer's stop throw at the stop point that follows in the same pass. The catch must swallow the throw into a false verdict,
+  // A reconcile pass that throws must have its fault converted inside the supervisor - the reconcile is reached through many fire-and-forget void kicks, so an escaping
+  // rejection would float unhandled and reach every caller holding the promise of the pass in flight. We arrange a deferral edge (camera offline while recording), whose
+  // bookkeeping runs first, then make the buffer's stop throw at the stop point that follows in the same pass. The conversion must swallow the throw so nothing floats,
   // log exactly one retry line, and leave the pass's deferral bookkeeping intact - which we prove through the resumption that fires when the camera returns online,
-  // since that resumption consults the very deferral field the throwing pass had already updated. Pre-fix, the uncaught throw rejected the awaited reconcile.
-  test("a throwing reconcile pass is caught, reports false, logs once, and preserves the deferral bookkeeping", async () => {
+  // since that resumption consults the very deferral field the throwing pass had already updated.
+  test("a throwing reconcile pass is caught, logs once, and preserves the deferral bookkeeping", async () => {
 
     const { host, logEntries, supervisor } = await arrangeEnabledDelegate();
 
@@ -559,12 +597,9 @@ describe("timeshift supervisor never-rejecting reconcile", () => {
 
     process.on("unhandledRejection", onFloat);
 
-    let verdict: boolean;
-
     try {
 
-      verdict = await supervisor.reconcile();
-
+      await supervisor.reconcile();
       await settle();
     } finally {
 
@@ -572,67 +607,18 @@ describe("timeshift supervisor never-rejecting reconcile", () => {
     }
 
     assert.equal(floats.length, 0, "the throwing pass did not float an unhandled rejection through the reconcile chokepoint");
-    assert.equal(verdict, false, "the caught failure reported a false verdict, never a stale-truthy success");
     assert.ok(countLogs(logEntries, "warn", "deferred until the camera is online") >= 1, "the deferral bookkeeping ran before the throw - the deferral warn fired");
     assert.equal(countLogs(logEntries, "error", "could not be updated and will be retried"), 1, "the caught failure logged exactly one retry line");
 
-    // The loop survived and the deferral field the throwing pass set is intact: bring the camera back online and a fresh reconcile recovers, firing the resumption that
-    // consults that very field.
+    // The next request still runs a pass and the deferral field the throwing pass set is intact: bring the camera back online and a fresh reconcile recovers, firing
+    // the resumption that consults that very field.
     host.isReachable = true;
 
-    const recoveredVerdict = await supervisor.reconcile();
-
+    await supervisor.reconcile();
     await settle();
 
-    assert.equal(recoveredVerdict, true, "a fresh reconcile after the fault recovers - the loop was not killed");
     assert.ok(countLogs(logEntries, "warn", "has started now that the camera is online") >= 1,
       "the resumption fires on recovery, proving the throwing pass had already updated the deferral bookkeeping before it threw");
-  });
-});
-
-describe("timeshift supervisor exit-window coalesce", () => {
-
-  // A supervisor that drives a reconcile() request into the exit window exactly once, counting loop exits. The override fires at the loop's exit, before the wrapper
-  // promise's .finally clears configurePromise, so the injected reconcile() sees configurePromise still truthy and joins it - setting the request flag with no loop to
-  // consume it, the #23 race. Post-fix the .finally re-check starts a fresh loop (a second exit); pre-fix the request is silently dropped (one exit).
-  class ExitWindowSupervisor extends ProtectTimeshiftSupervisor {
-
-    public loopExits = 0;
-    private injected = false;
-
-    protected override onReconcileLoopExit(): void {
-
-      this.loopExits++;
-
-      if(!this.injected) {
-
-        this.injected = true;
-        void this.reconcile();
-      }
-    }
-  }
-
-  // #23: a reconcile request landing in the loop-exit-to-finally-clear microtask window must not be dropped. We inject exactly one such request via the sequencing hook
-  // and observe the re-kick's effect by outcome, not timing: a second loop runs (loopExits === 2). The injection itself is the positive control - the request genuinely
-  // lands inside the window, since the hook's reconcile() joins a still-truthy configurePromise; pre-fix, the same interleaving runs only one loop.
-  test("a reconcile request in the exit window coalesces into a fresh loop", async () => {
-
-    const { controller, host } = makeTestCameraHost();
-
-    controllers.push(controller);
-
-    host.stream = new TestStreamingDelegate();
-    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
-    host.livestreamMediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
-
-    const supervisor = new ExitWindowSupervisor(host);
-
-    // Drive one reconcile; the hook injects a second request into the exit window of this loop.
-    await supervisor.reconcile();
-
-    await settle();
-
-    assert.equal(supervisor.loopExits, 2, "the exit-window request coalesced into a fresh loop - a second loop ran");
   });
 });
 
@@ -640,8 +626,9 @@ describe("timeshift supervisor narration liveness guard", () => {
 
   // The consume loop runs detached from the start commit, so a buffer can die in the microtask window between a start settling and the pass narrating. A one-shot
   // onStartSettled override lands the death exactly inside that window: it stops the buffer on the first settled start, then disarms so the follow-up pass the death
-  // re-arms can settle rather than re-entering the kill forever. Stopping the buffer synchronously drops isStarted and emits "stopped" (cause "ended"), which the
-  // supervisor's own listener re-arms the coalescing loop on; the one-shot flag keeps that re-armed pass from being killed too, so the loop settles instead of spinning.
+  // queues can settle rather than re-entering the kill forever. Stopping the buffer synchronously drops isStarted and emits "stopped" (cause "ended"), on which the
+  // supervisor's own listener asks for a reconcile from inside the pass, queuing one further pass behind it; the one-shot flag keeps that queued pass from being
+  // killed too, so the passes settle instead of spinning.
   class DeathAtSettleSupervisor extends ProtectTimeshiftSupervisor {
 
     private killedOnce = false;
@@ -695,6 +682,7 @@ describe("timeshift supervisor narration liveness guard", () => {
     assert.equal(countLogs(logEntries, "warn", "has started now that the camera is online"), 0, "the phantom deferral resolution was suppressed at warn");
     assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "the phantom deferral resolution was suppressed at debug");
     assert.equal(supervisor.buffer.isStarted, false, "the starved follow-up pass could not re-establish, so the buffer is stopped");
+    assert.equal(host.livestreamCalls.length, 2, "the death bought exactly one further pass, which made the second livestream call");
 
     // Phase 2: a healthy fallback re-arms. The honest retry re-establishes, and both suppressed lines fire exactly once - the acknowledgment latch and the pending
     // deferral resolution both survived the phantom.
@@ -712,7 +700,7 @@ describe("timeshift supervisor narration liveness guard", () => {
 describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
 
   // The "HKSV: ..." config summary fires once per enable EPISODE (not once per delegate lifetime, and not once per reconcile): exactly once on the first successful
-  // configure of an episode, again on a true re-enable after a disable, never on a redundant within-episode reconcile. This pins both halves of the acknowledgment
+  // configure of an episode, again on a true re-enable after a disable, never on a redundant within-episode reconcile. This holds both halves of the acknowledgment
   // lifecycle - the trigger on the reconcile's successful-start path (so the trigger is the configuration event) and the reset on the disable demand edge (so the next
   // enable re-acknowledges). We count occurrences rather than a boolean .some(): the boolean would pass after the FIRST enable regardless of whether the second
   // re-acknowledged, so it cannot distinguish a set-once-never-cleared flag that logs only the first enable.
@@ -746,12 +734,12 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
   });
 
   /* The disable race. A start can be suspended across its await while HomeKit turns recording off underneath it, and the pass that resumes still holds the demand it
-   * began with. This arranges exactly that window: the establishment is gated open, the disable lands synchronously while the pass is pinned, and the establishment is
+   * began with. This arranges exactly that window: the establishment is gated open, the disable lands synchronously while the pass is held, and the establishment is
    * then released so the start genuinely SUCCEEDS - the pass runs all the way through its narration blocks with a buffer that is really up.
    *
    * The arrangement is shared by both arms below because the window is the same one; each asserts a different thing about what the pass does at the finish line.
    */
-  async function arrangeDisableRace(): Promise<{ logEntries: TestLogEntry[]; passResult: boolean; supervisor: ProtectTimeshiftSupervisor }> {
+  async function arrangeDisableRace(): Promise<{ logEntries: TestLogEntry[]; supervisor: ProtectTimeshiftSupervisor }> {
 
     const { controller, host, logEntries } = makeTestCameraHost();
 
@@ -763,7 +751,7 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
     // Fill any LATER start (the follow-up enable below) through the default segment-yielding double, so a re-established buffer commits on its own.
     host.livestreamMediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
 
-    // The first start takes a double whose establishment stays open, which is what pins the pass mid-start.
+    // The first start takes a double whose establishment stays open, which is what holds the pass mid-start.
     const double = makeControllableLivestreamDouble({ deferEstablishment: true });
 
     host.livestreamSubscriptions.push(double);
@@ -778,18 +766,17 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
     assert.equal(supervisor.buffer.isStarted, false, "the start is held in flight, so the pass is suspended before its narration");
     assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "nothing has been acknowledged yet - the buffer is not up");
 
-    // HomeKit disables recording while that pass is pinned. The demand write is synchronous, so it lands before the pass can resume.
+    // HomeKit disables recording while that pass is held. The demand write is synchronous, so it lands before the pass can resume.
     void supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: false });
 
-    // Release the establishment. The start now COMMITS - no shutdown latch, no decline - so the resumed pass reaches the commit point with a running buffer and a
+    // Release the establishment. The start now COMMITS - no ended lifetime, no decline - so the resumed pass reaches the commit point with a running buffer and a
     // recording demand that has already gone away.
     double.releaseEstablishment();
 
-    const passResult = await suspendedPass;
-
+    await suspendedPass;
     await settle();
 
-    return { logEntries, passResult, supervisor };
+    return { logEntries, supervisor };
   }
 
   // A recording disabled while its start was in flight must be honored at the finish line, not acknowledged over. The zero-count is the direct assertion; the follow-up
@@ -808,21 +795,20 @@ describe("timeshift supervisor enable-acknowledgment lifecycle", () => {
     assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "the next genuine enable acknowledged exactly once, so the raced pass had left nothing latched");
   });
 
-  // The same window, read through the pass's return value - the answer updateRecordingActive gates on. This pins the CELL's contract value: a demand that has gone
-  // away by the commit point is owed nothing, matching the stopped path's answer for that same cell (a test cannot show this from the expression alone, only from its
-  // behavior).
-  test("a pass whose recording demand vanished mid-start answers true for that cell", async () => {
+  // The same window, read through the buffer's state once the passes the disable joined have settled. The raced start committed a running buffer, and only the
+  // follow-up pass the disable bought can have stopped it, so reading the buffer stopped once the joined passes and the settle are through proves that pass ran.
+  test("the passes a mid-start disable joined leave the buffer stopped once they settle", async () => {
 
-    const { passResult } = await arrangeDisableRace();
+    const { supervisor } = await arrangeDisableRace();
 
-    assert.equal(passResult, true, "a pass with no live recording demand left to serve owes the caller nothing and answers true");
+    assert.equal(supervisor.buffer.isStarted, false, "the raced start's buffer reads stopped after the joined passes and the settle, so the pass the disable bought ran");
   });
 });
 
 describe("timeshift supervisor demand-edge episode resets", () => {
 
   // The per-episode resets live on the demand setter's disable edge, never inside a reconcile pass, so they land synchronously with the demand write even when the
-  // flap's reconcile passes coalesce into a single loop. The flap must re-acknowledge exactly once: the disable edge closes the old enable episode (resetting the
+  // flap's enable queues behind the disable's pass. The flap must re-acknowledge exactly once: the disable edge closes the old enable episode (resetting the
   // acknowledgment flag) before any pass processes it, and the enable's successful restart opens - and acknowledges - exactly one new episode.
   test("a coalesced disable-then-enable flap re-acknowledges exactly once", async () => {
 
@@ -832,7 +818,7 @@ describe("timeshift supervisor demand-edge episode resets", () => {
 
     const config = makeRecordingConfig();
 
-    // Fire the flap back-to-back in one synchronous frame: the enable lands while the disable's reconcile loop is still in flight and coalesces into it.
+    // Fire the flap back-to-back in one synchronous frame: the enable lands while the disable's pass is still in flight and queues one further pass behind it.
     void supervisor.setRecordingDemand({ config, isRecording: false });
     void supervisor.setRecordingDemand({ config, isRecording: true });
 
@@ -844,11 +830,11 @@ describe("timeshift supervisor demand-edge episode resets", () => {
   });
 });
 
-describe("timeshift supervisor shutdown latch", () => {
+describe("timeshift supervisor shutdown", () => {
 
-  // Shutdown is the terminal teardown: it must stop the buffer synchronously, produce no narration of its own, and latch the supervisor so a post-shutdown reconcile
-  // settles on stopped rather than restarting the buffer. The reconcile still runs - the pushed demand is unchanged and still wants recording - but the latch gates
-  // the desired state to stopped, so the pass reports unmet prerequisites and never opens the livestream again.
+  // Shutdown is the terminal teardown: it must stop the buffer synchronously, produce no narration of its own, and end the supervisor's lifetime so a post-shutdown
+  // reconcile settles on stopped rather than restarting the buffer. No pass runs for it even though the pushed demand is unchanged and still wants recording: the
+  // buffer stays stopped and the livestream is never opened again.
   test("shutdown stops the buffer synchronously, logs nothing, and post-shutdown reconciles settle on stopped", async () => {
 
     const { host, logEntries, supervisor } = await arrangeEnabledDelegate();
@@ -864,9 +850,8 @@ describe("timeshift supervisor shutdown latch", () => {
     assert.equal(supervisor.buffer.isStarted, false, "shutdown stopped the buffer synchronously");
     assert.equal(logEntries.length, logCountBeforeShutdown, "shutdown produced no narration");
 
-    // A post-shutdown reconcile settles on stopped: recording is still demanded, so the pass reports unmet prerequisites (false), no restart happens, and the
-    // livestream is never opened again.
-    assert.equal(await supervisor.reconcile(), false, "a post-shutdown reconcile reports the demand cannot be met");
+    // A post-shutdown reconcile settles on stopped without running a pass: recording is still demanded, yet no restart happens and the livestream is never opened again.
+    await supervisor.reconcile();
     await settle();
 
     assert.equal(supervisor.buffer.isStarted, false, "the buffer stayed stopped through the post-shutdown reconcile");
@@ -874,10 +859,10 @@ describe("timeshift supervisor shutdown latch", () => {
     assert.equal(logEntries.length, logCountBeforeShutdown, "the post-shutdown reconcile produced no narration");
   });
 
-  // A second shutdown is a designed no-op, and the entry latch is what makes it one rather than an accident of ordering. The observable that tells the two apart is the
-  // CALL, not an emission: the buffer reports nothing when asked to stop something it already stopped, so an emission count stays green whether or not the guard is
-  // there. Spying the stop call is what fails when the guard is removed.
-  test("a second shutdown returns at the latch rather than tearing the buffer down again", async (t) => {
+  // A second shutdown is a designed no-op, and the entry guard on the ended lifetime is what makes it one rather than an accident of ordering. The observable that tells
+  // the two apart is the CALL, not an emission: the buffer reports nothing when asked to stop something it already stopped, so an emission count stays green whether or
+  // not the guard is there. Spying the stop call is what fails when the guard is removed.
+  test("a second shutdown returns at the ended lifetime rather than tearing the buffer down again", async (t) => {
 
     const { supervisor } = await arrangeEnabledDelegate();
 
@@ -892,9 +877,9 @@ describe("timeshift supervisor shutdown latch", () => {
     assert.equal(supervisor.buffer.isStarted, false, "the buffer is stopped either way");
   });
 
-  // The latch is per-instance by construction: tearing one supervisor down says nothing about a fresh one, which the streaming-delegate rebuild path constructs. A
+  // The lifetime is per-instance by construction: tearing one supervisor down says nothing about a fresh one, which the streaming-delegate rebuild path constructs. A
   // fresh supervisor on the same host starts its buffer normally.
-  test("a fresh supervisor instance on the same host is unlatched", async () => {
+  test("a fresh supervisor instance on the same host starts with a lifetime of its own", async () => {
 
     const { host, supervisor } = await arrangeEnabledDelegate();
 
@@ -904,20 +889,38 @@ describe("timeshift supervisor shutdown latch", () => {
 
     const fresh = new ProtectTimeshiftSupervisor(host);
 
-    assert.equal(await fresh.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true }), true, "the fresh supervisor reconciles to running");
+    await fresh.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
     await settle();
 
     assert.equal(fresh.buffer.isStarted, true, "the fresh supervisor's buffer is running");
   });
 
+  // The supervisor's lifetime reaches its buffer's livestream: the buffer opens its subscription under the supervisor's own signal, so a shutdown ends that subscription
+  // through the abort as well as through the buffer's stop. The same signal object is read before and after the shutdown, which tells the supervisor's lifetime from
+  // any other signal the call might have carried.
+  test("the buffer opens its livestream under the supervisor's lifetime signal, which shutdown aborts", async () => {
+
+    const { host, supervisor } = await arrangeEnabledDelegate();
+    const signal = host.livestreamCalls[0]?.opts?.signal;
+
+    assert.ok(signal, "the buffer's livestream call carried a signal");
+    assert.equal(signal.aborted, false, "the signal is live while the supervisor runs");
+
+    supervisor.shutdown();
+
+    assert.equal(signal.aborted, true, "shutdown aborted the very signal the buffer's livestream call carried");
+  });
+
   // The commit-point decline, driven through the REAL shutdown-versus-in-flight-start race rather than a hook. A fresh first-enable starts the buffer, but the start is
-  // held in flight on a gated establishment; shutdown() runs while it is pending, so the latch arms and its stop() finds no committed subscription to release. When the
-  // establishment then releases, the start reaches its commit point, reads its owner's armed latch, disposes the subscription it opened and declines - so the pass
-  // resumes into the narration guard having never started.
+  // held in flight on a gated establishment; shutdown() runs while it is pending, so the lifetime ends and its stop() finds no committed subscription to release. When
+  // the establishment then releases, the start reaches its commit point, reads its owner's aborted signal, disposes the subscription it opened and declines - so the
+  // pass ends on the start's failure having never started. The host double records the signal and does nothing more with it, so the held establishment still
+  // answers true after the abort, which is the one case the commit point's check exists for.
   //
-  // The stopped-emit count is what tells the two behaviors apart. Nothing here ever tore a running buffer down, so nothing reports one: shutdown's stop found no
-  // committed subscription and the declined start released only what it had opened. A start that DID commit would be torn down by the follow-up pass and report it,
-  // so the silence is the pin. The DEBUG stop line counts the same way - the follow-up pass has nothing left to stop, where a committed start gives it work.
+  // No pass follows a shutdown, so a start that DID commit would simply stay committed: what tells it from a declined start is the subscription's dispose, the started
+  // state, and the acknowledgment count, because a committed start keeps its subscription, reports itself started, and is acknowledged by the pass awaiting it. The
+  // stopped-emit count and the DEBUG stop line stay at zero because nothing here tore a running buffer down: shutdown's stop found no committed subscription, and the
+  // declined start released only what it had opened.
   test("a shutdown that races an in-flight start declines the commit and disposes the subscription", async () => {
 
     const { controller, host, logEntries } = makeTestCameraHost();
@@ -946,17 +949,19 @@ describe("timeshift supervisor shutdown latch", () => {
 
     assert.equal(supervisor.buffer.isStarted, false, "the start is held in flight, not yet committed");
 
-    // Shutdown races the pending start: the latch arms first, and stop() has no committed subscription to release.
+    // Shutdown races the pending start: the lifetime ends first, and stop() has no committed subscription to release.
     supervisor.shutdown();
 
-    // Release establishment so the held start settles AFTER shutdown returned and meets the latch at its commit point.
+    assert.equal(host.livestreamCalls[0]?.opts?.signal?.aborted, true, "the shutdown aborted the signal the in-flight start's livestream call carries");
+
+    // Release establishment so the held start settles AFTER shutdown returned and meets the aborted signal at its commit point.
     double.releaseEstablishment();
 
     await enablePromise;
     await settle();
 
-    assert.equal(stoppedEmits, 0, "no teardown was reported because none happened - a committed start would be released by the follow-up pass and report that");
-    assert.equal(countLogs(logEntries, "debug", "Timeshift buffer stopped."), 0, "the follow-up pass had nothing to stop, since the commit never landed");
+    assert.equal(stoppedEmits, 0, "no teardown was reported because none happened - shutdown's stop found no committed subscription");
+    assert.equal(countLogs(logEntries, "debug", "Timeshift buffer stopped."), 0, "no pass stopped a running buffer, since the commit never landed");
     assert.equal(double.disposed, true, "the declined start disposed the subscription it opened");
     assert.equal(supervisor.buffer.isStarted, false, "the buffer never started");
     assert.equal(supervisor.buffer.channelProfile, null, "no channel profile committed");
@@ -965,9 +970,44 @@ describe("timeshift supervisor shutdown latch", () => {
     assert.equal(countLogs(logEntries, "debug", "has started now that the camera is online"), 0, "no deferral resolution narrated at debug");
   });
 
+  // A follow-up queued before a shutdown does not run after it. The in-flight race's arrangement holds a start on a deferred establishment, and a reconcile asked
+  // while it is held queues one further pass behind it; the shutdown that follows ends the lifetime that pass would run in. The livestream call count tells the two
+  // apart: the held start made the only call, and a queued pass that ran after the shutdown would find the buffer stopped and make another.
+  test("a follow-up queued before a shutdown does not run after it", async () => {
+
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.stream = new TestStreamingDelegate();
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+
+    // Queue a double whose establishment stays open until the test releases it, so the first start parks in flight.
+    const double = makeControllableLivestreamDouble({ deferEstablishment: true });
+
+    host.livestreamSubscriptions.push(double);
+
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+    const enablePromise = supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
+
+    await settle();
+
+    assert.equal(supervisor.buffer.isStarted, false, "the start is held in flight, not yet committed");
+
+    // Ask for a reconcile while the start is held, which queues one further pass, then shut down before the held start settles.
+    void supervisor.reconcile();
+    supervisor.shutdown();
+    double.releaseEstablishment();
+
+    await enablePromise;
+    await settle();
+
+    assert.equal(host.livestreamCalls.length, 1, "the held start made the only livestream call, so no queued pass ran after the shutdown");
+  });
+
   // The settle window's other occupant: a shutdown landing AFTER a start has committed, before the pass narrates. The one-shot onStartSettled override lands it exactly
-  // there, disarming after it fires so the follow-up pass settles rather than re-entering the shutdown. Here the buffer genuinely committed, so shutdown's stop acts on
-  // a live subscription and disposes it, and the narration guard catches the window through the started state alone.
+  // there, and no pass follows the shutdown to settle a start again. Here the buffer genuinely committed, so shutdown's stop acts on a live subscription and disposes
+  // it, and the narration guard catches the window through the started state alone.
   class ShutdownAtSettleSupervisor extends ProtectTimeshiftSupervisor {
 
     private shutDownOnce = false;
@@ -1088,8 +1128,8 @@ describe("timeshift supervisor buffer channel-profile lifecycle", () => {
 describe("timeshift supervisor forwarder identity", () => {
 
   // The delegate's configureTimeshifting is a synchronous join onto the supervisor's reconciler - it must return the supervisor's own in-flight promise, not a
-  // wrapper around it. Promise identity is the whole proof: identical objects mean joining callers share one reconcile loop with no added microtask boundary, so the
-  // check-and-set atomicity the reconciler relies on is preserved through the forwarder and a second loop can never start.
+  // wrapper around it. Promise identity is the whole proof: identical objects mean a caller joining through the forwarder holds the very promise of the pass in
+  // flight, with no added microtask boundary between the two.
   test("configureTimeshifting returns the supervisor's in-flight reconcile promise", async () => {
 
     const { controller, host } = makeTestCameraHost();
@@ -1104,9 +1144,9 @@ describe("timeshift supervisor forwarder identity", () => {
     const forwarded = delegate.configureTimeshifting();
 
     assert.equal(forwarded, direct, "the forwarder returned the supervisor's own in-flight promise");
-    assert.equal(await forwarded, await direct, "both callers observe the same settlement");
+    await forwarded;
 
-    // Once the in-flight loop settles, a fresh forwarded call starts a NEW reconcile rather than handing back the settled promise.
+    // Once the pass in flight settles, a fresh forwarded call starts a NEW reconcile rather than handing back the settled promise.
     const fresh = delegate.configureTimeshifting();
 
     assert.notEqual(fresh, direct, "a post-settlement call starts a fresh reconcile");
@@ -1140,7 +1180,7 @@ describe("timeshift supervisor streaming arm", () => {
 
     const { logEntries, supervisor } = arrangeStreamingHost();
 
-    assert.equal(await supervisor.reconcile(), true, "the streaming arm reconciled to running");
+    await supervisor.reconcile();
     await settle();
 
     assert.equal(supervisor.buffer.isStarted, true, "the streaming arm started the standing buffer");
@@ -1156,7 +1196,7 @@ describe("timeshift supervisor streaming arm", () => {
 
     host.isReachable = false;
 
-    assert.equal(await supervisor.reconcile(), true, "the offline reconcile reports the streaming-only demand as satisfiable-when-stopped");
+    await supervisor.reconcile();
     await settle();
 
     assert.equal(supervisor.buffer.isStarted, false, "the offline camera did not start the buffer");
@@ -1177,10 +1217,80 @@ describe("timeshift supervisor streaming arm", () => {
     assert.equal(countLogs(logEntries, "info", "HKSV:"), 0, "no acknowledgment before recording enables");
 
     // Enable recording against the already-running buffer: the reconcile finds it already on the desired channel and acknowledges on the shared path.
-    assert.equal(await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true }), true, "the recording arm reconciled to running");
+    await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
     await settle();
 
+    assert.equal(supervisor.buffer.isStarted, true, "the buffer is running after the recording arm enabled");
     assert.equal(countLogs(logEntries, "info", "HKSV:"), 1, "the enable acknowledged exactly once on the already-running path");
+  });
+
+  // A running buffer restarted onto a different stream goes through one start. The restart stops the running buffer before it opens the new stream, and the stopped
+  // event that stop emits asks for a reconcile from inside the pass; that request queues one further pass behind the pass running, which finds the buffer already on
+  // the new stream and narrates nothing. The fallback is left inert and one more double is queued than the row consumes, each with an id of its own, so a second
+  // start would take that spare double and show up in the call count, the queue, and the doubles left undisposed alike.
+  test("a running buffer restarted onto a different stream goes through one start", async () => {
+
+    const { host, logEntries, supervisor } = arrangeStreamingHost();
+    const doubles = [ makeControllableLivestreamDouble(), makeControllableLivestreamDouble(), makeControllableLivestreamDouble() ];
+
+    // Leave the fallback inert, so every start this row makes is served by a double it queued.
+    host.livestreamMediaSegments = 0;
+    host.livestreamSubscriptions.push(...doubles);
+
+    await supervisor.reconcile();
+    await settle();
+
+    assert.equal(supervisor.buffer.isStarted, true, "the first reconcile left the buffer running");
+
+    const callsBeforeRestart = host.livestreamCalls.length;
+    const otherProfile = makeChannelProfile(host, 1);
+
+    // Steer the selection onto another channel and reconcile the idle supervisor again, so the pass restarts the running buffer onto it.
+    host.selectSubstrateChannel = (): ChannelProfile => otherProfile;
+
+    await supervisor.reconcile();
+    await settle();
+
+    assert.equal(host.livestreamCalls.length, callsBeforeRestart + 1, "the restart opened exactly one new livestream");
+    assert.equal(host.livestreamSubscriptions.length, 1, "the spare double was never handed out");
+    assert.equal(doubles.filter((double) => !double.disposed && !host.livestreamSubscriptions.includes(double)).length, 1,
+      "exactly one double the host handed out is still undisposed");
+    assert.equal(supervisor.buffer.isStarted, true, "the restarted buffer is running");
+    assert.equal(supervisor.buffer.channelProfile?.channel.id, otherProfile.channel.id, "the buffer runs on the new channel");
+    assert.equal(countLogs(logEntries, "debug", "Timeshift buffer started for livestreaming."), 2, "the restart wrote the started line once more, twice in all");
+  });
+
+  // A restart whose new start fails is retried at once, and the retry can succeed. The restart's stop asks for a reconcile from inside the pass, and the pass that
+  // request queued is the retry: it runs once the failed start has returned, and finds the buffer stopped with the new stream still wanted. The first double queued
+  // for the restart answers its establishment false and the second establishes, so the retry is what leaves the buffer running.
+  test("a restart whose new start fails is retried at once onto the new stream", async () => {
+
+    const { host, supervisor } = arrangeStreamingHost();
+
+    // Leave the fallback inert and run the buffer on a queued double, so every start this row makes is served by a double it queued.
+    host.livestreamMediaSegments = 0;
+    host.livestreamSubscriptions.push(makeControllableLivestreamDouble());
+
+    await supervisor.reconcile();
+    await settle();
+
+    assert.equal(supervisor.buffer.isStarted, true, "the arrange left the buffer running");
+
+    const callsBeforeRestart = host.livestreamCalls.length;
+    const failing = makeControllableLivestreamDouble({ whenEstablished: false });
+    const otherProfile = makeChannelProfile(host, 1);
+
+    host.livestreamSubscriptions.push(failing, makeControllableLivestreamDouble());
+    host.selectSubstrateChannel = (): ChannelProfile => otherProfile;
+
+    await supervisor.reconcile();
+    await settle();
+
+    assert.equal(host.livestreamCalls.length, callsBeforeRestart + 2, "the failed start and its retry each opened a livestream");
+    assert.equal(failing.disposed, true, "the failed start disposed the double whose establishment answered false");
+    assert.equal(supervisor.buffer.isStarted, true, "the retry left the buffer running");
+    assert.equal(supervisor.buffer.channelProfile?.channel.id, otherProfile.channel.id, "the buffer runs on the new channel");
+    assert.equal(host.livestreamSubscriptions.length, 0, "no queued double was left");
   });
 });
 
@@ -1194,7 +1304,7 @@ function hksvAckLine(entries: TestLogEntry[]): string | undefined {
 }
 
 // The hardware marker the acknowledgment prefixes when the HKSV encode runs on the host's hardware encoder (U+26A1 HIGH VOLTAGE SIGN + U+FE0F VARIATION SELECTOR-16),
-// encoded here independently so the assertion pins the exact glyph rather than trusting the module constant.
+// encoded here independently so the assertion checks the exact glyph rather than trusting the module constant.
 const HKSV_HARDWARE_MARKER = "⚡️";
 
 describe("timeshift supervisor HKSV hardware marker", () => {
@@ -1212,8 +1322,10 @@ describe("timeshift supervisor HKSV hardware marker", () => {
     await supervisor.reconcile();
     await settle();
 
-    assert.equal(await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true }), true, "the recording arm reconciled to running");
+    await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
     await settle();
+
+    assert.equal(supervisor.buffer.isStarted, true, "the buffer is running after the recording arm enabled");
 
     const line = hksvAckLine(logEntries);
 
@@ -1228,8 +1340,10 @@ describe("timeshift supervisor HKSV hardware marker", () => {
     await supervisor.reconcile();
     await settle();
 
-    assert.equal(await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true }), true, "the recording arm reconciled to running");
+    await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
     await settle();
+
+    assert.equal(supervisor.buffer.isStarted, true, "the buffer is running after the recording arm enabled");
 
     const line = hksvAckLine(logEntries);
 

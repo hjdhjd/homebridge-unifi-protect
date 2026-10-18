@@ -201,7 +201,7 @@ describe("recording delegate synchronous configuration observables", () => {
     const delegate = new ProtectRecordingDelegate(host, supervisor);
 
     // Force the reconcile to reject so the void-returning handler must absorb the fault.
-    supervisor.setRecordingDemand = async (): Promise<boolean> => { throw new Error("reconcile boom"); };
+    supervisor.setRecordingDemand = async (): Promise<void> => { throw new Error("reconcile boom"); };
 
     // Install a test-scoped listener to capture any unhandled rejection that escapes the delegate during the drive, then remove it immediately after.
     const floats: unknown[] = [];

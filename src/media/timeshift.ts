@@ -90,19 +90,19 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   // _lastKeyframeTime write on each keyframe and the now-versus-then staleness compare in snapshotSource - so that path is test-deterministic without a real-time
   // wait. This mirrors the recording delegate's clock field-copy exactly (record.ts), reaching the clock through the platform handle the camera already carries.
   private readonly clock: Clock;
-  // The owner's verdict on a start that is still establishing. Deliberately not named for staleness alone: this class already uses "stale" for old-timeline segments
-  // and keyframe freshness, while this predicate answers a different question - whether the owner has condemned the start that is now trying to commit.
-  private readonly isStartStale: () => boolean;
   private readonly log: HomebridgePluginLogging;
   private readonly protectCamera: ProtectCameraHost;
   private segmentCount: number;
+  // The owner's lifetime signal, or undefined for a buffer with no owner. Every livestream call carries it, so the owner's abort ends the subscription, and start()
+  // reads it once more at its commit point, the one window the owner's own stop() cannot reach.
+  private readonly signal?: AbortSignal;
   // The active livestream subscription. Its presence is the single source of truth for whether the timeshift buffer is running; the public `isStarted` getter
   // derives from `subscription !== undefined`.
   private subscription?: LivestreamSubscription;
 
-  // Create a timeshift buffer for a camera. The optional isStartStale predicate is the owner's verdict on a start that is still in flight, consulted once at the commit
-  // point in start(); the default never declines, so a buffer constructed without an owner behaves exactly as one whose owner never condemns a start.
-  constructor(protectCamera: ProtectCameraHost, options: { isStartStale?: () => boolean } = {}) {
+  // Create a timeshift buffer for a camera. The optional signal is the owner's lifetime: start() hands it to each livestream call and reads it at its commit point. A
+  // buffer constructed without an owner holds none and behaves exactly as one whose owner's lifetime never ends.
+  constructor(protectCamera: ProtectCameraHost, options: { signal?: AbortSignal } = {}) {
 
     // Initialize the event emitter.
     super();
@@ -114,10 +114,10 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     this._pendingStopCause = "ended";
     this._segments = [];
     this.clock = protectCamera.platform.clock;
-    this.isStartStale = options.isStartStale ?? ((): boolean => false);
     this.log = protectCamera.log;
     this.protectCamera = protectCamera;
     this.segmentCount = 1;
+    this.signal = options.signal;
   }
 
   // Start the livestream and begin maintaining our timeshift buffer.
@@ -146,12 +146,13 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // (latency-tolerant, so an idle prebuffer eases off a stressed-but-reachable controller). The closure moves only the recovery tolerance; the library's media-stall
     // detection floors at max(urgency, 2000ms) regardless, so the prebuffer stays watched at the 2-second floor either way. A genuine reconnect surfaces inline as a
     // discontinuity-marked segment (handled in processSegment), so there is no separate disconnect handler to attach.
-    const subscription = this.protectCamera.livestream(channelProfile, { discardOnDispose: true, segmentLength: this._segmentLength,
+    const subscription = this.protectCamera.livestream(channelProfile, { discardOnDispose: true, segmentLength: this._segmentLength, signal: this.signal,
       urgency: () => this._isTransmitting ? PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS : PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS });
 
     // Drive the segment iterator in the background. The for-await loop runs until the subscription is disposed (graceful return), terminated with a typed error
     // (ProtectLivestreamUnavailableError if the recovery policy gave up, ProtectCodecChangeError if the stream format changed, or another unexpected failure), or
-    // otherwise rejects. Errors are classified and logged and the loop exits cleanly...stop() is the single release point that disposes the subscription.
+    // otherwise rejects. Errors are classified and logged and the loop exits cleanly. The subscription is released by stop(), or by the owner's signal, whose abort
+    // ends the subscription and with it this loop.
     void this.consumeSegments(subscription);
 
     // Wait for the session to establish. The unifi-protect library's whenEstablished is MEDIA-keyed: it resolves true once the first media segment has been delivered
@@ -173,11 +174,14 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       return false;
     }
 
-    // The owner can condemn this start while its establishment is in flight, and the owner's own stop() acts only on a committed subscription - so this is the one
-    // window stop() cannot cover. Committing here would hand a live pool subscription to a torn-down owner and leave its release to a later reconcile pass, while the
-    // disconnect path expects every pool subscription's release to be under way before the unifi-protect client is disposed. A condemned start disposes its local
-    // subscription and declines, exactly like the establishment-failure paths above.
-    if(this.isStartStale()) {
+    // The owner's lifetime can end while this start's establishment is in flight, and the owner's own stop() acts only on a committed subscription - so this is the
+    // one window stop() cannot cover. The owner's signal already ends the subscription, but the establishment wait can still answer true for a subscription that
+    // signal has ended, and committing it would hand a torn-down owner a started buffer, while the disconnect path expects every pool subscription's release to be
+    // under way before the unifi-protect client is disposed. We read the owner's signal rather than the subscription's own state because the owner's end is the one
+    // case this check exists for: a session the pool ends in this window is committed and left to the consume loop, which finalizes it so the owner can re-establish,
+    // as it does for any other end. A start whose owner's lifetime has ended disposes its local subscription and declines, exactly like the establishment-failure
+    // paths above.
+    if(this.signal?.aborted) {
 
       void subscription[Symbol.asyncDispose]();
 
@@ -204,8 +208,10 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   //
   //   - stop() called externally: stop() cleared `this.subscription` before the iterator observed the queue close, so the id compare against undefined fails
   //     and we no-op (stop() already fired the terminated emit if applicable).
-  //   - start() declined before committing, whether a validation failed or the owner condemned the start: the local subscription was disposed before
+  //   - start() declined before committing, whether a validation failed or the owner's lifetime ended: the local subscription was disposed before
   //     `this.subscription` was committed to it, so the ids don't match and we no-op.
+  //   - the owner's signal aborted: the abort ends the subscription, and its iterator ends. When the owner also stops the buffer, as the supervisor's shutdown
+  //     does right after its abort, stop() has already cleared `this.subscription` and we no-op; otherwise the ids match and we self-clean.
   //   - terminal typed error (e.g., ProtectLivestreamUnavailableError): the subscription was committed and is now disposed without our teardown running, so the ids
   //     match and we reset backing state to match reality via finalizeSubscription.
   //   - session-level termination (controller manager shutdown): the subscription's iterator closes from outside, the ids match, and we self-clean.

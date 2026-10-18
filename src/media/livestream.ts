@@ -59,9 +59,9 @@ interface RtspLivestreamSubscriptionOptions {
  * first-class RTSP-fed-buffer option.
  *
  * There is deliberately NO recovery loop here: a failed RTSP transcode simply ends. The lifecycle state is correspondingly simple - "connecting" before the init
- * segment resolves, "live" after, "closed" after disposal - and it never reports "recovering" (so a consumer's `isRestarting` is always false on this debug
- * path, consistent with there being no recovery here). The underlying process consumes its abort signal itself at the spawn level, so disposing the adapter (or
- * aborting the signal) tears the process down; the adapter adds no separate signal listener.
+ * segment resolves, "live" after, "closed" once its owner ends it by disposal or by aborting its signal, as the pooled subscription does - and it never reports
+ * "recovering" (so a consumer's `isRestarting` is always false on this debug path, consistent with there being no recovery here). The underlying process consumes
+ * its abort signal itself at the spawn level, so disposing the adapter (or aborting the signal) tears the process down; the adapter adds no separate signal listener.
  */
 export class RtspLivestreamSubscription implements LivestreamSubscription {
 
@@ -107,16 +107,24 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
     }, (): void => { /* No-op: the rejection is observed through whenEstablished() and the iterator. */ });
   }
 
+  // Whether this adapter's owner has ended it, by disposing it or by aborting its signal. The iterator reads it to tell its owner's teardown from a genuine failure,
+  // and the state reads it to report "closed", so the iterator and the state answer from this one definition.
+  get #isEndedByOwner(): boolean {
+
+    return this.#disposed || (this.#signal?.aborted ?? false);
+  }
+
   // Synchronous peek at the cached fMP4 initialization segment, or null until the process's init segment resolves.
   public get initSegment(): { codec: string; data: Buffer } | null {
 
     return this.#initSegment;
   }
 
-  // The coarse lifecycle state. "connecting" before the init resolves, "live" after, "closed" after disposal. Never "recovering" - the debug path has no recovery.
+  // The coarse lifecycle state. "connecting" before the init resolves, "live" after, and "closed" once the owner has ended the adapter, by disposal or by aborting its
+  // signal. Never "recovering" - the debug path has no recovery.
   public get state(): LivestreamSubscriptionState {
 
-    return this.#state;
+    return this.#isEndedByOwner ? "closed" : this.#state;
   }
 
   // Re-decide an in-flight recovery. A no-op here because the debug path has no recovery loop to re-consult: a failed RTSP transcode simply ends rather than
@@ -147,11 +155,27 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
   }
 
   // Yield the init Segment, then wrap each fMP4 fragment the process produces into a media Segment. Calling both getInitSegment() and segments() on the process is
-  // the intended two-views-on-one-drain pattern and does not double-consume.
+  // the intended two-views-on-one-drain pattern and does not double-consume. An owner that ends the adapter while the init segment is still pending ends the
+  // iteration by a normal return, the way the process's segments end on an abort after init, so a consumer narrates nothing for its own teardown.
   async *#iterate(): AsyncGenerator<Segment> {
 
-    // The init buffer; this also drives initSegment / whenEstablished via the cached promise above.
-    const data = await this.#initPromise;
+    // The init buffer; this also drives initSegment / whenEstablished via the cached promise above. The process rejects its init promise when it is torn down before
+    // its first segment. When our owner ended us, by abort or by disposal, that rejection is the owner's own teardown and ends the iteration cleanly; any other
+    // rejection is a genuine FFmpeg failure before its first segment, rethrown so the consumer narrates it.
+    let data: Buffer;
+
+    try {
+
+      data = await this.#initPromise;
+    } catch(error) {
+
+      if(this.#isEndedByOwner) {
+
+        return;
+      }
+
+      throw error;
+    }
 
     yield { codec: this.#videoCodec, data: data, type: "init" };
 
@@ -177,7 +201,6 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
     }
 
     this.#disposed = true;
-    this.#state = "closed";
 
     await this.#proc[Symbol.asyncDispose]();
   }

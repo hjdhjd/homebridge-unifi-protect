@@ -177,10 +177,11 @@ describe("timeshift buffer behavior", () => {
     assert.equal(double.disposed, true, "the local subscription is disposed");
   });
 
-  // The owner's commit-point verdict. A deferred establishment holds the start in flight; the owner condemns it in that window, so the start reaches its commit point
-  // already condemned and declines instead of committing, disposing the subscription it opened. The decline is SILENT - no "stopped" emit, exactly like the
-  // establishment-failure paths, which never reach finalizeSubscription either. Against a buffer that commits regardless, this start resolves true with isStarted true.
-  test("start declines at the commit point when its owner condemns it mid-establishment", async () => {
+  // The owner's commit-point check. A deferred establishment holds the start in flight; the owner's signal aborts in that window, so the start reaches its commit point
+  // with its owner's lifetime already over and declines instead of committing, disposing the subscription it opened. The decline is SILENT - no "stopped" emit, exactly
+  // like the establishment-failure paths, which never reach finalizeSubscription either. Against a buffer that commits regardless, this start resolves true with
+  // isStarted true. The controllable double ignores the signal, so its establishment answers true after the abort, which is the one case this check exists for.
+  test("start declines at the commit point when its owner's signal aborts mid-establishment", async () => {
 
     const double = makeControllableLivestreamDouble({ deferEstablishment: true });
     const { controller, host } = makeTestCameraHost();
@@ -188,11 +189,12 @@ describe("timeshift buffer behavior", () => {
     controllers.push(controller);
     host.livestreamSubscriptions = [double];
 
-    // The owner's verdict, flipped while the establishment is held so the start meets it at the commit point.
-    let stale = false;
+    // The owner's lifetime, aborted while the establishment is held so the start meets the aborted signal at the commit point.
+    const owner = new AbortController();
+
     let stoppedEmits = 0;
 
-    const timeshift = new ProtectTimeshiftBuffer(host, { isStartStale: (): boolean => stale });
+    const timeshift = new ProtectTimeshiftBuffer(host, { signal: owner.signal });
 
     timeshift.on("stopped", (): void => { stoppedEmits++; });
 
@@ -202,10 +204,10 @@ describe("timeshift buffer behavior", () => {
 
     assert.equal(timeshift.isStarted, false, "the start is held in flight, not yet committed");
 
-    stale = true;
+    owner.abort();
     double.releaseEstablishment();
 
-    assert.equal(await startPromise, false, "the condemned start declines rather than committing");
+    assert.equal(await startPromise, false, "the start whose owner's signal aborted declines rather than committing");
 
     await settle();
 
@@ -215,10 +217,9 @@ describe("timeshift buffer behavior", () => {
     assert.equal(stoppedEmits, 0, "the decline is silent, like the establishment-failure paths");
   });
 
-  // The other side of the verdict: an injected predicate left false throughout must leave the commit path exactly as it is. This is the wiring guard for the owner's
-  // verdict rather than a behavioral value - what it catches is a predicate consulted with the wrong sense or at the wrong moment, or a constructor that quietly stops
-  // accepting one at all.
-  test("an owner verdict that never condemns leaves the commit path undisturbed", async () => {
+  // The other side of the check: an owner's signal left unaborted throughout must leave the commit path exactly as it is. This is the wiring guard for the owner's
+  // signal rather than a behavioral value - what it catches is a signal read with the wrong sense or at the wrong moment.
+  test("an owner signal that never aborts leaves the commit path undisturbed", async () => {
 
     const double = makeControllableLivestreamDouble({ deferEstablishment: true });
     const { controller, host } = makeTestCameraHost();
@@ -226,9 +227,9 @@ describe("timeshift buffer behavior", () => {
     controllers.push(controller);
     host.livestreamSubscriptions = [double];
 
-    // The owner's verdict, left false for the whole of this start's life.
-    const stale = false;
-    const timeshift = new ProtectTimeshiftBuffer(host, { isStartStale: (): boolean => stale });
+    // The owner's lifetime, left unaborted for the whole of this start's life.
+    const owner = new AbortController();
+    const timeshift = new ProtectTimeshiftBuffer(host, { signal: owner.signal });
     const profile = makeChannelProfile(host);
     const startPromise = timeshift.start(profile);
 
@@ -236,13 +237,31 @@ describe("timeshift buffer behavior", () => {
 
     double.releaseEstablishment();
 
-    assert.equal(await startPromise, true, "the uncondemned start commits");
+    assert.equal(await startPromise, true, "the start whose owner's signal never aborted commits");
 
     await settle();
 
     assert.equal(timeshift.isStarted, true, "isStarted is true");
     assert.equal(timeshift.channelProfile, profile, "the channel profile committed alongside the subscription");
     assert.equal(double.disposed, false, "the committed subscription is not disposed");
+  });
+
+  // The owner's signal reaches the livestream call, which is what lets the owner's abort end the subscription. The read is by identity: the
+  // options the host recorded carry the very signal the buffer was built with, rather than merely some signal, and a buffer built with no owner passes none.
+  test("start hands its owner's signal to the livestream call, and an ownerless buffer passes none", async () => {
+
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+    host.livestreamSubscriptions = [ makeControllableLivestreamDouble(), makeControllableLivestreamDouble() ];
+
+    const owner = new AbortController();
+
+    assert.equal(await new ProtectTimeshiftBuffer(host, { signal: owner.signal }).start(makeChannelProfile(host)), true, "the owned buffer started");
+    assert.equal(await new ProtectTimeshiftBuffer(host).start(makeChannelProfile(host)), true, "the ownerless buffer started");
+
+    assert.equal(host.livestreamCalls[0]?.opts?.signal, owner.signal, "the owned buffer's livestream call carries the very signal the buffer was built with");
+    assert.equal(host.livestreamCalls[1]?.opts?.signal, undefined, "the ownerless buffer's livestream call carries no signal");
   });
 
   // The teardown report is honest: "stopped" reports every genuine teardown and only those. A stop on a buffer that never started tore nothing down, so it reports
@@ -279,7 +298,7 @@ describe("timeshift buffer behavior", () => {
   // second start runs start's if(isStarted) stop() path, disposing doubleA, then commits doubleB. This is ALSO the genuine distinguishing case of the consumeSegments
   // id-identity guard (the finally's this.subscription?.id === subscription.id): start() commits doubleB BEFORE doubleA's iterator finally runs, so that finally reaches
   // the distinct-id arm (this.subscription is doubleB, doubleB.id !== doubleA.id) and no-ops. A guard-removed timeshift instead tears doubleB down here, flipping
-  // isStarted false - so the isStarted assertion below is what pins the guard.
+  // isStarted false - so the isStarted assertion below is what fails when the guard is removed.
   test("starting again disposes the prior subscription and commits the new one", async () => {
 
     const doubleA = makeControllableLivestreamDouble();
@@ -296,7 +315,7 @@ describe("timeshift buffer behavior", () => {
     assert.equal(host.livestreamCalls.length, 2, "the second start opened a second livestream");
   });
 
-  // #22: a segment still draining from a REPLACED subscription must not contaminate the restarted buffer. We queue a segment on doubleA, then restart WITHOUT settling -
+  // A segment still draining from a REPLACED subscription must not contaminate the restarted buffer. We queue a segment on doubleA, then restart WITHOUT settling -
   // start() disposes doubleA (which drains its queued segment before honoring disposal) and commits doubleB, so doubleA's stale segment reaches consumeSegments' loop
   // body while doubleA is no longer this.subscription. The loop-body identity guard skips it (continue), so it never enters doubleB's buffer. This is the double-restart
   // interleaving the finally-only guard does not cover: the naive single-restart is already saved by the finally, so it would not turn red.
@@ -389,7 +408,7 @@ describe("timeshift buffer behavior", () => {
     const { double, events, timeshift } = await buildStartedTimeshift();
     const keyframe = makeKeyframeFragment();
 
-    // Capture each emission's role directly, pinning the producer side of the tagging contract: transmitStart's prebuffer concat must carry "blob" and a per-fragment
+    // Capture each emission's role directly, locking in the producer side of the tagging contract: transmitStart's prebuffer concat must carry "blob" and a per-fragment
     // forward must carry "live". The recording delegate's counting split branches on these tags - the mutation that turns this red is flipping processSegment's forward
     // to "blob" (or transmitStart's emit to "live"), which would silently corrupt the transmitted-video tally.
     const roles: SegmentRole[] = [];
@@ -490,7 +509,7 @@ describe("timeshift buffer behavior", () => {
     assert.equal(events.discontinuity, 0, "no discontinuity event fires off-transmit");
   });
 
-  // Buffer hygiene (#4/#21) runs on EVERY reconnect: a non-empty IDLE buffer is cleared on a discontinuity, and admission is suppressed until the recovery keyframe, so
+  // Buffer hygiene runs on EVERY reconnect: a non-empty IDLE buffer is cleared on a discontinuity, and admission is suppressed until the recovery keyframe, so
   // the standing buffer never holds mixed-timeline or pre-keyframe data even when no HKSV session is transmitting. A NON-empty buffer is used deliberately - clearing an
   // already-empty one is observationally vacuous.
   test("an idle reconnect clears the standing buffer and suppresses admission until the recovery keyframe", async () => {
@@ -530,7 +549,7 @@ describe("timeshift buffer behavior", () => {
     assert.ok(timeshift.buffer, "the recovery keyframe is admitted and the buffer resumes");
   });
 
-  // Admission suppression (#4/#21) survives a mid-window HKSV session close: transmitStop does not clear the pending discontinuity, so a session ending between the
+  // Admission suppression survives a mid-window HKSV session close: transmitStop does not clear the pending discontinuity, so a session ending between the
   // reconnect and the recovery keyframe leaves suppression in force and the standing buffer timeline-clean for the next consumer.
   test("admission suppression survives a mid-window HKSV session close", async () => {
 
@@ -997,7 +1016,7 @@ describe("timeshift buffer behavior", () => {
 
   // Target (cc): selfHeal ignores an iterator error that is NOT the recovery give-up. A plain error thrown into the iterator is classified and logged by the shared
   // handler but takes selfHeal's first early return (the !instanceof ProtectLivestreamUnavailableError arm), so no reboot is attempted even with self-healing enabled and
-  // the camera reachable. This pins the give-up-only gating of the reboot.
+  // the camera reachable. This locks in the give-up-only gating of the reboot.
   test("selfHeal does not reboot on an iterator error that is not the recovery give-up", async () => {
 
     const { double, host } = await buildStartedTimeshift();

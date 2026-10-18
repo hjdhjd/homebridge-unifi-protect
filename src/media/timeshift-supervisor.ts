@@ -2,7 +2,7 @@
  *
  * timeshift-supervisor.ts: UniFi Protect timeshift buffer supervisor - the lifecycle authority for a camera's standing timeshift buffer.
  */
-import { formatBps, formatErrorMessage } from "homebridge-plugin-utils";
+import { CoalescingTask, HbpuAbortError, formatBps, formatErrorMessage } from "homebridge-plugin-utils";
 import type { CameraRecordingConfiguration } from "homebridge";
 import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
@@ -32,16 +32,14 @@ type DeferralEpisode = "expected" | "none" | "organic";
  *
  * The supervisor owns the standing timeshift buffer's lifecycle: it constructs and holds the buffer, reconciles the buffer's running state against its demand arms -
  * buffer-backed livestreaming (the camera's live-view toggle) and HomeKit Secure Video recording - together with the camera's live reachability, narrates the
- * deferral / resumption / acknowledgment story of that reconciliation, and carries the terminal shutdown latch the controller-disconnect and camera-teardown paths
- * arm. The buffer runs whenever either arm demands it, so the same pooled socket feeds live views, HomeKit Secure Video, and snapshots under one quality policy. The
- * streaming delegate constructs one supervisor per livestream-capable camera, before the recording delegate that may consume it - a recording delegate cannot exist
- * without its supervisor, so buffer supervision has exactly one owner and one construction path.
+ * deferral / resumption / acknowledgment story of that reconciliation, and owns the lifetime signal whose abort, on the controller-disconnect and camera-teardown
+ * paths, ends supervision for good. The buffer runs whenever either arm demands it, so the same pooled socket feeds live views, HomeKit Secure Video, and snapshots
+ * under one quality policy. The streaming delegate constructs one supervisor per livestream-capable camera, before the recording delegate that may consume it - a
+ * recording delegate cannot exist without its supervisor, so buffer supervision has exactly one owner and one construction path.
  */
 export class ProtectTimeshiftSupervisor {
 
   public readonly buffer: ProtectTimeshiftBuffer;
-  private configurePromise?: Promise<boolean>;
-  private configureRequested: boolean;
   // The deferral episode in flight. Opened when the deferral edge fires and closed only when the resolution actually narrates (recording has re-established) or the
   // episode is explicitly ended (recording disabled) - it PERSISTS in between, never re-derived from live inputs, so a failed first post-online start cannot cost the
   // later successful start its resumption narration. That persistence is why the edge-detect input below (wasDeferredOffline) stays a separate per-pass rolling
@@ -57,11 +55,13 @@ export class ProtectTimeshiftSupervisor {
   // availability, and the live-view stream-source kick), so an unresolvable selection would otherwise re-log on every kick. The latch suppresses repeats; it clears
   // on a successful selection and on any pushed demand change, so a genuine change re-arms the report.
   private hasReportedSelectionFailure: boolean;
-  // The terminal shutdown latch. Once armed, no reconcile pass can start the buffer again; a torn-down camera constructs a fresh, unlatched supervisor if it is
+  // The supervisor's lifetime, aborted once by shutdown and never reset. Once its signal has aborted no reconcile pass can start the buffer again, and the buffer
+  // holds the same signal for its livestream calls and its start's commit point. A torn-down camera constructs a fresh supervisor, with a fresh lifetime, if it is
   // ever rebuilt.
-  private isShutdown: boolean;
+  private readonly lifetime: AbortController;
   private readonly log: HomebridgePluginLogging;
   private readonly protectCamera: ProtectCameraHost;
+  private readonly task: CoalescingTask;
   // The camera's deferred-offline state observed on the previous pass - the edge-detect input alone. isDeferredOffline (recording requested while the camera is
   // unreachable) is compared against this to detect the deferral-OPEN edge, and it is re-derived from live inputs every pass. Whether an opened deferral still owes its
   // resolution narration is the separate, persistent concern the deferral episode above carries, for the reason stated there.
@@ -70,23 +70,37 @@ export class ProtectTimeshiftSupervisor {
   // Create an instance of the timeshift buffer supervisor.
   constructor(protectCamera: ProtectCameraHost) {
 
-    this.buffer = new ProtectTimeshiftBuffer(protectCamera, { isStartStale: (): boolean => this.isShutdown });
-    this.configureRequested = false;
+    // The lifetime is assigned first, ahead of its alphabetical place, because the buffer is constructed with its signal.
+    this.lifetime = new AbortController();
+    this.buffer = new ProtectTimeshiftBuffer(protectCamera, { signal: this.lifetime.signal });
     this.deferralEpisode = "none";
     this.demand = { config: undefined, isRecording: false };
     this.hasAcknowledgedRecording = false;
     this.hasReportedSelectionFailure = false;
-    this.isShutdown = false;
     this.log = protectCamera.log;
     this.protectCamera = protectCamera;
+
+    // The reconcile passes run on homebridge-plugin-utils' coalescing task, under the supervisor's own lifetime: once shutdown aborts it, the task begins no pass and
+    // abandons a pass queued behind the one in flight. The task runs the guarded pass, which turns a fault into one logged line itself, so the task's own failed-pass
+    // line, the one place it reads the label, never fires.
+    this.task = new CoalescingTask({
+
+      label: "timeshift reconcile",
+      log: this.log,
+      run: (): Promise<void> => this.runGuardedReconcilePass(),
+      signal: this.lifetime.signal
+    });
+
     this.wasDeferredOffline = false;
 
-    // Re-establish the buffer immediately when it stops for a recoverable reason (a codec-change restart or an unexpected out-of-band death) - the availability edge
-    // that a deliberate teardown rides is not guaranteed to fire for these. A "giveUp" is left alone: the recovery policy's exhaustion is resolved by the availability
-    // edge and self-heal's reboot bounce, not by re-arming into a tight loop. The subscription is supervisor-lifetime; the shutdown latch is the only guard it needs.
+    // Ask for a reconcile whenever the buffer stops for a recoverable reason - a codec-change restart, an unexpected out-of-band death, or a stop the supervisor made
+    // itself - because the availability edge is not guaranteed to fire for these. A "giveUp" is left alone: the recovery policy's exhaustion is resolved by the
+    // availability edge and self-heal's reboot bounce, not by re-arming into a tight loop. A stop made inside a pass asks from inside that pass, which queues one further
+    // pass behind it: after a restart whose new start failed, that pass is the immediate retry, and after any other stop it finds the desired state already reached. The
+    // listener reads no lifetime of its own, because reconcile answers an ended lifetime itself and runs nothing, which is what the stop inside shutdown meets.
     this.buffer.on("stopped", (cause): void => {
 
-      if((cause === "ended") && !this.isShutdown) {
+      if(cause === "ended") {
 
         void this.reconcile();
       }
@@ -102,10 +116,10 @@ export class ProtectTimeshiftSupervisor {
   }
 
   // Push an updated recording demand and reconcile against it. The demand write and the per-episode resets are synchronous, so they land at the demand edge itself
-  // rather than inside a coalesced reconcile pass - a disable-then-enable flap that collapses into a single reconcile loop still closes the old enable episode
-  // here, on the disable edge, and the subsequent enable re-acknowledges exactly once. Returns the reconcile promise so a caller can await the pass this demand
-  // triggered.
-  public setRecordingDemand(demand: RecordingDemand): Promise<boolean> {
+  // rather than inside a coalesced reconcile pass - a disable and an enable arriving while another pass is running are served by one queued pass, so no pass
+  // ever observes the disabled demand, yet the resets at the edge still close the old enable episode here, on the disable edge, and the subsequent enable
+  // re-acknowledges exactly once. Returns the reconcile promise so a caller can await the pass this demand triggered.
+  public setRecordingDemand(demand: RecordingDemand): Promise<void> {
 
     if(this.demand.isRecording && !demand.isRecording) {
 
@@ -129,92 +143,47 @@ export class ProtectTimeshiftSupervisor {
 
   // Reconcile the timeshift buffer against the current desired state. The single reconciliation entry point for the timeshift lifecycle, invoked from any trigger
   // that might have changed an input (a recording demand push, camera online/offline, controller reconnect). Safe to call from any caller, any number of times,
-  // concurrently. Two rules make this correct:
+  // concurrently. The coalescing task holds the rules that make this correct:
   //
-  //   1. At most one reconciliation runs at a time (shared-promise serialization).
-  //   2. Every request is honored. If inputs change mid-flight, a follow-up pass runs against the new inputs. The request-flag-and-loop pattern ensures no
-  //      input change is silently dropped by a promise-join.
+  //   1. One pass runs at a time.
+  //   2. Every request is honored. A request that arrives during a pass queues one further pass against the latest inputs, however many requests arrive, so no
+  //      input change is silently dropped by joining the pass in flight.
   //
-  // A plain-Promise return is intentional here: it preserves the synchronous atomicity of the check-and-set on configurePromise below. An async wrapper would
-  // introduce a microtask boundary that defeats that atomicity.
-  public reconcile(): Promise<boolean> {
+  // The returned promise never rejects, which matters because most callers discard it and a rejection would float unhandled. While the lifetime lasts, it settles
+  // when the task's drain ends, after any follow-up pass a request during the pass queued. The guarded pass turns every fault into one logged line before the task
+  // sees it, and a lifetime that ends mid-pass ends the drain when that pass ends. Once the lifetime is over, the task refuses a request with a rejection, so we
+  // answer a resolved promise ourselves and run nothing. A plain-Promise return is intentional: the task's promise is handed back as it is, with no async wrapper,
+  // so every caller of a pass in flight holds the identical promise.
+  public reconcile(): Promise<void> {
 
-    // Flag that a reconciliation was requested. An in-flight loop observes this flag after its current iteration completes and runs another pass against the
-    // latest inputs. If no loop is running, the loop below consumes the flag on its first iteration.
-    this.configureRequested = true;
+    if(this.lifetime.signal.aborted) {
 
-    // Atomic check-and-set. If a reconciliation is already in flight, return its promise and let the caller join it. The synchronous read-and-assign of
-    // configurePromise cannot be interleaved with another call in single-threaded JavaScript, so exactly one reconciliation loop runs at a time.
-    if(this.configurePromise) {
-
-      return this.configurePromise;
+      return Promise.resolve();
     }
 
-    this.configurePromise = this.runReconcileLoop().finally((): void => {
-
-      this.configurePromise = undefined;
-
-      // Exit-window coalesce: a reconcile() that landed in the microtask gap between the loop's exit and this clear saw configurePromise still truthy and joined it,
-      // setting the request flag but leaving no loop to consume it. Now that the clear has run, re-check the flag and start a fresh loop if a request is pending, so no
-      // input change is silently dropped by a promise-join. This is the single clear site; the re-check rides it rather than adding a second clear path. A failing pass
-      // does not re-arm the flag itself, so a persistent fault cannot turn this re-entry into a tight loop - only a genuine pending request restarts the loop.
-      if(this.configureRequested) {
-
-        void this.reconcile();
-      }
-    });
-
-    return this.configurePromise;
+    return this.task.request();
   }
 
-  // The request-coalescing loop. Runs `runReconcilePass` in sequence while `configureRequested` is set, so any input change that fires during an in-flight
-  // iteration causes another pass against the latest state. When a full iteration completes with no concurrent request, the loop exits and the wrapper promise
-  // resolves.
-  private async runReconcileLoop(): Promise<boolean> {
+  // Run one reconcile pass with its fault converted here, the pass the coalescing task runs. A reconcile pass can throw - the buffer's start, or any other step inside
+  // the pass. The reconcile is reached through many fire-and-forget void kicks (camera availability, the buffer's own restart, the live-view stream-source kick), so a
+  // rejection that escaped would float as an unhandled rejection, and would reach every caller holding the promise of the pass in flight. We convert the throw to one
+  // logged line, so the task never sees a fault. A pass that threw is not retried here: the next request runs a pass, and a request that arrived during this one has
+  // already queued it. The pass's own bookkeeping (the deferred-offline fields) runs before any throw point inside the pass, so it is preserved.
+  private async runGuardedReconcilePass(): Promise<void> {
 
-    let result = false;
+    try {
 
-    while(this.configureRequested) {
+      await this.runReconcilePass();
+    } catch(error) {
 
-      this.configureRequested = false;
-
-      try {
-
-        // eslint-disable-next-line no-await-in-loop -- Intentional: each iteration reconciles against the state observed at iteration start.
-        result = await this.runReconcilePass();
-      } catch(error) {
-
-        // A reconcile pass threw - the buffer's start, or any other step inside the pass. This chokepoint is reached through many fire-and-forget void kicks (camera
-        // availability, the buffer's own restart, the live-view stream-source kick), so an escaping rejection would float as an unhandled rejection and, worse, poison
-        // the shared configurePromise every joined caller reads. We convert the throw to a false verdict - never a stale-truthy success - and log one line. We
-        // deliberately do NOT re-arm the request flag ourselves: a self-set flag would, once the exit-window coalesce re-entry runs, spin a tight retry loop against a
-        // persistent fault. The next organic kick re-runs the reconcile against fresh inputs, and a concurrent kick that arrived during this pass already set the flag
-        // and re-runs the loop here. The pass's own bookkeeping (the deferred-offline fields) runs before any throw point inside the pass, so it is preserved. One
-        // logged line per failing pass.
-        result = false;
-        this.log.error("The timeshift buffer could not be updated and will be retried automatically: %s.", formatErrorMessage(error));
-      }
+      this.log.error("The timeshift buffer could not be updated and will be retried automatically: %s.", formatErrorMessage(error));
     }
-
-    // Test sequencing hook: fires at the loop's exit, before the wrapper promise settles and its .finally clears configurePromise. Production leaves it a no-op.
-    this.onReconcileLoopExit();
-
-    return result;
-  }
-
-  // Test sequencing hook invoked at the reconcile loop's exit, before the wrapper promise settles. A no-op in production; a test subclass overrides it to land a
-  // reconcile() request in the exit window - the single-microtask gap between the loop's return and the .finally that clears configurePromise - which no coarser timing
-  // primitive can hit deterministically.
-  protected onReconcileLoopExit(): void {
-
-    // No-op in production.
   }
 
   // Invoked after every successful pass settles its buffer state and before the pass narrates - the settle window, whose real occupants are an organic death and a
   // shutdown landing after a start has committed. Each leaves the buffer stopped before the guard below reads it, which is why that guard reads the started state
   // alone. On a coalesced pass (the buffer already running) no await separates the state check from this call, so the window is real only when a fresh start preceded
-  // it; firing unconditionally keeps the call site simple. A no-op in production; the test suite overrides it to land exactly-timed events inside the window, the same
-  // role onReconcileLoopExit plays for the loop's exit edge.
+  // it; firing unconditionally keeps the call site simple. A no-op in production; the test suite overrides it to land exactly-timed events inside the window.
   protected onStartSettled(): void {
 
     // No-op in production.
@@ -224,16 +193,17 @@ export class ProtectTimeshiftSupervisor {
   //
   // The channel profile lives on the buffer as a matched pair with its subscription: the buffer commits it only when a start actually succeeds and clears it on
   // every teardown path, so external readers (ProtectStreamingDelegate, ProtectSnapshot) always see an entry that actually backs a running timeshift.
-  private async runReconcilePass(): Promise<boolean> {
+  private async runReconcilePass(): Promise<void> {
 
     // The buffer runs when either arm demands it. The streaming arm is a live read of the camera's buffer-backed-livestreaming capability; the recording arm needs
     // both an active HomeKit request and a configuration to record with. Desired state is "running with the correct channel profile" iff either arm demands it, the
-    // camera is online, the shutdown latch is unarmed, and the controller is not shutting down. The local binding of the demanded configuration gives TypeScript a
-    // stable reference (instance-field narrowing does not survive async boundaries).
+    // camera is online, and the controller is not shutting down. The supervisor's lifetime is not a term, because no pass begins once it has ended, and a start in
+    // flight when it ends is declined at the buffer's commit point or stopped by shutdown. The local binding of the demanded configuration gives TypeScript a stable
+    // reference (instance-field narrowing does not survive async boundaries).
     const streamingDemand = this.protectCamera.usesTimeshiftLivestream;
     const recordingConfig = this.demand.config;
     const recordingDemand = this.demand.isRecording && (recordingConfig !== undefined);
-    const shouldRun = (streamingDemand || recordingDemand) && this.protectCamera.isReachable && !this.isShutdown && (this.protectCamera.nvr.phase !== "shuttingDown");
+    const shouldRun = (streamingDemand || recordingDemand) && this.protectCamera.isReachable && (this.protectCamera.nvr.phase !== "shuttingDown");
 
     // Observability for the "user asked us to record but the camera is offline" case. Only the recording arm defers loudly; a streaming-only camera going offline is
     // already covered by the controller/camera narration, so its deferral is silent (this block stays gated on the recording request). isDeferredOffline is derived
@@ -265,15 +235,14 @@ export class ProtectTimeshiftSupervisor {
     if(!shouldRun) {
 
       // Desired state is stopped. If the timeshift is running, stop it; the buffer clears its backing channel profile inside the same synchronous stop, so external
-      // readers observe the matched (isStarted=false, channelProfile=null) output state. Return value: true if "stopped" was the desired outcome (caller asked us to
-      // stop), false if the caller wanted us running but prerequisites were not met.
+      // readers observe the matched (isStarted=false, channelProfile=null) output state.
       if(this.buffer.isStarted) {
 
         this.buffer.stop();
         this.log.debug("Timeshift buffer stopped.");
       }
 
-      return !this.demand.isRecording;
+      return;
     }
 
     // Compute the substrate channel that populates the buffer. Selection is HKSV-state-independent by construction: the demanded resolution is not a selection input, so
@@ -291,7 +260,7 @@ export class ProtectTimeshiftSupervisor {
         this.log.error("Unable to start the timeshift buffer: no valid video stream profile was found for this camera.");
       }
 
-      return false;
+      return;
     }
 
     // A valid selection clears the once-per-episode failure latch, so a later failure reports afresh.
@@ -316,7 +285,7 @@ export class ProtectTimeshiftSupervisor {
 
       if(!(await this.buffer.start(desiredRtspEntry))) {
 
-        return false;
+        return;
       }
 
       freshlyStarted = true;
@@ -328,12 +297,13 @@ export class ProtectTimeshiftSupervisor {
 
     // Narrating now would celebrate a buffer that is already gone, so the started state gates every line below. The settle window is real - the consume loop runs
     // detached from the start commit, so a subscription can die in the microtask gap between the commit and this read, and a shutdown can land in the same gap - but
-    // the buffer never stays started through it. An organic death drops the started state on its way out, and a shutdown either stops a committed buffer synchronously
-    // or is observed at the buffer's own commit point, which declines the start rather than committing it; so this read covers every condemned path. A dead buffer
-    // returns through the failure path and the coalescing loop's re-arm owns the retry, and the acknowledgment below never latches for an episode that never ran.
+    // the buffer never stays started through it. An organic death drops the started state on its way out, a shutdown stops a committed buffer synchronously, and a
+    // start the buffer's commit point declined never committed at all and returned through the start's failure path above, so no buffer any of them ended reads as
+    // started here. A dead buffer returns here, a buffer that died as "ended" has its retry in the pass its stopped event's request queued, and the acknowledgment
+    // below never latches for an episode that never ran.
     if(!this.buffer.isStarted) {
 
-      return false;
+      return;
     }
 
     // A streaming-arm-only start narrates its lifecycle at debug; a start that also satisfies a recording request is announced by the HKSV acknowledgment below.
@@ -379,33 +349,26 @@ export class ProtectTimeshiftSupervisor {
         this.protectCamera.stream?.ffmpegOptions.hardwareEncodes("record") ? HKSV_HARDWARE_TRANSCODE_MARKER : "",
         desiredRtspEntry.name, this.protectCamera.videoCodecName, formatBps(acknowledgeConfig.videoCodec.parameters.bitRate * 1000));
     }
-
-    // Return value contract for the recording arm's callers (updateRecordingActive reads it as an early-return gate), derived live-first to match the gate above it.
-    // The caller asks how this pass answers against the demand as it stands at the commit point: a demand that has gone away by now is owed nothing and answers true,
-    // which is exactly what the stopped path answers for that same cell, while a demand still live answers whether this pass actually served it (a streaming-only run,
-    // and the {isRecording true, config undefined} cell, both answer false). One consistent result whichever path ran.
-    return this.demand.isRecording ? recordingDemand : true;
   }
 
-  // Shut buffer supervision down for good - the terminal teardown the controller-disconnect and camera-removal paths call. Arms the latch so no subsequent or
-  // in-flight reconcile pass can start the buffer again, then stops the buffer synchronously, releasing a committed subscription's pool seat inside this call. A start
-  // still mid-establishment when the latch arms cannot commit: it reads the latch at the buffer's own commit point and disposes its subscription when its establishment
-  // settles, so no start ever hands a live subscription to a torn-down owner. Produces no narration of its own: the paths that call this have already narrated the
-  // disruption at the controller or camera level. Terminal per instance by design - a camera whose streaming delegate is ever rebuilt constructs a fresh, unlatched
-  // supervisor. A repeat call returns at the latch - a no-op by design, not by accident of ordering - so the paths that pair a delegate and supervisor teardown can
-  // both run without either one tearing down twice.
+  // Shut buffer supervision down for good - the terminal teardown the controller-disconnect and camera-removal paths call. Aborts the lifetime so no subsequent or
+  // in-flight reconcile pass can start the buffer again, then stops the buffer synchronously, releasing a committed subscription's pool seat inside this call. The
+  // abort comes first because the stop emits its stopped event synchronously, and the reconcile the listener asks for must already find the lifetime over, so it
+  // answers without running a pass. A pass in flight when the lifetime ends runs to its end, and the coalescing task runs no pass queued behind it. A start still
+  // mid-establishment when the lifetime ends cannot commit: the abort ends the subscription that start opened, so its establishment wait usually answers false and
+  // the start declines there; where that wait still answers true, the start reads the aborted signal at the buffer's own commit point and disposes its subscription.
+  // So no start ever hands a live subscription to a torn-down owner. Produces no narration of its own: the paths that call this have already narrated the disruption
+  // at the controller or camera level. Terminal per instance by design - a camera whose streaming delegate is ever rebuilt constructs a fresh supervisor with a fresh
+  // lifetime. A repeat call returns at the aborted signal - a no-op by design, not by accident of ordering - so the paths that pair a delegate and supervisor teardown
+  // can both run without either one tearing down twice.
   public shutdown(): void {
 
-    if(this.isShutdown) {
+    if(this.lifetime.signal.aborted) {
 
       return;
     }
 
-    this.isShutdown = true;
+    this.lifetime.abort(new HbpuAbortError("shutdown"));
     this.buffer.stop();
-
-    // Wake the coalescing loop, the cheap backstop on a terminal path. When a pass was in flight, this guarantees one further pass runs, and that pass settles a buffer
-    // the stop above already stopped - or finds nothing to do at all. When no loop is running, the flag is simply consumed by the next reconcile request.
-    this.configureRequested = true;
   }
 }

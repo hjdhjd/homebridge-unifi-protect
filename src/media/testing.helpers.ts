@@ -12,6 +12,7 @@
  * testing.helpers.ts imports from.
  */
 import type { HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
+import type { LivestreamHostOptions, ProtectCameraHost } from "./camera-host.ts";
 import type { LivestreamSubscriptionState, ProtectCameraConfig, Segment, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
@@ -22,7 +23,6 @@ import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectCameraHints } from "../devices/cameras/camera.ts";
-import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
 import { SAMPLE_FLAG_NON_SYNC } from "homebridge-plugin-utils";
@@ -110,7 +110,7 @@ export class TestCameraHost implements ProtectCameraHost {
   public isReachable = true;
 
   // Recordable call logs: each behavior-bearing interface pushes its arguments here so a later test can assert the interface was invoked exactly as expected.
-  public readonly livestreamCalls: { channelProfile: ChannelProfile; opts?: { segmentLength?: number; signal?: AbortSignal; urgency?: () => number } }[] = [];
+  public readonly livestreamCalls: { channelProfile: ChannelProfile; opts?: LivestreamHostOptions }[] = [];
 
   // The segment-count knob the transmit test sets to fill the timeshift buffer: the number of keyframe-bearing media segments livestream() yields. Defaults 0, which
   // returns the inert (segment-less) livestream double so the construction suites stay on their unchanged path.
@@ -188,7 +188,7 @@ export class TestCameraHost implements ProtectCameraHost {
   // livestreamMediaSegments knob: the default 0 yields the inert double (empty iterator, no-op dispose, "closed" state) the construction suites stay on, while a
   // positive count yields the established segment-yielding double (one init then that many keyframe-bearing media segments, then a parked iterator) the transmit net
   // fills its timeshift buffer from.
-  public livestream(channelProfile: ChannelProfile, opts?: { segmentLength?: number; signal?: AbortSignal; urgency?: () => number }): LivestreamSubscription {
+  public livestream(channelProfile: ChannelProfile, opts?: LivestreamHostOptions): LivestreamSubscription {
 
     this.livestreamCalls.push({ channelProfile, opts });
 
@@ -394,7 +394,7 @@ export interface ControllableLivestreamDouble extends LivestreamSubscription {
  * consumeSegments for-await stays open, its finally does not run, the subscription stays committed, and timeshift.isStarted reports true. end()/throwError()/dispose are
  * the iterator-termination drivers that feed that finally: each enqueues its terminal item AFTER any queued segments (drain-then-close, so queued media is not
  * dropped) and wakes the iterator. whenEstablished resolves immediately (default true) so start() commits the subscription before the test pushes media; setting
- * deferEstablishment instead holds whenEstablished open until releaseEstablishment() resolves it true, so a start can be pinned in flight across a racing shutdown().
+ * deferEstablishment instead holds whenEstablished open until releaseEstablishment() resolves it true, so a start can be held in flight across a racing shutdown().
  *
  * The terminal transition is one-shot and safe to repeat: once the generator has returned (end/dispose) or thrown (error), the double is terminated and
  * push/end/throwError and a second dispose are NO-OPS, and the parking resolver is resolved at most once (guarded so no double-resolve). asyncDispose records disposed =
