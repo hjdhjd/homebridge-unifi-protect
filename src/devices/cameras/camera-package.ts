@@ -172,7 +172,10 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     // Synthesize the HomeKit resolution list from the package channel's fixed native top. The package camera is a single fixed channel - the resolution module seeds the
     // list with the native top itself and appends the aspect-appropriate mandated resolutions at the package frame rate, so we pass the seed once and do NOT prepend it.
-    return { profiles: [profile], resolutions: buildAdvertisedResolutions({ fpsSet: [15], nativeTop: profile.resolution }) };
+    //
+    // The package advertises the recording audio stand-in and runs no probe, because its derivation is synchronous by contract and a probe would await the stream. A
+    // package recording whose stream differs from the stand-in is transcoded to it.
+    return { audioFormat: null, probe: null, profiles: [profile], resolutions: buildAdvertisedResolutions({ fpsSet: [15], nativeTop: profile.resolution }) };
   }
 
   // The package camera's establishment narration, overriding the parent's: its debug mapping lines have a shape of their own, because the package advertises a

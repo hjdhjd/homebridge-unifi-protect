@@ -14,17 +14,18 @@
  */
 import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
 import { PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
+import { TestStreamingDelegate, makeRecordingDelegateDouble } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import { makeControllableLivestreamDouble, makeTestCameraHost } from "./testing.helpers.ts";
 import type { CameraRecordingConfiguration } from "homebridge";
 import type { ChannelProfile } from "./resolution.ts";
+import type { LivestreamDescription } from "unifi-protect";
 import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
-import { TestStreamingDelegate } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting them in teardown releases the harness signals so any leaked observer (none here -
@@ -1444,5 +1445,174 @@ describe("timeshift supervisor selection failure", () => {
     await settle();
 
     assert.equal(countLogs(logEntries, "error", "no valid video stream profile was found"), 2, "a demand change re-armed the report");
+  });
+});
+
+describe("the supervisor's adoption of the derivation's probe subscription", () => {
+
+  // A supervisor handed the probe pair, under the streaming arm's demand unless a row withdraws it, with the host selecting its first channel.
+  function arrangeAdoption(options: { adopted: ControllableLivestreamDouble; profileIndex?: number }):
+  { host: TestCameraHost; supervisor: ProtectTimeshiftSupervisor } {
+
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    host.stream = new TestStreamingDelegate();
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+    host.usesTimeshiftLivestream = true;
+
+    const supervisor = new ProtectTimeshiftSupervisor(host, { adopt: { profile: makeChannelProfile(host, options.profileIndex), subscription: options.adopted },
+      advertised: { channels: 1, codec: "aac", sampleRate: 16000 } });
+
+    return { host, supervisor };
+  }
+
+  test("an adopted subscription on the desired channel starts the buffer with no subscribe of its own when demand holds", async () => {
+
+    const adopted = makeControllableLivestreamDouble();
+    const { host, supervisor } = arrangeAdoption({ adopted });
+
+    await supervisor.reconcile();
+
+    assert.equal(supervisor.buffer.isStarted, true, "the buffer started");
+    assert.equal(host.livestreamCalls.length, 0, "the start subscribed nothing, running on the adopted subscription");
+    assert.equal(adopted.disposed, false, "the adopted subscription is the buffer's, still open");
+
+    supervisor.shutdown();
+
+    assert.equal(adopted.disposed, true, "the buffer's own teardown disposes it");
+  });
+
+  test("with no demand the adopted subscription is disposed and the buffer stays stopped", async () => {
+
+    const adopted = makeControllableLivestreamDouble();
+    const { host, supervisor } = arrangeAdoption({ adopted });
+
+    host.usesTimeshiftLivestream = false;
+    await supervisor.reconcile();
+
+    assert.equal(adopted.disposed, true, "a pass with no demand disposed the adopted subscription");
+    assert.equal(supervisor.buffer.isStarted, false, "the buffer stayed stopped");
+    assert.equal(host.livestreamCalls.length, 0, "nothing subscribed");
+  });
+
+  test("an adopted subscription on a different channel, or one already closed, is disposed and one fresh subscribe runs", async () => {
+
+    const elsewhere = makeControllableLivestreamDouble();
+    const moved = arrangeAdoption({ adopted: elsewhere, profileIndex: 1 });
+
+    await moved.supervisor.reconcile();
+
+    assert.equal(elsewhere.disposed, true, "the subscription on another channel was disposed");
+    assert.equal(moved.host.livestreamCalls.length, 1, "exactly one fresh subscribe ran for the desired channel");
+    moved.supervisor.shutdown();
+
+    const closed = makeControllableLivestreamDouble({ state: "closed" });
+    const ended = arrangeAdoption({ adopted: closed });
+
+    await ended.supervisor.reconcile();
+
+    assert.equal(closed.disposed, true, "the closed subscription was disposed");
+    assert.equal(ended.host.livestreamCalls.length, 1, "exactly one fresh subscribe ran in its place");
+    ended.supervisor.shutdown();
+  });
+
+  test("a first pass that throws disposes the adopted subscription", async () => {
+
+    const adopted = makeControllableLivestreamDouble();
+    const { host, supervisor } = arrangeAdoption({ adopted });
+
+    host.selectSubstrateChannel = (): ChannelProfile => {
+
+      throw new Error("the channel selection failed");
+    };
+
+    await supervisor.reconcile();
+
+    assert.equal(adopted.disposed, true, "the pass's frame disposed the subscription the throwing pass never handed on");
+    assert.equal(supervisor.buffer.isStarted, false, "the buffer stayed stopped");
+  });
+
+  test("a shutdown before the first pass disposes the adopted subscription", () => {
+
+    const adopted = makeControllableLivestreamDouble();
+    const { supervisor } = arrangeAdoption({ adopted });
+
+    supervisor.shutdown();
+
+    assert.equal(adopted.disposed, true, "the shutdown disposed the subscription no pass ever took");
+  });
+});
+
+describe("the supervisor's audio-format narration at a buffer start", () => {
+
+  const ADVERTISED = { channels: 1, codec: "aac", sampleRate: 16000 } as const;
+  const RESTART_HINT = "restart HBUP to let HomeKit learn the new format";
+
+  // A description carrying one AAC track at the given rate in one channel.
+  const describedAt = (sampleRate: number): LivestreamDescription => ({ tracks: [{ channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate }] });
+
+  // A camera with a recording arm under the streaming arm's demand, whose successive buffer starts run on subscriptions carrying the given descriptions in order.
+  function arrangeNarration(rates: number[]): { logEntries: readonly TestLogEntry[]; supervisor: ProtectTimeshiftSupervisor } {
+
+    const { controller, host, logEntries } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    const stream = new TestStreamingDelegate();
+
+    stream.hksv = makeRecordingDelegateDouble() as unknown as TestStreamingDelegate["hksv"];
+    host.stream = stream;
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+    host.usesTimeshiftLivestream = true;
+    host.livestreamSubscriptions = rates.map((rate) => makeControllableLivestreamDouble({ description: describedAt(rate) }));
+
+    return { logEntries, supervisor: new ProtectTimeshiftSupervisor(host, { adopt: null, advertised: ADVERTISED }) };
+  }
+
+  // Stop the running buffer, which asks for the re-establishing pass itself, and let that pass start the buffer on the next subscription.
+  async function restart(supervisor: ProtectTimeshiftSupervisor): Promise<void> {
+
+    supervisor.buffer.stop();
+    await settle();
+  }
+
+  test("a start whose format differs logs the restart hint once, a restart on the same format logs nothing more, and a return to the advertised one resets it",
+    async () => {
+
+      const { logEntries, supervisor } = arrangeNarration([ 8000, 8000, 16000, 8000 ]);
+
+      await supervisor.reconcile();
+
+      assert.equal(countLogs(logEntries, "info", RESTART_HINT), 1, "the differing format was narrated once at the first start");
+      assert.ok(logEntries.some((entry) => formatLogEntry(entry).includes("now 8 kHz mono, while HomeKit Secure Video records at 16 kHz mono")),
+        "the line names the stream's format and the advertised one");
+
+      await restart(supervisor);
+
+      assert.equal(countLogs(logEntries, "info", RESTART_HINT), 1, "a restart on the same differing format narrated nothing more");
+
+      await restart(supervisor);
+
+      assert.equal(countLogs(logEntries, "info", RESTART_HINT), 1, "a restart back on the advertised format narrated nothing");
+
+      await restart(supervisor);
+
+      assert.equal(countLogs(logEntries, "info", RESTART_HINT), 2, "the return to the advertised format reset the latch, so the next change is narrated again");
+
+      supervisor.shutdown();
+    });
+
+  test("a start whose format matches the advertised one never logs the hint", async () => {
+
+    const { logEntries, supervisor } = arrangeNarration([ 16000, 16000 ]);
+
+    await supervisor.reconcile();
+    await restart(supervisor);
+
+    assert.equal(countLogs(logEntries, "info", RESTART_HINT), 0, "a matching format is never narrated");
+
+    supervisor.shutdown();
   });
 });

@@ -9,10 +9,12 @@ import { formatErrorMessage, isKeyframe } from "homebridge-plugin-utils";
 import type { ChannelProfile } from "./resolution.ts";
 import { EventEmitter } from "node:events";
 import { LIVE_SELF_HEAL_THRESHOLD } from "./livestream-recovery-policy.ts";
+import type { LivestreamAudioFormat } from "./stream-delegate.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import type { Segment } from "unifi-protect";
+import { livestreamAudioFormat } from "./stream-delegate.ts";
 import { logLivestreamIterationError } from "./livestream.ts";
 
 // Why the standing buffer stopped, carried by the `stopped` event. "ended" is a recoverable end - a deliberate stop, a codec-change restart, or an unexpected iterator
@@ -120,8 +122,13 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     this.signal = options.signal;
   }
 
-  // Start the livestream and begin maintaining our timeshift buffer.
-  public async start(channelProfile: ChannelProfile): Promise<boolean> {
+  /* Start the livestream and begin maintaining our timeshift buffer. An adopted subscription - the one the camera's derivation opened to read its recording audio
+   * format - takes the place of a fresh one. Adoption rather than releasing it and subscribing again is the form, because the pool tears a session down when its last
+   * subscriber leaves, so a release-and-rejoin would close the stream and open it again. The adopted subscription runs the same establishment, init and signal checks
+   * a fresh one does: an established subscription passes at once, and one whose init is null declines exactly as a fresh one does. Its signal is the camera's rather
+   * than our owner's, which is benign, because stop() disposes a committed subscription directly and the commit-point check below reads our owner's own signal.
+   */
+  public async start(channelProfile: ChannelProfile, adopted?: LivestreamSubscription): Promise<boolean> {
 
     // Reset the pending stop cause at the head of every start. An establishment-phase give-up (whenEstablished false) disposes a local subscription that was never
     // committed, so it never reaches finalizeSubscription to emit and clear the cause; without this reset a latched "giveUp" would mislabel the next out-of-band death
@@ -146,7 +153,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // (latency-tolerant, so an idle prebuffer eases off a stressed-but-reachable controller). The closure moves only the recovery tolerance; the library's media-stall
     // detection floors at max(urgency, 2000ms) regardless, so the prebuffer stays watched at the 2-second floor either way. A genuine reconnect surfaces inline as a
     // discontinuity-marked segment (handled in processSegment), so there is no separate disconnect handler to attach.
-    const subscription = this.protectCamera.livestream(channelProfile, { discardOnDispose: true, segmentLength: this._segmentLength, signal: this.signal,
+    const subscription = adopted ?? this.protectCamera.livestream(channelProfile, { discardOnDispose: true, segmentLength: this._segmentLength, signal: this.signal,
       urgency: () => this._isTransmitting ? PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS : PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS });
 
     // Drive the segment iterator in the background. The for-await loop runs until the subscription is disposed (graceful return), terminated with a typed error
@@ -544,6 +551,13 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // If we don't have our fMP4 initialization segment, we're done. Otherwise, return the current timeshift buffer in full.
     return (this.subscription?.initSegment && this._segments.length) ?
       Buffer.concat([ this.subscription.initSegment.data, ...this._segments.map((s) => s.data) ]) : null;
+  }
+
+  // Return the audio format the running livestream carries, read from its init segment's description, or null when the buffer is not running or the stream has no
+  // readable audio track. The recording path reads it to decide whether a recording copies the stream's audio or transcodes it to the format HomeKit selected.
+  public get audioFormat(): LivestreamAudioFormat | null {
+
+    return this.subscription?.initSegment ? livestreamAudioFormat(this.subscription.initSegment.description) : null;
   }
 
   // Return the channel profile the running livestream is backed by, or null when the buffer is not running. Kept as a matched pair with `isStarted` on every start

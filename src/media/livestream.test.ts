@@ -13,12 +13,13 @@ import type { FMp4AudioTarget, FfmpegOptions } from "homebridge-plugin-utils";
 import { TestLivestreamProcessFactory, assertNoUnhandledRejections, expectAt, settle } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { makeKeyframeFragment, makeNonKeyframeFragment } from "./testing.helpers.ts";
+import { AMCREST_INIT_SEGMENT } from "../camera.fixtures.ts";
 import { RtspLivestreamSubscription } from "./livestream.ts";
 import type { TestLivestreamProcess } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 
-// The adapter's inputs, fixed so a row compares what reached the factory against them. The audio target is the shape the camera derives for a 16 kHz microphone, and
-// the URL is the form the camera composes for an RTSP-enabled channel; the adapter hands each to its process without reading it.
+// The adapter's inputs, fixed so a row compares what reached the factory against them. The audio target is the shape the camera derives from the recording stand-in,
+// and the URL is the form the camera composes for an RTSP-enabled channel; the adapter hands each to its process without reading it.
 const AUDIO_TARGET: FMp4AudioTarget = { channels: 1, codec: AudioRecordingCodecType.AAC_LC, samplerate: AudioRecordingSamplerate.KHZ_16 };
 const SEGMENT_LENGTH = 100;
 const STREAM_URL = "rtsps://camera.test:7441/alias0?enableSrtp";
@@ -29,8 +30,10 @@ const VIDEO_CODEC = "h264";
 // so the sentinel is cast once, here, at this confined boundary.
 const FFMPEG_OPTIONS = { hbupTestSentinel: "ffmpeg-options" } as unknown as FfmpegOptions;
 
-// The init segment bytes a row resolves the process double with. The adapter caches and yields them without parsing them, so plain bytes serve.
+// The init segment bytes a row resolves the process double with, and the description unifi-protect reads from them. They are placeholders with no moov to read, so
+// they describe as no tracks; the row about the description itself resolves the process with a real camera's init instead.
 const INIT_SEGMENT = Buffer.from("rtsp-test-init-segment");
+const NO_TRACKS = { tracks: [] };
 
 // Build an adapter over a fresh TestLivestreamProcessFactory and return it with the factory and the process double the factory built for it. The process is read off
 // the factory's record rather than built ahead of the call, because the factory builds it over the signal the adapter hands to create, which is how the owner's abort
@@ -77,10 +80,43 @@ describe("the RTSP debug livestream adapter over a driven livestream process", (
     livestreamProcess.resolveInit(INIT_SEGMENT);
 
     assert.equal(await subscription.whenEstablished(), true, "the resolved init segment establishes the adapter");
-    assert.deepEqual(subscription.initSegment, { codec: VIDEO_CODEC, data: INIT_SEGMENT }, "the cached init segment carries the camera's codec and the process's bytes");
+    assert.deepEqual(subscription.initSegment, { codec: VIDEO_CODEC, data: INIT_SEGMENT, description: NO_TRACKS },
+      "the cached init segment carries the camera's codec, the process's bytes, and the description read from them");
     assert.equal(subscription.state, "live", "the adapter reads live once established");
 
     await subscription[Symbol.asyncDispose]();
+  });
+
+  // The adapter's init is the one init unifi-protect does not describe for us, so the adapter describes the bytes its process produced. A real camera's init proves
+  // the description is read from those bytes rather than invented: the Amcrest's init reads its one AAC track at 8000 Hz in one channel, on the cached init and on the
+  // yielded one alike.
+  test("the cached and yielded init carry the description read from the process's bytes: a real camera's AAC track, and no tracks for placeholder bytes", async () => {
+
+    const { livestreamProcess, subscription } = makeSubscription();
+
+    livestreamProcess.resolveInit(AMCREST_INIT_SEGMENT);
+
+    assert.equal(await subscription.whenEstablished(), true, "the resolved init segment establishes the adapter");
+
+    const audio = subscription.initSegment?.description.tracks.filter((track) => track.kind === "audio");
+
+    assert.deepEqual(audio, [{ channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 8000 }], "the cached init describes the Amcrest's one AAC track");
+
+    const first = await subscription[Symbol.asyncIterator]().next();
+
+    assert.ok(!first.done && (first.value.type === "init"), "the init segment comes first");
+    assert.equal(first.value.description, subscription.initSegment?.description, "the yielded init carries the same description the cached init does");
+
+    await subscription[Symbol.asyncDispose]();
+
+    const placeholder = makeSubscription();
+
+    placeholder.livestreamProcess.resolveInit(INIT_SEGMENT);
+    await placeholder.subscription.whenEstablished();
+
+    assert.deepEqual(placeholder.subscription.initSegment?.description, NO_TRACKS, "placeholder bytes with no moov describe as no tracks");
+
+    await placeholder.subscription[Symbol.asyncDispose]();
   });
 
   // The process ends on its own here rather than at the owner's hand, so the adapter is not closed and its state stays where it was.
@@ -117,7 +153,8 @@ describe("the RTSP debug livestream adapter over a driven livestream process", (
 
     const iterator = subscription[Symbol.asyncIterator]();
 
-    assert.deepEqual(await iterator.next(), { done: false, value: { codec: VIDEO_CODEC, data: INIT_SEGMENT, type: "init" } }, "the init segment comes first");
+    assert.deepEqual(await iterator.next(), { done: false, value: { codec: VIDEO_CODEC, data: INIT_SEGMENT, description: NO_TRACKS, type: "init" } },
+      "the init segment comes first");
     assert.deepEqual(await iterator.next(), { done: false, value: { data: keyframe.data, mdat: keyframe.mdat, moof: keyframe.moof, type: "media" } },
       "the first fed fragment follows, split where the fragment builder joined its moof and mdat");
     assert.deepEqual(await iterator.next(), { done: false, value: { data: nonKeyframe.data, mdat: nonKeyframe.mdat, moof: nonKeyframe.moof, type: "media" } },
@@ -141,9 +178,10 @@ describe("the RTSP debug livestream adapter over a driven livestream process", (
 
     // The source ends after the one fragment, so the iteration ends with it, and a dropped fragment shows as a missing segment rather than a read left waiting.
     const segments = await Array.fromAsync(subscription);
+    const expected = [ { codec: VIDEO_CODEC, data: INIT_SEGMENT, description: NO_TRACKS, type: "init" },
+      { data: malformed, mdat: malformed, moof: Buffer.alloc(0), type: "media" } ];
 
-    assert.deepEqual(segments, [ { codec: VIDEO_CODEC, data: INIT_SEGMENT, type: "init" }, { data: malformed, mdat: malformed, moof: Buffer.alloc(0), type: "media" } ],
-      "the malformed fragment follows the init segment whole, as the mdat behind an empty moof");
+    assert.deepEqual(segments, expected, "the malformed fragment follows the init segment whole, as the mdat behind an empty moof");
 
     await subscription[Symbol.asyncDispose]();
   });
@@ -226,7 +264,8 @@ describe("the RTSP debug livestream adapter over a driven livestream process", (
     const iterator = subscription[Symbol.asyncIterator]();
 
     // Read the init segment and the one fed fragment, which leaves the queue empty, so the next read parks in the media loop until something ends it.
-    assert.deepEqual(await iterator.next(), { done: false, value: { codec: VIDEO_CODEC, data: INIT_SEGMENT, type: "init" } }, "the init segment was read first");
+    assert.deepEqual(await iterator.next(), { done: false, value: { codec: VIDEO_CODEC, data: INIT_SEGMENT, description: NO_TRACKS, type: "init" } },
+      "the init segment was read first");
     assert.deepEqual(await iterator.next(), { done: false, value: { data: keyframe.data, mdat: keyframe.mdat, moof: keyframe.moof, type: "media" } },
       "the fed fragment was read next");
 
@@ -334,7 +373,7 @@ describe("the RTSP debug livestream adapter over a driven livestream process", (
     await subscription.whenEstablished();
     await subscription[Symbol.asyncDispose]();
 
-    assert.deepEqual(await Array.fromAsync(subscription), [{ codec: VIDEO_CODEC, data: INIT_SEGMENT, type: "init" }],
+    assert.deepEqual(await Array.fromAsync(subscription), [{ codec: VIDEO_CODEC, data: INIT_SEGMENT, description: NO_TRACKS, type: "init" }],
       "the cached init segment is still delivered, and the media loop ends at once under the ended process");
   });
 });

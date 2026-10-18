@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * stream-ffmpeg-process.test.ts: A spawn-free truth-table for the live-path failed-teardown policy classifier.
+ * stream-ffmpeg-process.test.ts: A spawn-free truth-table for the live-path failed-teardown policy classifier, and the live view's audio-filter arguments.
  *
  * classifyTeardownFailure is the pure, exported decision the live-path FFmpeg streaming process delegates to in its logFailedTeardown override: given the accumulated
  * stderr and whether this instance suppresses livestream-API hiccups, it returns one of the protocol verdicts. Lifting that decision out of the spawn-on-construction
@@ -14,9 +14,19 @@
  * case bodies, because reaching the dispatcher requires constructing the class, which spawns an FFmpeg child and needs a real FfmpegOptions this suite does not build.
  * That dispatch is trivial glue verified by inspection, and homebridge-plugin-utils' own process tests cover the base super.logFailedTeardown dump.
  */
-import { describe, test } from "node:test";
+import { TestCameraProjection, makeCameraConfig } from "../devices/testing.helpers.ts";
+import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import { after, describe, test } from "node:test";
+import type { Camera } from "unifi-protect";
+import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
+import type { ProtectAccessory } from "../types.ts";
+import { ProtectCamera } from "../devices/cameras/camera.ts";
+import type { ProtectNvr } from "../nvr/nvr.ts";
 import assert from "node:assert/strict";
 import { classifyTeardownFailure } from "./stream-ffmpeg-process.ts";
+import { liveAudioFilterArgs } from "./stream.ts";
+import { makeTestNvr } from "../nvr/testing.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 
 describe("classifyTeardownFailure - the live-path failed-teardown policy", () => {
 
@@ -80,5 +90,57 @@ describe("classifyTeardownFailure - the live-path failed-teardown policy", () =>
 
     assert.equal(classifyTeardownFailure([], true), "canonical");
     assert.equal(classifyTeardownFailure(["Some unrelated FFmpeg diagnostic line"], false), "canonical");
+  });
+});
+
+/* The live view's audio-filter arguments, the other half of the live-path FFmpeg command this suite can reach without a spawn. The arguments are built from a real
+ * camera's filter chain at the rate HomeKit requested for the stream, so the rows read what a live view would spawn with: a chain that leads with the resample to
+ * the requested rate when the noise option is on, and no -filter:a at all when it is off.
+ */
+describe("liveAudioFilterArgs - the live view's -filter:a at the requested rate", () => {
+
+  const controllers: AbortController[] = [];
+
+  after(() => {
+
+    for(const controller of controllers) {
+
+      controller.abort();
+    }
+  });
+
+  // A real camera under the given feature options, settled.
+  async function constructCamera(userOptions: string[]): Promise<ProtectCamera> {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller, nvr } = makeTestNvr({ store, userOptions });
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Porch", "uuid:live-audio-filter") as unknown as ProtectAccessory,
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+
+    controllers.push(controller);
+    await settle();
+
+    return camera;
+  }
+
+  test("with the noise option on, the chain leads with the resample to each rate HomeKit can request", async () => {
+
+    const camera = await constructCamera(["Enable.Audio.Filter.Noise"]);
+
+    for(const requestedKhz of [ 16, 24 ]) {
+
+      const args = liveAudioFilterArgs(camera, requestedKhz);
+
+      assert.equal(args[0], "-filter:a", "the chain is passed as one -filter:a at " + requestedKhz.toString() + " kHz");
+      assert.ok(args[1]?.startsWith("aresample=" + (requestedKhz * 1000).toString() + ", "), "the chain leads with the resample to the requested rate");
+    }
+  });
+
+  test("with the noise option off, the live view carries no -filter:a", async () => {
+
+    const camera = await constructCamera([]);
+
+    assert.deepEqual(liveAudioFilterArgs(camera, 16), [], "no filter arguments at all");
   });
 });

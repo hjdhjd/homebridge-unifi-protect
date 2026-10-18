@@ -4,10 +4,9 @@
  */
 import type { AdvertisedStreams, ProtectCamera } from "./camera.ts";
 import type { ChannelProfile, SelectRequest } from "../../media/resolution.ts";
-import { capByPixels, selectChannelProfile } from "../../media/resolution.ts";
+import { capByPixels, selectChannelProfile, selectSubstrateChannelFrom } from "../../media/resolution.ts";
 import { controllerCapabilityAppeared, controllerIdentityOf } from "../../media/stream-delegate.ts";
 import type { Nullable } from "homebridge-plugin-utils";
-import { PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../../settings.ts";
 import { ProtectDeviceCapability } from "../device-capability.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { StreamingDelegate } from "../../media/stream-delegate.ts";
@@ -28,6 +27,11 @@ import type { StreamingDelegate } from "../../media/stream-delegate.ts";
  * IT IMPLEMENTS reconcile() AND NOT configure(): every line of its body is convergence. reconcile() is called at the host's construction, and again on each streaming
  * observer wake and each package-channel arrival; it derives, publishes, and - the first time a derivation yields something advertisable - stands the delegate up. Every
  * later call re-derives and returns at the create-once gate, which is what keeps the advertised list fresh for the selectors while leaving the standing delegate alone.
+ *
+ * A DERIVATION MAY CARRY A RESOURCE until the delegate exists: the parent's derivation reads the recording audio format from a livestream subscription it opens before
+ * the first build, and hands that subscription on so the delegate's buffer adopts it. The build that takes the derivation owns the subscription from then on, and every
+ * derivation whose build does not happen - a delegate an overlapping reconcile already built, or a construction gate that closed - disposes its subscription here, so two
+ * derivations that overlap before the build leave exactly one live subscription.
  *
  * THE SYNCHRONOUS PATH. An async body runs synchronously up to its first EXECUTED await, so a host whose derivation returns a plain value never yields at all: derive,
  * narrate, create, and register all complete inside the caller's own call frame. That is what keeps the package camera's controller registration on the same tick as the
@@ -87,34 +91,39 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
     // refreshes what they see even though the create half declines at its gate.
     this.#profiles = derived.profiles;
 
-    this.#establish(derived);
+    // A derivation whose build did not happen releases the probe subscription it carried, since no delegate will ever adopt it. See the class narrative above.
+    if(!this.#establish(derived) && derived.probe) {
+
+      void derived.probe.subscription[Symbol.asyncDispose]();
+    }
   }
 
   /* Stand up the streaming delegate and register its CameraController, exactly once per capability. SYNCHRONOUS by design - nothing yields between the create-once gate
    * and configureController, so two concurrent callers can never both pass the gate while the field is still null. That race freedom is what lets the channels and
    * videoCodec observers fire in the same drain safely; an await introduced anywhere in this stretch lets one camera build two delegates. The host's construction gate
    * covers the rebuild path, which can reach here on an accessory mid-removal or after controller shutdown has begun: neither a being-removed camera nor a shutting-down
-   * controller may register a controller that no teardown walk would ever reach.
+   * controller may register a controller that no teardown walk would ever reach. Returns whether this call built the delegate, so the caller can release whatever the
+   * derivation carried that only a build would have taken over.
    */
-  #establish(derived: AdvertisedStreams): void {
+  #establish(derived: AdvertisedStreams): boolean {
 
     // We've already built the delegate for this camera - we're done here.
     if(this.#stream) {
 
-      return;
+      return false;
     }
 
     // The accessory is being removed, or the controller is shutting down - do not stand up a controller on it.
     if(!this.host.canConfigureStream) {
 
-      return;
+      return false;
     }
 
     // Let the host pin its profile preferences and narrate the establishment before the delegate's constructor reads the hint bag those pins write into.
     this.host.onStreamingEstablish(derived);
 
-    // Configure the video stream with our resolutions.
-    this.#stream = this.platform.streamingDelegateFactory.create(this.host, derived.resolutions);
+    // Configure the video stream with the derived streams: the resolutions, the recording audio format, and the probe subscription the delegate's buffer adopts.
+    this.#stream = this.platform.streamingDelegateFactory.create(this.host, derived);
 
     // Fire up the controller and inform HomeKit about it.
     this.accessory.configureController(this.#stream.controller);
@@ -125,6 +134,8 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
 
     // Kick the supervisor so the standing timeshift buffer establishes for this camera's streaming arm, independent of any HomeKit Secure Video recording demand.
     void this.#stream.timeshift?.reconcile();
+
+    return true;
   }
 
   /* Reconcile the delegate's constructor-frozen controller identity against the camera's live capabilities. A CameraController is built from live-volatile camera facts -
@@ -264,14 +275,9 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
     return selectChannelProfile(entries, request);
   }
 
-  // Resolve the channel that populates the standing timeshift buffer feeding HomeKit Secure Video, buffer-backed live views, and snapshots. The policy is
-  // source-independent, HomeKit-Secure-Video-state-independent, and RTSP-independent by construction - it selects over the full published list, because the livestream
-  // API that fills the buffer serves any channel whether or not the controller has RTSP enabled on it - in order: (1) a user pin wins outright - an exact name match,
-  // null on a miss, the loud user-pin failure; (2) a pixel-constrained encoder host (a Raspberry Pi) takes the highest-quality channel at or below its constrained
-  // target, biased downward, preference-free so the buffer does not inherit the direct-RTSP quality preference; (3) otherwise the highest-quality channel the host's
-  // encoder can consume, taken structurally as the first entry after the record-context pixel cap, with no name lookup. The record-context cap is Infinity on every host
-  // today (HKSV software-encodes wherever a pixel cap would apply), so capByPixels passes everything and step 3 is simply the highest channel; it engages only when a
-  // future predicate change hardware-encodes on a pixel-limited host.
+  // Resolve the channel that populates the standing timeshift buffer feeding HomeKit Secure Video, buffer-backed live views, and snapshots. The device wrapper over the
+  // pure selectSubstrateChannelFrom, which holds the policy: it injects the full published list, because the livestream API that fills the buffer serves any channel
+  // whether or not the controller has RTSP enabled on it, the host system, and the user's substrate pin.
   public selectSubstrateChannel(): Nullable<ChannelProfile> {
 
     // The published entries filtered by the host encoder's source ceiling. The cap is a mode-agnostic pre-filter applied BEFORE selection, so it filters the name-pin
@@ -279,20 +285,6 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
     // a pixel cap would apply), so this passes everything through; it engages only when a future predicate change hardware-encodes on a pixel-limited host.
     const entries = capByPixels(this.#profiles, this.#stream?.ffmpegOptions.maxSourcePixels("record"));
 
-    // (1) A user pin wins outright: exact name match, null on a miss.
-    if(this.host.hints.substrateDefault) {
-
-      return selectChannelProfile(entries, { mode: "name", name: this.host.hints.substrateDefault });
-    }
-
-    // (2) A pixel-constrained encoder host: the highest-quality channel at or below the constrained target, biased downward and preference-free.
-    if(this.platform.codecSupport.hostSystem === "raspbian") {
-
-      return selectChannelProfile(entries, { bias: "lower", height: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.height, mode: "nearest",
-        width: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.width });
-    }
-
-    // (3) Otherwise, the highest-quality channel the host's encoder can consume - the first surviving entry, taken structurally with no name lookup.
-    return entries[0] ?? null;
+    return selectSubstrateChannelFrom(entries, { hostSystem: this.platform.codecSupport.hostSystem, pin: this.host.hints.substrateDefault ?? null });
   }
 }

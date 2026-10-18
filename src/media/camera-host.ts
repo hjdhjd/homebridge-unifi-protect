@@ -42,8 +42,8 @@ export interface LivestreamHostOptions {
 // camera satisfies it by inheritance. Every member is read-only at the call sites, so properties are readonly and getters satisfy them directly.
 export interface ProtectCameraHost extends ProtectDeviceContext {
 
-  // Builds the FFmpeg audio-filter chain against the camera's true input sample rate (live and HKSV-recording audio paths).
-  getAudioFilters(sampleRate?: number): string[];
+  // Builds the FFmpeg audio-filter chain at an output sample rate in hertz, the rate the live view or the HKSV recording encodes its audio at.
+  getAudioFilters(outputSampleRate: number): string[];
 
   // Whether the camera currently has at least one RTSP-enabled stream to draw a direct session from. Read by the session-source decision so every RTSP-consuming path
   // stays honest about what it can actually stream from, on the published list's own freshness envelope.

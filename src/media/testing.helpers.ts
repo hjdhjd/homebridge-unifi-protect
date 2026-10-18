@@ -12,8 +12,8 @@
  * testing.helpers.ts imports from.
  */
 import type { HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
+import type { LivestreamDescription, LivestreamInit, LivestreamSubscriptionState, ProtectCameraConfig, Segment, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { LivestreamHostOptions, ProtectCameraHost } from "./camera-host.ts";
-import type { LivestreamSubscriptionState, ProtectCameraConfig, Segment, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import { SAMPLE_FLAG_NON_SYNC, onAbort } from "homebridge-plugin-utils";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
@@ -273,9 +273,11 @@ export function makeNonKeyframeFragment(): { data: Buffer; mdat: Buffer; moof: B
 }
 
 // The one keyframe fragment and init buffer the segment-yielding double reuses across every yield. The timeshift never mutates segment bytes (it parses and concatenates
-// them), so sharing one instance is safe and avoids re-synthesizing the boxes per call.
+// them), so sharing one instance is safe and avoids re-synthesizing the boxes per call. The init bytes are placeholders that carry no readable moov, so the description
+// every double's init carries by default is the one the library reads from such bytes: no tracks, which is a stream with no readable audio track.
 const KEYFRAME_FRAGMENT = makeKeyframeFragment();
 const INIT_SEGMENT_DATA = Buffer.from("test-init-segment");
+const NO_TRACKS: LivestreamDescription = { tracks: [] };
 
 /* Build a LivestreamSubscription double for the camera-host stub's livestream interface, in one of two profiles selected by the requested media-segment count:
  *
@@ -293,10 +295,13 @@ const INIT_SEGMENT_DATA = Buffer.from("test-init-segment");
  * and a real timeshift.stop()/dispose still releases it cleanly. whenEstablished resolves true immediately while the consumer fills its buffer by draining the parking
  * iterator to its park point; a single settle() in the test drains all the microtask-resolved yields before the park, because the generator crosses no macrotask/timer
  * boundary (were one ever added, a single settle() would silently under-drain).
+ *
+ * The established profile's init carries the description option, defaulting to no tracks, so a recording test steers the audio format the buffer reads from it.
  */
-export function makeLivestreamSubscriptionDouble(options: { mediaSegments?: number } = {}): LivestreamSubscription {
+export function makeLivestreamSubscriptionDouble(options: { description?: LivestreamDescription; mediaSegments?: number } = {}): LivestreamSubscription {
 
   const mediaSegments = options.mediaSegments ?? 0;
+  const init = { codec: "h264", data: INIT_SEGMENT_DATA, description: options.description ?? NO_TRACKS };
 
   // The inert profile: preserved byte-for-byte so the construction suites stay green.
   if(mediaSegments === 0) {
@@ -319,13 +324,13 @@ export function makeLivestreamSubscriptionDouble(options: { mediaSegments?: numb
   return {
 
     id: "test-livestream-subscription",
-    initSegment: { codec: "h264", data: INIT_SEGMENT_DATA },
+    initSegment: init,
     reassess: (): void => { /* No-op: the double has no recovery loop to re-decide. */ },
     state: "live",
     whenEstablished: async (): Promise<boolean> => true,
     [Symbol.asyncIterator]: async function *(): AsyncGenerator<Segment> {
 
-      yield { codec: "h264", data: INIT_SEGMENT_DATA, type: "init" };
+      yield { ...init, type: "init" };
 
       for(let i = 0; i < mediaSegments; i++) {
 
@@ -393,8 +398,8 @@ export interface ControllableLivestreamDouble extends LivestreamSubscription {
  * push/end/throwError and a second dispose are NO-OPS, and the parking resolver is resolved at most once (guarded so no double-resolve). asyncDispose records disposed =
  * true and signals a graceful end if the double is not already terminated.
  */
-export function makeControllableLivestreamDouble(options: { deferEstablishment?: boolean; id?: string; initSegment?: { codec: string; data: Buffer } | null;
-  state?: LivestreamSubscriptionState; whenEstablished?: boolean; } = {}): ControllableLivestreamDouble {
+export function makeControllableLivestreamDouble(options: { deferEstablishment?: boolean; description?: LivestreamDescription; id?: string;
+  initSegment?: LivestreamInit | null; state?: LivestreamSubscriptionState; whenEstablished?: boolean; } = {}): ControllableLivestreamDouble {
 
   // The runtime-fed item queue and the lifecycle flags. terminated latches once the generator returns or throws, after which every control method no-ops.
   const queue: ({ kind: "segment"; segment: Segment } | { kind: "end" } | { kind: "error"; error: unknown })[] = [];
@@ -402,10 +407,11 @@ export function makeControllableLivestreamDouble(options: { deferEstablishment?:
   let disposed = false;
   let reassessCalls = 0;
 
-  // Resolve the init segment, distinguishing "option omitted" (default to a populated init so start() commits) from "option explicitly null" (the start-validation arm
-  // the timeshift declines on). A plain ?? cannot make that distinction - it treats an explicit null as nullish and would override it with the default - so we branch on
-  // strict undefined.
-  const initSegment = (options.initSegment === undefined) ? { codec: "h264", data: INIT_SEGMENT_DATA } : options.initSegment;
+  // Resolve the init segment, distinguishing "option omitted" (default to a populated init so start() commits, described by the description option or as no tracks)
+  // from "option explicitly null" (the start-validation arm the timeshift declines on). A plain ?? cannot make that distinction - it treats an explicit null as nullish
+  // and would override it with the default - so we branch on strict undefined.
+  const initSegment = (options.initSegment === undefined) ? { codec: "h264", data: INIT_SEGMENT_DATA, description: options.description ?? NO_TRACKS } :
+    options.initSegment;
 
   // The one-shot park resolver: the generator stores its resolver here before awaiting, and wake() resolves and clears it. Holding at most one resolver and clearing it
   // on resolve guarantees no double-resolve and no stale wake.

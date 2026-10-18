@@ -3,8 +3,12 @@
  * timeshift-supervisor.ts: UniFi Protect timeshift buffer supervisor - the lifecycle authority for a camera's standing timeshift buffer.
  */
 import { CoalescingTask, HbpuAbortError, formatBps, formatErrorMessage } from "homebridge-plugin-utils";
+import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import { RECORDING_AUDIO_STAND_IN, describeAudioFormat } from "./stream-delegate.ts";
 import type { CameraRecordingConfiguration } from "homebridge";
-import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
+import type { ChannelProfile } from "./resolution.ts";
+import type { LivestreamAudioFormat } from "./stream-delegate.ts";
+import type { LivestreamSubscription } from "./livestream.ts";
 import { PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
@@ -28,6 +32,14 @@ export interface RecordingDemand {
 // whether a resolution is owed (any origin at all) and which level it narrates at (which origin).
 type DeferralEpisode = "expected" | "none" | "organic";
 
+// Whether a candidate channel profile is the same buffer entry as another: the same channel, and the same lens when the candidate names one. The reconcile pass asks it
+// of the running profile, to tell a buffer already in the desired state, and of an adopted subscription's profile, to tell whether that subscription serves the entry
+// the pass wants.
+function isSameEntry(candidate: ChannelProfile, other: Nullable<ChannelProfile>): boolean {
+
+  return (candidate.channel.id === other?.channel.id) && ((candidate.lens === undefined) || (candidate.lens === other.lens));
+}
+
 /* UniFi Protect timeshift buffer supervisor.
  *
  * The supervisor owns the standing timeshift buffer's lifecycle: it constructs and holds the buffer, reconciles the buffer's running state against its demand arms -
@@ -39,6 +51,11 @@ type DeferralEpisode = "expected" | "none" | "organic";
  */
 export class ProtectTimeshiftSupervisor {
 
+  // The subscription the camera's derivation opened to read its recording audio format, with the channel profile it was opened on, held until the first reconcile pass
+  // takes it. That pass hands it to the buffer when it serves the entry the pass wants and disposes it otherwise, and shutdown disposes it when no pass ever took it.
+  private adopted: Nullable<{ profile: ChannelProfile; subscription: LivestreamSubscription }>;
+  // The recording audio format this camera's controller advertises to HomeKit Secure Video, which a buffer start compares its stream's format against.
+  private readonly advertised: LivestreamAudioFormat;
   public readonly buffer: ProtectTimeshiftBuffer;
   // The deferral episode in flight. Opened when the deferral edge fires and closed only when the resolution actually narrates (recording has re-established) or the
   // episode is explicitly ended (recording disabled) - it PERSISTS in between, never re-derived from live inputs, so a failed first post-online start cannot cost the
@@ -51,6 +68,9 @@ export class ProtectTimeshiftSupervisor {
   private demand: RecordingDemand;
   // Whether the current recording episode has already logged its HKSV configuration acknowledgment; reset on the disable edge so the next enable re-acknowledges.
   private hasAcknowledgedRecording: boolean;
+  // Whether the stream's audio format differing from the advertised one has already been narrated. A start whose format matches again resets it, so each transition
+  // away from the advertised format is said once rather than on every start.
+  private hasReportedAudioFormatChange: boolean;
   // The once-per-episode latch for the "no valid stream profile" selection failure. Under the streaming arm the reconcile is kicked frequently (activation,
   // availability, and the live-view stream-source kick), so an unresolvable selection would otherwise re-log on every kick. The latch suppresses repeats; it clears
   // on a successful selection and on any pushed demand change, so a genuine change re-arms the report.
@@ -67,15 +87,20 @@ export class ProtectTimeshiftSupervisor {
   // resolution narration is the separate, persistent concern the deferral episode above carries, for the reason stated there.
   private wasDeferredOffline: boolean;
 
-  // Create an instance of the timeshift buffer supervisor.
-  constructor(protectCamera: ProtectCameraHost) {
+  // Create an instance of the timeshift buffer supervisor. The options carry the probe subscription the buffer adopts and the recording audio format the controller
+  // advertises; their default, nothing to adopt and the stand-in advertised, is the supervisor of a camera whose derivation read nothing.
+  constructor(protectCamera: ProtectCameraHost, options: { adopt: Nullable<{ profile: ChannelProfile; subscription: LivestreamSubscription }>;
+    advertised: LivestreamAudioFormat; } = { adopt: null, advertised: RECORDING_AUDIO_STAND_IN.format }) {
 
     // The lifetime is assigned first, ahead of its alphabetical place, because the buffer is constructed with its signal.
     this.lifetime = new AbortController();
+    this.adopted = options.adopt;
+    this.advertised = options.advertised;
     this.buffer = new ProtectTimeshiftBuffer(protectCamera, { signal: this.lifetime.signal });
     this.deferralEpisode = "none";
     this.demand = { config: undefined, isRecording: false };
     this.hasAcknowledgedRecording = false;
+    this.hasReportedAudioFormatChange = false;
     this.hasReportedSelectionFailure = false;
     this.log = protectCamera.log;
     this.protectCamera = protectCamera;
@@ -180,20 +205,72 @@ export class ProtectTimeshiftSupervisor {
     }
   }
 
-  // Invoked after every successful pass settles its buffer state and before the pass narrates - the settle window, whose real occupants are an organic death and a
-  // shutdown landing after a start has committed. Each leaves the buffer stopped before the guard below reads it, which is why that guard reads the started state
-  // alone. On a coalesced pass (the buffer already running) no await separates the state check from this call, so the window is real only when a fresh start preceded
-  // it; firing unconditionally keeps the call site simple. A no-op in production; the test suite overrides it to land exactly-timed events inside the window.
+  /* Invoked after every successful pass settles its buffer state and before the pass narrates - the settle window, whose real occupants are an organic death and a
+   * shutdown landing after a start has committed. Each leaves the buffer stopped before the guard below reads it, which is why that guard reads the started state
+   * alone. On a coalesced pass (the buffer already running) no await separates the state check from this call, so the window is real only when a fresh start preceded
+   * it; firing unconditionally keeps the call site simple. The test suite overrides it to land exactly-timed events inside the window.
+   *
+   * What it does in production is compare the running stream's audio format with the format the controller advertises to HomeKit Secure Video. HAP froze that
+   * advertisement when the controller was built, so a stream whose format changes after a reconnect or a controller firmware update keeps recording correctly - every
+   * recording transcodes its audio to the selected format - but HomeKit only learns the new format at a restart, which is what the line says, once per transition away
+   * from the advertised format. A buffer that died in the settle window has no format to compare, and a camera with no recording arm has nothing to narrate.
+   */
   protected onStartSettled(): void {
 
-    // No-op in production.
+    const current = this.buffer.audioFormat;
+
+    if(!current || !this.protectCamera.stream?.hksv) {
+
+      return;
+    }
+
+    const matches = (current.codec === this.advertised.codec) && (current.sampleRate === this.advertised.sampleRate) && (current.channels === this.advertised.channels);
+
+    if(matches) {
+
+      this.hasReportedAudioFormatChange = false;
+
+      return;
+    }
+
+    if(this.hasReportedAudioFormatChange) {
+
+      return;
+    }
+
+    this.hasReportedAudioFormatChange = true;
+    this.log.info("This camera's livestream audio is now %s, while HomeKit Secure Video records at %s. Recordings transcode the audio to match; " +
+      "restart HBUP to let HomeKit learn the new format.", describeAudioFormat(current), describeAudioFormat(this.advertised));
   }
 
-  // The reconciliation body. Computes desired state from current inputs and brings the actual state into alignment.
+  /* The reconcile pass the coalescing task runs, framed by the ownership of the subscription the camera's derivation handed on. The pass takes that subscription off
+   * its field at its head, so exactly one pass ever decides it: the body hands it to the buffer's start when it serves the entry the pass wants, and on every other
+   * outcome - no demand, a different entry, a subscription already closed, or a pass that throws - the finally disposes it, since nothing else holds it.
+   */
+  private async runReconcilePass(): Promise<void> {
+
+    const adoption = { pending: this.adopted };
+
+    this.adopted = null;
+
+    try {
+
+      await this.reconcileBufferState(adoption);
+    } finally {
+
+      if(adoption.pending) {
+
+        void adoption.pending.subscription[Symbol.asyncDispose]();
+      }
+    }
+  }
+
+  // The reconciliation body. Computes desired state from current inputs and brings the actual state into alignment. The adoption holder carries the subscription the
+  // pass took, which the body clears when it hands that subscription to the buffer's start.
   //
   // The channel profile lives on the buffer as a matched pair with its subscription: the buffer commits it only when a start actually succeeds and clears it on
   // every teardown path, so external readers (ProtectStreamingDelegate, ProtectSnapshot) always see an entry that actually backs a running timeshift.
-  private async runReconcilePass(): Promise<void> {
+  private async reconcileBufferState(adoption: { pending: Nullable<{ profile: ChannelProfile; subscription: LivestreamSubscription }> }): Promise<void> {
 
     // The buffer runs when either arm demands it. The streaming arm is a live read of the camera's buffer-backed-livestreaming capability; the recording arm needs
     // both an active HomeKit request and a configuration to record with. Desired state is "running with the correct channel profile" iff either arm demands it, the
@@ -268,10 +345,8 @@ export class ProtectTimeshiftSupervisor {
 
     // If the timeshift is already running on the correct channel and lens, it is already in the desired state - the common case under the standing buffer, where an
     // enabling recording arm finds the streaming arm's buffer already up. The buffer's channelProfile holds the currently-backing entry, so comparing against it
-    // answers "is the running timeshift on the entry we want?". The local binding gives TypeScript a stable reference through the compound comparison.
-    const runningProfile = this.buffer.channelProfile;
-    const alreadyRunning = this.buffer.isStarted && (desiredRtspEntry.channel.id === runningProfile?.channel.id) &&
-      ((desiredRtspEntry.lens === undefined) || (desiredRtspEntry.lens === runningProfile.lens));
+    // answers "is the running timeshift on the entry we want?".
+    const alreadyRunning = this.buffer.isStarted && isSameEntry(desiredRtspEntry, this.buffer.channelProfile);
 
     // Whether this pass performed a fresh start rather than finding the buffer already running. The streaming-arm start line narrates below the liveness guard, so this
     // local carries the fact across the guard - a coalesced pass leaves it false and narrates nothing new.
@@ -283,7 +358,17 @@ export class ProtectTimeshiftSupervisor {
       // config-less start can never leave the wart of a minimal one-segment buffer. A successful start commits desiredRtspEntry as the buffer's backing channel profile.
       this.buffer.configuredDuration = PROTECT_TIMESHIFT_BUFFER_MAXDURATION;
 
-      if(!(await this.buffer.start(desiredRtspEntry))) {
+      // The subscription the derivation handed on takes the place of a fresh one when it serves the entry we want and is still open, so the stream opened to read the
+      // recording audio format is the stream the buffer runs on. Handing it to the start passes its ownership there, so the pass's frame leaves it alone.
+      const adopted = adoption.pending;
+      const adoptable = (adopted && isSameEntry(desiredRtspEntry, adopted.profile) && (adopted.subscription.state !== "closed")) ? adopted.subscription : undefined;
+
+      if(adoptable) {
+
+        adoption.pending = null;
+      }
+
+      if(!(await this.buffer.start(desiredRtspEntry, adoptable))) {
 
         return;
       }
@@ -291,8 +376,8 @@ export class ProtectTimeshiftSupervisor {
       freshlyStarted = true;
     }
 
-    // The start, if one ran, has settled the buffer state. Fire the test-timing hook (a no-op in production) at the one point a test can land an event in the settle
-    // window, then guard before any narration.
+    // The start, if one ran, has settled the buffer state. Fire the settle hook (the audio-format comparison in production) at the one point a test can land an event
+    // in the settle window, then guard before any narration.
     this.onStartSettled();
 
     // Narrating now would celebrate a buffer that is already gone, so the started state gates every line below. The settle window is real - the consume loop runs
@@ -370,5 +455,13 @@ export class ProtectTimeshiftSupervisor {
 
     this.lifetime.abort(new HbpuAbortError("shutdown"));
     this.buffer.stop();
+
+    // A shutdown before the first pass abandons the pass queued behind it, so the subscription the derivation handed on is still held here and nothing else will ever
+    // take it.
+    if(this.adopted) {
+
+      void this.adopted.subscription[Symbol.asyncDispose]();
+      this.adopted = null;
+    }
   }
 }

@@ -17,10 +17,14 @@
  * under the harness's default hints, which turn every acceleration and crop knob off) and hands a fully-composed options object to the hap namespace's camera-controller
  * marker. That makes its construction test the suite's second real-behavior anchor - the capability arms it decides, and the probesize self-tuning its shutdown ends.
  */
+import { AudioRecordingCodecType, AudioRecordingSamplerate } from "homebridge-plugin-utils";
 import { PROTECT_PROBESIZE_OVERRIDE_MAX, PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS,
   PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
+import { RECORDING_AUDIO_STAND_IN, controllerIdentityOf } from "./stream-delegate.ts";
 import { Service, TestCameraController } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
+import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
+import type { LivestreamAudioFormat } from "./stream-delegate.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectSnapshot } from "./snapshot.ts";
 import { ProtectStreamingDelegate } from "./stream.ts";
@@ -28,6 +32,7 @@ import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import assert from "node:assert/strict";
 import { formatLogEntry } from "homebridge-plugin-utils/testing";
+import { makeCameraConfig } from "../devices/testing.helpers.ts";
 import { makeTestCameraHost } from "./testing.helpers.ts";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting it in teardown releases the harness signal so a leaked observer (none here, the
@@ -146,6 +151,61 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
     assert.equal(cameraController.options.recording?.delegate, stream.hksv, "the controller's recording arm is driven by that recording delegate");
     assert.ok(cameraController.options.recording.options, "the controller's recording arm carries its recording options");
     assert.equal(cameraController.options.sensors?.motion, motionSensor, "the controller's motion link is the accessory's own motion sensor");
+  });
+
+  /* The advertised recording audio format is the camera's own, read from its livestream by the derivation, in one channel, or the whole stand-in when the stream was not
+   * read or its rate has no HomeKit recording member. The advertisement is frozen into the controller, so each row reads it straight off the recorded controller
+   * options, beside the format the delegate keeps for the supervisor's comparison. The controller identity carries no audio term, so the format moves no rebuild.
+   */
+  test("the recording codec advertises the derived audio format in one channel, or the stand-in, and the identity carries no audio term", () => {
+
+    const advertise = (options: { audioFormat: LivestreamAudioFormat | null; isDoorbell?: boolean }): { codec: unknown; stream: ProtectStreamingDelegate } => {
+
+      const { accessory, controller, host } = makeTestCameraHost();
+
+      controllers.push(controller);
+      accessory.addService(Service.MotionSensor, "Test Camera");
+      host.isHksvCapable = true;
+      host.ufp = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { isDoorbell: options.isDoorbell ?? false } });
+
+      const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]], { audioFormat: options.audioFormat, probe: null });
+      const codecs = (stream.controller as unknown as TestCameraController).options.recording?.options.audio.codecs;
+
+      assert.equal(stream.builtFor.hksvCapable, true, "the vacuity guard: the delegate built its recording arm");
+      assert.deepEqual(stream.builtFor, controllerIdentityOf(host), "the identity is the derivation over the host, whatever the audio format");
+      assert.deepEqual(Object.keys(stream.builtFor).toSorted(), [ "canUseLivestreamApi", "hksvCapable", "isDoorbell", "twoWayAudio" ],
+        "the identity carries the same terms, none of them audio");
+
+      return { codec: Array.isArray(codecs) ? codecs[0] : codecs, stream };
+    };
+
+    const mono = (sampleRate: number): LivestreamAudioFormat => ({ channels: 1, codec: "aac", sampleRate });
+
+    assert.deepEqual(advertise({ audioFormat: mono(8000) }).codec, { audioChannels: 1, samplerate: AudioRecordingSamplerate.KHZ_8, type: AudioRecordingCodecType.AAC_LC },
+      "an 8000 Hz mono stream advertises the 8 kHz recording rate");
+    assert.deepEqual(advertise({ audioFormat: mono(48000) }).codec, { audioChannels: 1, samplerate: AudioRecordingSamplerate.KHZ_48,
+      type: AudioRecordingCodecType.AAC_LC }, "a 48000 Hz mono stream advertises the 48 kHz recording rate");
+
+    const stereo = advertise({ audioFormat: { channels: 2, codec: "aac", sampleRate: 16000 } });
+
+    assert.deepEqual(stereo.codec, { audioChannels: 1, samplerate: AudioRecordingSamplerate.KHZ_16, type: AudioRecordingCodecType.AAC_LC },
+      "a stereo stream advertises its rate in one channel");
+    assert.deepEqual(stereo.stream.advertisedAudioFormat, mono(16000), "the delegate keeps the advertised format, in one channel, for the supervisor's comparison");
+
+    for(const isDoorbell of [ false, true ]) {
+
+      const unread = advertise({ audioFormat: null, isDoorbell });
+
+      assert.deepEqual(unread.codec, { audioChannels: 1, samplerate: RECORDING_AUDIO_STAND_IN.samplerate, type: AudioRecordingCodecType.AAC_LC },
+        "a stream not read advertises the stand-in, " + (isDoorbell ? "doorbell" : "camera") + " alike");
+      assert.deepEqual(unread.stream.advertisedAudioFormat, RECORDING_AUDIO_STAND_IN.format, "the kept format is the stand-in's");
+    }
+
+    const unmapped = advertise({ audioFormat: mono(22050) });
+
+    assert.deepEqual(unmapped.codec, { audioChannels: 1, samplerate: RECORDING_AUDIO_STAND_IN.samplerate, type: AudioRecordingCodecType.AAC_LC },
+      "a 22050 Hz stream, a rate HomeKit has no recording member for, advertises the whole stand-in");
+    assert.deepEqual(unmapped.stream.advertisedAudioFormat, RECORDING_AUDIO_STAND_IN.format, "the kept format is the whole stand-in, not the stream's rate");
   });
 
   // Shutdown ends this camera's probesize self-tuning along with its streams. The distinguishing assertion is the IMMEDIATE post-shutdown read: a shutdown that leaves

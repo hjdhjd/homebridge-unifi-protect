@@ -10,20 +10,25 @@
  * It also carries the non-creating-getter pin. A walk that constructed a capability merely by looking at one would build machinery for cameras it was only meant to
  * inspect, so the harness NVR counts every construction it is asked for and the pin asserts a read leaves that count alone.
  */
+import { AMCREST_INIT_SEGMENT, G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeRecordingDelegateDouble, makeTestAccessory } from "../../testing.helpers.ts";
+import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS } from "../../settings.ts";
 import type { TestAccessory, TestRecordingDelegate, TestStreamingDelegate, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
+import type { TestCameraFeatureFlags, TestLivestreamSubscription } from "../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
-import { TestStateStore, makeProtectState, makeRecordingDelegateDouble, makeTestAccessory } from "../../testing.helpers.ts";
 import { after, describe, test } from "node:test";
+import { assertNoUnhandledRejections, expectAt, settle } from "homebridge-plugin-utils/testing";
 import type { Camera } from "unifi-protect";
-import { G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
+import { ProtectClient } from "unifi-protect";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
+import { ProtectReservedNames } from "../../types.ts";
 import type { StreamingDelegate } from "../../media/stream-delegate.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
-import { settle } from "homebridge-plugin-utils/testing";
 
 // Every harness controller this file opens, aborted once at the end so no observe loop outlives the suite.
 const openControllers: AbortController[] = [];
@@ -273,5 +278,299 @@ describe("the streaming capability's recording-transmitting gate", () => {
     hksv.isTransmitting = true;
 
     assert.equal(doorbell.packageCamera.streaming.isRecordingTransmitting, true, "a transmitting recording arm reads as transmitting");
+  });
+});
+
+/* The derivation's recording-audio probe. Before a camera's first controller is built, its derivation opens the livestream the buffer will run on and reads the
+ * recording audio format from the stream's init, then hands the subscription to the delegate for the buffer to adopt. These rows hold the probe's gate term by term,
+ * the subscription's ownership across every way a build can fail to happen, and the one line an unread stream earns. Each camera is a real ProtectCamera over the
+ * projection double, whose livestream records every call with the subscription double it answered.
+ */
+describe("the derivation's recording-audio probe", () => {
+
+  const STAND_IN_LINE = "Unable to read this camera's livestream audio format before publishing it to HomeKit.";
+
+  // A real camera under the given options, its construction started but not settled, so a row can land an event before the derivation finishes, plus the handles the
+  // rows read. The configure hook runs before construction, with the accessory, so a row can seed what a restart restores from the accessory cache.
+  function constructCamera(options: { configure?: (projection: TestCameraProjection, nvr: TestProtectNvr, accessory: TestAccessory) => void;
+    featureFlags?: Partial<TestCameraFeatureFlags>; isAdoptedByAccessApp?: boolean; userOptions?: string[]; } = {}): { accessory: TestAccessory;
+    camera: ProtectCamera; cameraId: string; factory: TestStreamingDelegateFactory; logEntries: readonly TestLogEntry[]; nvr: TestProtectNvr;
+    projection: TestCameraProjection; store: TestStateStore; } {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: options.featureFlags, isAdoptedByAccessApp: options.isAdoptedByAccessApp,
+      name: "Driveway" });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller, factory, logEntries, nvr } = makeTestNvr({ store, userOptions: options.userOptions });
+    const projection = new TestCameraProjection(cameraConfig.id, store);
+    const accessory = makeTestAccessory("Driveway", "uuid:recording-audio-probe");
+
+    openControllers.push(controller);
+    options.configure?.(projection, nvr, accessory);
+
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+
+    return { accessory, camera, cameraId: cameraConfig.id, factory, logEntries, nvr, projection, store };
+  }
+
+  // The number of times the camera said its stream could not be read.
+  const standInLines = (entries: readonly TestLogEntry[]): number => entries.filter((entry) => (entry.level === "info") && entry.message.includes(STAND_IN_LINE)).length;
+
+  // The subscriptions the probe opened that nothing has disposed.
+  const live = (projection: TestCameraProjection): TestLivestreamSubscription[] => projection.livestreamCalls.map((call) => call.subscription).
+    filter((subscription) => !subscription.disposed);
+
+  after(() => {
+
+    for(const controller of openControllers) {
+
+      controller.abort();
+    }
+  });
+
+  test("a probe opens the buffer's channel with the recording urgency, and the format and the probe reach the factory", async () => {
+
+    const { camera, factory, projection } = constructCamera({ configure: (projection) => {
+
+      projection.livestreamDescription = ProtectClient.describeInitSegment(AMCREST_INIT_SEGMENT);
+    } });
+
+    await settle();
+
+    assert.equal(projection.livestreamCalls.length, 1, "the derivation opened exactly one livestream");
+
+    const call = expectAt(projection.livestreamCalls, 0, "the probe's livestream call");
+    const substrate = camera.selectSubstrateChannel();
+
+    assert.ok(substrate, "the camera selects a substrate channel");
+    assert.deepEqual(call.options.source, { channel: substrate.channel.id, type: "channel" }, "the probe opened the channel the buffer selects");
+
+    const created = expectAt(factory.createCalls, 0, "the delegate the derivation built");
+
+    assert.deepEqual(created.audioFormat, { channels: 1, codec: "aac", sampleRate: 8000 }, "the factory was handed the Amcrest's audio format");
+    assert.equal(created.probe?.subscription, call.subscription, "the factory was handed the probe's own subscription for the buffer to adopt");
+    assert.equal(call.subscription.disposed, false, "the handed-on subscription is still open");
+
+    // The urgency closure is the recording's: the idle tolerance while nothing transmits, and the active one once the delegate's recording arm transmits.
+    const urgency = call.options.urgency;
+
+    assert.ok(urgency, "the probe handed the pool an urgency closure");
+    assert.equal(urgency(), PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS, "the probe's urgency reads idle while no recording transmits");
+
+    created.delegate.hksv = makeRecordingDelegateDouble({ isTransmitting: true }) as unknown as StreamingDelegate["hksv"];
+
+    assert.equal(urgency(), PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, "the probe's urgency reads active while the recording transmits");
+  });
+
+  test("the gate: no probe for a camera that cannot back HomeKit Secure Video, nor for one whose buffer the RTSP-debug adapter feeds", async () => {
+
+    const ineligible = constructCamera({ isAdoptedByAccessApp: true });
+
+    await settle();
+
+    assert.equal(ineligible.camera.isHksvCapable, false, "the vacuity guard: the camera cannot back HomeKit Secure Video");
+    assert.equal(ineligible.projection.livestreamCalls.length, 0, "no probe for a camera with no recording arm");
+    assert.equal(ineligible.factory.createCalls.length, 1, "the camera still built its controller");
+    assert.equal(standInLines(ineligible.logEntries), 0, "an unmet gate term says nothing");
+
+    const debug = constructCamera({ userOptions: ["Enable.Debug.Video.Timeshift.UseRtsp"] });
+
+    await settle();
+
+    assert.equal(debug.camera.selectSubstrateChannel()?.channel.isRtspEnabled, true, "the vacuity guard: the substrate channel is RTSP-enabled");
+    assert.equal(debug.projection.livestreamCalls.length, 0, "no probe when the RTSP-debug adapter would feed the buffer");
+    assert.equal(standInLines(debug.logEntries), 0, "an unmet gate term says nothing");
+  });
+
+  test("an unreachable camera advertises the stand-in and says so once, opening nothing", async () => {
+
+    const { camera, factory, logEntries, projection } = constructCamera({ configure: (_projection, nvr) => {
+
+      nvr.client.connection.isHealthy = false;
+    } });
+
+    await settle();
+    await camera.streaming?.reconcile();
+
+    assert.equal(projection.livestreamCalls.length, 0, "an unreachable camera opens no livestream");
+    assert.equal(expectAt(factory.createCalls, 0, "the delegate").audioFormat, null, "the factory was handed no format, so the stand-in is advertised");
+    assert.equal(standInLines(logEntries), 1, "the stand-in line was said once, though the derivation ran again");
+  });
+
+  test("a stream that does not establish is released and advertises the stand-in with one line", async () => {
+
+    const { factory, logEntries, projection } = constructCamera({ configure: (projection) => {
+
+      projection.livestreamEstablishes = false;
+    } });
+
+    await settle();
+
+    assert.equal(projection.livestreamCalls.length, 1, "the probe opened its livestream");
+    assert.equal(live(projection).length, 0, "the subscription that never established was released");
+    assert.equal(expectAt(factory.createCalls, 0, "the delegate").probe, null, "no probe reached the factory");
+    assert.equal(standInLines(logEntries), 1, "the stand-in line was said once");
+  });
+
+  test("a stream with no audio track derives no format, says nothing, and keeps its probe for the buffer", async () => {
+
+    const { factory, logEntries, projection } = constructCamera();
+
+    await settle();
+
+    const created = expectAt(factory.createCalls, 0, "the delegate");
+
+    assert.equal(created.audioFormat, null, "a stream with no audio track derives no format");
+    assert.ok(created.probe, "the probe still reached the factory for the buffer to adopt");
+    assert.equal(live(projection).length, 1, "its subscription stays open");
+    assert.equal(standInLines(logEntries), 0, "nothing is said, since a recording from it has no audio to mislabel");
+  });
+
+  test("a re-derive with the delegate built opens no probe", async () => {
+
+    const { camera, projection } = constructCamera();
+
+    await settle();
+
+    assert.equal(projection.livestreamCalls.length, 1, "the first derivation probed once");
+
+    await camera.streaming?.reconcile();
+    await settle();
+
+    assert.equal(projection.livestreamCalls.length, 1, "the re-derive with a controller in place opened nothing");
+  });
+
+  test("two derivations that overlap before the build leave one live subscription, the one the delegate was handed", async () => {
+
+    const gate = Promise.withResolvers<undefined>();
+    const { camera, factory, projection } = constructCamera({ configure: (projection) => {
+
+      projection.livestreamGate = gate.promise;
+    } });
+
+    await settle();
+
+    const second = camera.streaming?.reconcile();
+
+    await settle();
+
+    assert.equal(projection.livestreamCalls.length, 2, "both derivations opened a probe while the first was still waiting");
+
+    gate.resolve(undefined);
+    await second;
+    await settle();
+
+    assert.equal(factory.createCalls.length, 1, "exactly one delegate was built");
+    assert.deepEqual(live(projection), [expectAt(factory.createCalls, 0, "the delegate").probe?.subscription], "the one live subscription is the delegate's");
+  });
+
+  test("a build the construction gate declines releases the probe", async () => {
+
+    const gate = Promise.withResolvers<undefined>();
+    const { factory, nvr, projection } = constructCamera({ configure: (projection) => {
+
+      projection.livestreamGate = gate.promise;
+    } });
+
+    await settle();
+
+    nvr.phase = "shuttingDown";
+    gate.resolve(undefined);
+    await settle();
+
+    assert.equal(factory.createCalls.length, 0, "no delegate was built while the controller shuts down");
+    assert.equal(projection.livestreamCalls.length, 1, "the probe had opened its livestream");
+    assert.equal(live(projection).length, 0, "the declined build's probe was released");
+  });
+
+  test("a camera removed while its probe waits throws nothing, says nothing, builds nothing, and leaves no live subscription", async () => {
+
+    await assertNoUnhandledRejections(async () => {
+
+      const gate = Promise.withResolvers<undefined>();
+      const { cameraId, factory, logEntries, projection, store } = constructCamera({ configure: (projection) => {
+
+        projection.livestreamGate = gate.promise;
+      } });
+
+      await settle();
+
+      store.removeCameraRecord(cameraId);
+      gate.resolve(undefined);
+      await settle();
+
+      assert.equal(projection.livestreamCalls.length, 1, "the probe had opened its livestream");
+      assert.equal(live(projection).length, 0, "the removed camera's probe was released");
+      assert.equal(factory.createCalls.length, 0, "nothing was built for the removed camera");
+      assert.equal(standInLines(logEntries), 0, "nothing was said");
+    });
+  });
+
+  // The switches the construction tail stands up, each enabled by its option, with the subtype that names its service on the accessory. A plain camera's doorbell
+  // trigger stands up the Doorbell service the mute switch requires, so a camera that is not a doorbell carries all of them.
+  const constructionSwitches = [
+
+    { label: "NVR recording switch for always", subtype: ProtectReservedNames.SWITCH_UFP_RECORDING_ALWAYS },
+    { label: "NVR recording switch for detections", subtype: ProtectReservedNames.SWITCH_UFP_RECORDING_DETECTIONS },
+    { label: "NVR recording switch for never", subtype: ProtectReservedNames.SWITCH_UFP_RECORDING_NEVER },
+    { label: "status indicator light switch", subtype: ProtectReservedNames.SWITCH_STATUS_LED },
+    { label: "doorbell trigger", subtype: ProtectReservedNames.SWITCH_DOORBELL_TRIGGER },
+    { label: "doorbell mute switch", subtype: ProtectReservedNames.SWITCH_DOORBELL_MUTE }
+  ];
+
+  const constructionSwitchOptions = [ "Enable.Device.StatusLed.Switch", "Enable.Doorbell.Mute", "Enable.Doorbell.Trigger", "Enable.Nvr.Recording.Switch" ];
+
+  /* The construction tail waits on the probe for the streaming controller alone. The probe's stream is held at its gate and never establishes, so every switch has to
+   * stand while the derivation still waits on it, and the camera details, which a registered controller runs itself, follow only once the probe settles and the
+   * controller is built with the stand-in. The operating-mode service is seeded the way a restart restores it from the accessory cache, so the status indicator the
+   * camera details attach to it is what tells the pass apart.
+   */
+  test("the construction switches configure while the probe waits, and the camera details follow once it settles", async () => {
+
+    const gate = Promise.withResolvers<undefined>();
+    const { accessory, factory, projection } = constructCamera({ configure: (projection, _nvr, accessory) => {
+
+      projection.livestreamEstablishes = false;
+      projection.livestreamGate = gate.promise;
+      accessory.addService(Service.CameraOperatingMode, "Driveway");
+    }, featureFlags: { hasLedStatus: true }, userOptions: constructionSwitchOptions });
+
+    await settle();
+
+    assert.equal(projection.livestreamCalls.length, 1, "the probe opened its livestream");
+    assert.equal(factory.createCalls.length, 0, "the vacuity guard: the derivation still waits on its probe");
+
+    for(const { label, subtype } of constructionSwitches) {
+
+      assert.ok(accessory.getServiceById(Service.Switch, subtype), "the " + label + " is configured while the probe waits");
+    }
+
+    const operatingMode = accessory.getService(Service.CameraOperatingMode);
+
+    assert.ok(operatingMode, "the seeded operating-mode service is on the accessory");
+    assert.equal(operatingMode.testCharacteristic(Characteristic.CameraOperatingModeIndicator), false, "the camera details wait on the probe");
+
+    gate.resolve(undefined);
+    await settle();
+
+    assert.equal(factory.createCalls.length, 1, "the probe settled and the controller was built");
+    assert.equal(operatingMode.testCharacteristic(Characteristic.CameraOperatingModeIndicator), true, "the camera details configured once the probe settled");
+  });
+
+  // A camera whose record vanishes while the capability reconcile awaits has nothing to configure: the constructor returns with that reconcile still pending, so the
+  // removal lands ahead of the continuation that runs the switches, which then configures none of them and throws nothing.
+  test("a camera removed during the capability reconcile configures none of the construction switches", async () => {
+
+    await assertNoUnhandledRejections(async () => {
+
+      const { accessory, cameraId, store } = constructCamera({ userOptions: constructionSwitchOptions });
+
+      store.removeCameraRecord(cameraId);
+      await settle();
+
+      for(const { label, subtype } of constructionSwitches) {
+
+        assert.equal(accessory.getServiceById(Service.Switch, subtype), undefined, "the " + label + " was not configured for the removed camera");
+      }
+    });
   });
 });

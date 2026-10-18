@@ -18,12 +18,13 @@
  * transmitStart's own concat emit the "segment" event, forwarding tests assert on the forwarded PAYLOAD (which fragment's data), never the event count.
  */
 import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
+import { ProtectClient, ProtectLivestreamUnavailableError } from "unifi-protect";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { after, describe, test } from "node:test";
 import { makeControllableLivestreamDouble, makeKeyframeFragment, makeNonKeyframeFragment, makeTestCameraHost } from "./testing.helpers.ts";
+import { AMCREST_INIT_SEGMENT } from "../camera.fixtures.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import { PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "../settings.ts";
-import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import type { Segment } from "unifi-protect";
 import type { SegmentRole } from "./timeshift.ts";
@@ -362,7 +363,7 @@ describe("timeshift buffer behavior", () => {
 
     const { double, timeshift } = await buildStartedTimeshift();
 
-    double.push({ codec: "h264", data: Buffer.from("init"), type: "init" });
+    double.push({ codec: "h264", data: Buffer.from("init"), description: { tracks: [] }, type: "init" });
 
     await settle();
 
@@ -1046,5 +1047,58 @@ describe("timeshift buffer behavior", () => {
 
     assert.equal(host.rebootCalls.length, 1, "the reboot was attempted before it failed");
     assert.ok(logEntries.some((entry) => (entry.level === "error") && entry.message.includes("could not be rebooted")), "the failed reboot is logged");
+  });
+});
+
+describe("the timeshift buffer's audio format and its adopted subscription", () => {
+
+  // The Amcrest's init, described by unifi-protect: the description a started buffer reports its audio format from.
+  const AMCREST_DESCRIPTION = ProtectClient.describeInitSegment(AMCREST_INIT_SEGMENT);
+
+  test("audioFormat reads the started subscription's init description, and nothing before a start", async () => {
+
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    const timeshift = new ProtectTimeshiftBuffer(host);
+
+    assert.equal(timeshift.audioFormat, null, "a buffer that never started reports no audio format");
+
+    host.livestreamSubscriptions = [makeControllableLivestreamDouble({ description: AMCREST_DESCRIPTION })];
+
+    assert.equal(await timeshift.start(makeChannelProfile(host)), true, "the buffer started");
+    assert.deepEqual(timeshift.audioFormat, { channels: 1, codec: "aac", sampleRate: 8000 }, "the started buffer reports the Amcrest's audio format");
+
+    timeshift.stop();
+
+    assert.equal(timeshift.audioFormat, null, "a stopped buffer reports no audio format");
+  });
+
+  // The subscription the camera's derivation opened is handed to the start, which commits it in place of a fresh one, so no second subscribe reaches the host.
+  test("a start with an adopted subscription commits it without subscribing, and declines one whose init is null", async () => {
+
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    const timeshift = new ProtectTimeshiftBuffer(host);
+    const adopted = makeControllableLivestreamDouble({ description: AMCREST_DESCRIPTION });
+
+    assert.equal(await timeshift.start(makeChannelProfile(host), adopted), true, "the adopted subscription committed");
+    assert.equal(host.livestreamCalls.length, 0, "the start opened no subscription of its own");
+    assert.equal(timeshift.isStarted, true, "the buffer runs on the adopted subscription");
+    assert.deepEqual(timeshift.audioFormat, { channels: 1, codec: "aac", sampleRate: 8000 }, "the buffer reads its format from the adopted subscription");
+
+    timeshift.stop();
+
+    assert.equal(adopted.disposed, true, "a stop disposes the adopted subscription it committed");
+
+    const initless = makeControllableLivestreamDouble({ initSegment: null });
+
+    assert.equal(await timeshift.start(makeChannelProfile(host), initless), false, "an adopted subscription with no init declines, as a fresh one does");
+    assert.equal(host.livestreamCalls.length, 0, "the declined start opened no subscription of its own either");
+    assert.equal(initless.disposed, true, "the declined adopted subscription is disposed");
+    assert.equal(timeshift.isStarted, false, "the buffer stays stopped");
   });
 });

@@ -307,4 +307,36 @@ describe("package camera create-at-adoption (the channel-present arm)", () => {
 
     await settle();
   });
+
+  /* The package advertises the recording audio stand-in. Its derivation is synchronous by contract, so it runs no probe: the one livestream the shared projection
+   * records is the parent's probe, handed to the parent's delegate, and the package's delegate is handed no format and no probe. A package recording whose stream
+   * differs from the stand-in is transcoded to it at recording time.
+   */
+  test("the package's derivation runs no probe and hands its delegate no format, so the stand-in is advertised", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, name: "Back Door" });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller, factory, nvr } = makeTestNvr({ store });
+    const projection = new TestCameraProjection(cameraConfig.id, store);
+
+    adoptionControllers.push(controller);
+
+    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Back Door", "uuid:74ACB9000003") as unknown as ProtectAccessory,
+      projection as unknown as Camera);
+
+    await settle();
+
+    const packageCreate = factory.createCalls.find((call) => call.camera === doorbell.packageCamera);
+    const parentCreate = factory.createCalls.find((call) => call.camera === doorbell);
+
+    assert.ok(packageCreate, "the factory recorded a create for the package camera");
+    assert.equal(packageCreate.audioFormat, null, "the package's delegate was handed no format, so it advertises the stand-in");
+    assert.equal(packageCreate.probe, null, "the package's delegate was handed no probe");
+    assert.equal(projection.livestreamCalls.length, 1, "the shared projection opened one livestream, the parent's probe");
+    assert.equal(parentCreate?.probe?.subscription, projection.livestreamCalls[0]?.subscription, "that livestream is the parent's probe, handed to the parent");
+
+    doorbell.cleanup();
+
+    await settle();
+  });
 });

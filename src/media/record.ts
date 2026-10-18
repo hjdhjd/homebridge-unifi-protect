@@ -11,10 +11,10 @@ import { BackpressureWriter, HDSProtocolSpecificErrorReason, HKSV_TIMEOUT, guard
 import type { Clock, HomebridgePluginLogging, Nullable, RecordingProcess } from "homebridge-plugin-utils";
 import { PROTECT_HKSV_SHADOW_FLOOR_MS, PROTECT_HKSV_SHADOW_RECONNECT_MS, PROTECT_HKSV_SHADOW_SAFETY_MS } from "../settings.ts";
 import type { ProtectTimeshiftBuffer, SegmentRole } from "./timeshift.ts";
+import { recordingAudioMatches, sampleRateHzOf } from "./stream-delegate.ts";
 import type { ProtectAccessory } from "../types.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
-import { livestreamAudioSampleRate } from "unifi-protect";
 
 // HKSV end-of-stream marker. A single zero byte yielded with `isLast=true` signals the end of a recording stream to HomeKit. Module-scoped so we allocate once
 // per process rather than per yield.
@@ -435,16 +435,22 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
       recording: {
 
-        // The input sample rate FFmpeg's audio filters operate on is the camera's livestream (fMP4) audio rate that livestreamAudioSampleRate owns. getAudioFilters
-        // validates each filter's frequency against that rate's Nyquist limit, so a doorbell's higher source rate keeps a user's 8-24 kHz highpass/lowpass from being
-        // silently dropped.
-        audioFilters: this.protectCamera.getAudioFilters(livestreamAudioSampleRate(this.protectCamera.ufp)),
+        // The audio filters run at the rate HomeKit selected for the recording, which the encoder converts to: the chain leads with a resample to that rate, and each
+        // filter's frequency is checked against that rate's Nyquist limit. Upstream types this samplerate as an intersection of the enum with a union that contains
+        // it, which the enum-assignment rule misreads as a foreign value.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-assignment
+        audioFilters: this.protectCamera.getAudioFilters(sampleRateHzOf(this.recordingConfig.audioCodec.samplerate)),
         audioStream: 0,
         codec: this.protectCamera.ufp.videoCodec,
         enableAudio: this.isAudioActive,
         fps: this.timeshift.channelProfile.channel.fps,
         timeshift: alignment?.seekOffsetMs ?? Math.max(this.timeshift.time - this.recordingConfig.prebufferLength, 0),
-        transcodeAudio: false
+
+        // A recording copies the stream's audio untouched when the stream already is the AAC format HomeKit selected, and transcodes it to that format otherwise: an
+        // Opus stream, a different rate, a second channel, or no readable audio track all transcode. The recording says nothing about which it did. Upstream types
+        // this codec's samplerate as an intersection of the enum with a union that contains it, which the enum-assignment rule misreads as a foreign value.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-assignment
+        transcodeAudio: !recordingAudioMatches(this.timeshift.audioFormat, this.recordingConfig.audioCodec)
       },
       recordingConfig: this.recordingConfig,
       verbose: this.protectCamera.hasFeature("Debug.Video.HKSV")

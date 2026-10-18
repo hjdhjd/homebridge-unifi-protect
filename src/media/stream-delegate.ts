@@ -8,9 +8,11 @@
  * without a real FFmpeg/HAP environment. The imports here are type-only by design except for what the pure helpers below compute with, and each of those is a leaf
  * that reaches no FFmpeg, so this module never drags FFmpeg into the dependency graph.
  */
-import type { CameraController, Resolution, SnapshotRequest, SnapshotRequestCallback } from "homebridge";
+import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingSamplerate } from "homebridge-plugin-utils";
+import type { CameraController, SnapshotRequest, SnapshotRequestCallback } from "homebridge";
 import type { FfmpegOptions, Nullable } from "homebridge-plugin-utils";
-import { AudioStreamingSamplerate } from "homebridge-plugin-utils";
+import type { AdvertisedStreams } from "../devices/cameras/camera.ts";
+import type { LivestreamDescription } from "unifi-protect";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectRecordingDelegate } from "./record.ts";
 import type { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
@@ -28,7 +30,7 @@ export interface ControllerIdentity {
   // Whether the camera could back HomeKit Secure Video when the controller was built, which decides its recording arm and its link to the motion sensor.
   readonly hksvCapable: boolean;
 
-  // Whether the controller was built for a doorbell, which decides its recording and streaming sample rates.
+  // Whether the controller was built for a doorbell, which decides its streaming sample rates.
   readonly isDoorbell: boolean;
 
   // Whether the controller was built with two-way audio, which decides its streaming audio options and its speaker service.
@@ -53,16 +55,96 @@ export function controllerIdentityOf(host: ProtectCameraHost): ControllerIdentit
     twoWayAudio: host.hints.twoWayAudio };
 }
 
-// The streaming audio sample rates a camera advertises to HomeKit. This condition deliberately encodes TWO wire facts, so it does not defer to livestreamAudioSampleRate:
-// on the fMP4 livestream a doorbell delivers 48 kHz and every other camera 16 kHz (the half livestreamAudioSampleRate owns), while a camera streamed directly over RTSP
-// delivers a 48 kHz source regardless of type. Both 48 kHz sources exceed what HomeKit supports; since 16 and 24 kHz each divide 48 cleanly, we advertise both and let
-// HomeKit choose. The capability - not the user's transport preference - is what decides: a camera that can reach the livestream API may serve any given session from
-// the 16 kHz buffer track whatever the toggle says, so it advertises just 16 kHz, while doorbells and cameras the API cannot reach are RTSP-served and get both. The
-// wider advertisement coexists with buffer-served sessions the same way a 16 kHz advertisement coexists with the direct-RTSP sessions the buffer-down fallback serves.
-// A pure helper, red-green testable per population.
+// The streaming audio sample rates a camera advertises to HomeKit, which picks one per session and has the live view's audio encoded at that rate. A doorbell offers
+// HomeKit both of its streaming rates to choose from, and so does a camera the livestream API cannot reach, whose sessions are served directly over RTSP. Every other
+// camera offers the lower rate alone. The capability - not the user's transport preference - is what decides: a camera that can reach the livestream API may serve any
+// given session from the buffer whatever the toggle says, and the single rate holds for every session it serves, from the buffer or from the RTSP fallback. A pure
+// helper, red-green testable per population.
 export function streamingSamplerates(input: { canUseLivestreamApi: boolean; isDoorbell: boolean }): AudioStreamingSamplerate | AudioStreamingSamplerate[] {
 
   return (input.isDoorbell || !input.canUseLivestreamApi) ? [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ] : AudioStreamingSamplerate.KHZ_16;
+}
+
+// The audio format a camera's livestream carries, as its init segment describes it: the codec, the channel count, and the sample rate in hertz.
+export interface LivestreamAudioFormat {
+
+  channels: number;
+  codec: "aac" | "opus";
+  sampleRate: number;
+}
+
+/* The audio format HomeKit Secure Video is told a camera records at when the camera's own stream could not be read before its controller was built. It is the format
+ * unifi-protect's own captures read from first-party cameras, the G6 Pro Entry doorbell included, so it is one value for every camera. It stands in only for a stream
+ * that could not be read: the camera record carries no audio format of its own, so the stream is the one source, and a recording whose stream turns out to differ
+ * is transcoded to this format rather than mislabeled.
+ */
+export const RECORDING_AUDIO_STAND_IN: { format: LivestreamAudioFormat; samplerate: AudioRecordingSamplerate } = {
+
+  format: { channels: 1, codec: "aac", sampleRate: 16000 },
+  samplerate: AudioRecordingSamplerate.KHZ_16
+};
+
+// Each HomeKit recording sample rate and the rate it stands for in hertz, the one table both directions of the mapping below read.
+const RECORDING_SAMPLERATE_HZ: Record<AudioRecordingSamplerate, number> = {
+
+  [AudioRecordingSamplerate.KHZ_8]: 8000,
+  [AudioRecordingSamplerate.KHZ_16]: 16000,
+  [AudioRecordingSamplerate.KHZ_24]: 24000,
+  [AudioRecordingSamplerate.KHZ_32]: 32000,
+  [AudioRecordingSamplerate.KHZ_44_1]: 44100,
+  [AudioRecordingSamplerate.KHZ_48]: 48000
+};
+
+// The audio format a livestream carries, read from its init segment's description: the first audio track, which is the track the recording pipeline maps, or null
+// when the stream has no audio track or the library could not read that track's configuration.
+export function livestreamAudioFormat(description: LivestreamDescription): LivestreamAudioFormat | null {
+
+  const track = description.tracks.find((candidate) => candidate.kind === "audio");
+
+  if((track?.kind !== "audio") || (track.codec === "unknown")) {
+
+    return null;
+  }
+
+  return { channels: track.channels, codec: track.codec, sampleRate: track.sampleRate };
+}
+
+// The HomeKit recording sample rate a rate in hertz names, or null when HomeKit has no recording rate for it.
+export function recordingSamplerateOf(hz: number): AudioRecordingSamplerate | null {
+
+  return Object.values(AudioRecordingSamplerate).find((samplerate) => RECORDING_SAMPLERATE_HZ[samplerate] === hz) ?? null;
+}
+
+// The rate in hertz a HomeKit recording sample rate stands for.
+export function sampleRateHzOf(samplerate: AudioRecordingSamplerate): number {
+
+  return RECORDING_SAMPLERATE_HZ[samplerate];
+}
+
+/**
+ * Decide whether a recording can copy a stream's audio as it is: true only when the stream's audio is AAC and the format HomeKit selected is AAC-LC at the same rate
+ * and channel count. Anything else - an Opus stream, a different rate, a different channel count, a codec HomeKit selected other than AAC-LC, or a stream with no
+ * readable audio track - is transcoded to the selected format instead.
+ *
+ * @param format - The stream's audio format, or null when its audio could not be read.
+ * @param codec  - The recording audio codec HomeKit selected; an absent channel count reads as HAP's default of one.
+ *
+ * @returns `true` when the stream's audio already is the selected format, `false` otherwise.
+ */
+export function recordingAudioMatches(format: LivestreamAudioFormat | null, codec: { audioChannels?: number; samplerate: AudioRecordingSamplerate;
+  type: AudioRecordingCodecType; }): boolean {
+
+  return (format !== null) && (format.codec === "aac") && (codec.type === AudioRecordingCodecType.AAC_LC) &&
+    (recordingSamplerateOf(format.sampleRate) === codec.samplerate) && (format.channels === (codec.audioChannels ?? 1));
+}
+
+// Render an audio format for a log line: its rate and its channels, as in "8 kHz mono", with the codec named only when the stream is Opus, so two formats that
+// differ by codec alone still read differently.
+export function describeAudioFormat(format: LivestreamAudioFormat): string {
+
+  const channels = (format.channels === 1) ? "mono" : ((format.channels === 2) ? "stereo" : format.channels.toString() + " channels");
+
+  return (format.sampleRate / 1000).toString() + " kHz " + channels + ((format.codec === "opus") ? " Opus" : "");
 }
 
 // The surface consumers read off this.stream - the exact set grounded across camera, camera-package, record, and snapshot (no more, no less). The production
@@ -102,9 +184,10 @@ export interface StreamingDelegate {
   timeshift: Nullable<ProtectTimeshiftSupervisor>;
 }
 
-// The creational abstraction: build a StreamingDelegate for a camera and its advertised resolutions. Creation is deferred because the delegate needs the camera and its
-// computed resolutions, so this is a factory rather than instance injection. The platform holds the production factory typed as this abstraction.
+// The creational abstraction: build a StreamingDelegate for a camera and the streams it derived - its advertised resolutions, the recording audio format read from its
+// livestream, and the probe subscription that read it. Creation is deferred because the delegate needs the camera and its derived streams, so this is a factory rather
+// than instance injection. The platform holds the production factory typed as this abstraction.
 export interface StreamingDelegateFactory {
 
-  create(camera: ProtectCameraHost, resolutions: Resolution[]): StreamingDelegate;
+  create(camera: ProtectCameraHost, derived: AdvertisedStreams): StreamingDelegate;
 }

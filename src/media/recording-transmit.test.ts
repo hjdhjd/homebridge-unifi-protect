@@ -14,9 +14,9 @@
  * assertable. The assertions are behavior-first throughout: yielded RecordingPackets, the factory's createCalls, the host's livestreamCalls, the process's stdinWrites,
  * and captured log telemetry - never a private session field.
  */
+import { AudioRecordingCodecType, AudioRecordingSamplerate, HDSProtocolSpecificErrorReason, HKSV_TIMEOUT } from "homebridge-plugin-utils";
 import type { CameraRecordingConfiguration, RecordingPacket } from "homebridge";
-import { HDSProtocolSpecificErrorReason, HKSV_TIMEOUT } from "homebridge-plugin-utils";
-import type { LivestreamSubscriptionState, Segment } from "unifi-protect";
+import type { LivestreamDescription, LivestreamInit, LivestreamSubscriptionState, Segment } from "unifi-protect";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import type { TestClock, TestLogEntry, TestRecordingProcessInit } from "homebridge-plugin-utils/testing";
 import { TestRecordingProcess, TestRecordingProcessFactory, settle } from "homebridge-plugin-utils/testing";
@@ -56,13 +56,25 @@ function countLogs(entries: readonly TestLogEntry[], level: TestLogEntry["level"
   return entries.filter((entry) => (entry.level === level) && entry.message.includes(fragment)).length;
 }
 
-// A minimal-but-truthy recording configuration cast to the HAP type at this confined boundary - the same harness discipline the decline suite uses. The transmit path
-// reads only videoCodec.parameters.bitRate (the enable-ack config log) and prebufferLength; videoCodec.resolution is present solely to satisfy the
-// CameraRecordingConfiguration shape and is not consumed by the code under test. prebufferLength is well below the filled buffer time (10000ms) so the
-// early-end telemetry gate's time >= prebufferLength conjunct stays satisfied.
-function makeRecordingConfig(): CameraRecordingConfiguration {
+// The audio codec HomeKit selects for a recording: AAC-LC, one channel, at the rate this suite's default recording selects. A row about the copy-or-transcode
+// decision passes its own.
+const SELECTED_AUDIO = { audioChannels: 1, bitrate: 0, samplerate: AudioRecordingSamplerate.KHZ_16, type: AudioRecordingCodecType.AAC_LC };
 
-  return { prebufferLength: 4000, videoCodec: { parameters: { bitRate: 2000 }, resolution: [ 1920, 1080, 30 ] } } as unknown as CameraRecordingConfiguration;
+// A minimal-but-truthy recording configuration cast to the HAP type at this confined boundary - the same harness discipline the decline suite uses. The transmit path
+// reads videoCodec.parameters.bitRate (the enable-ack config log), prebufferLength, and the selected audio codec (the filter rate and the copy-or-transcode decision);
+// videoCodec.resolution is present solely to satisfy the CameraRecordingConfiguration shape and is not consumed by the code under test. prebufferLength is well below
+// the filled buffer time (10000ms) so the early-end telemetry gate's time >= prebufferLength conjunct stays satisfied.
+function makeRecordingConfig(audioCodec: { audioChannels?: number; bitrate: number; samplerate: AudioRecordingSamplerate; type: AudioRecordingCodecType } =
+  SELECTED_AUDIO): CameraRecordingConfiguration {
+
+  return { audioCodec, prebufferLength: 4000, videoCodec: { parameters: { bitRate: 2000 }, resolution: [ 1920, 1080, 30 ] } } as unknown as
+    CameraRecordingConfiguration;
+}
+
+// An init description carrying one video track and the given audio track, the shape the library reads from a camera's livestream init.
+function describedWith(audio: { channels: number; codec: "aac" | "opus"; sampleRate: number }): LivestreamDescription {
+
+  return { tracks: [ { codec: "h264", height: 1080, id: 1, kind: "video", level: 40, profile: 77, width: 1920 }, { ...audio, id: 2, kind: "audio" } ] };
 }
 
 // A ChannelProfile resolved from a real G2 Pro channel, so the channel's id and fps reach the recording-process init exactly as production composes them. We guard the
@@ -156,7 +168,7 @@ function makeInitLosingSubscription(mediaSegments: number): { loseInitSegment: (
 
         return backing.id;
       },
-      get initSegment(): { codec: string; data: Buffer } | null {
+      get initSegment(): LivestreamInit | null {
 
         return initLost ? null : backing.initSegment;
       },
@@ -185,8 +197,10 @@ interface TransmittingArrange {
 
 // Arrange an armed, buffer-filled, transmit-ready delegate from a supplied recording-process factory. Sets the host's stream and channel selector, fills the timeshift
 // buffer past its configured duration with the segment-yielding livestream double, enables the telemetry feature so the reserve sampling and the early-end telemetry
-// fragment run, then arms recording and settles so the consume loop drains the (parking) iterator and timeshift.time reaches the configured duration.
-async function buildTransmittingDelegate(factory: RecordingProcessFactory): Promise<TransmittingArrange> {
+// fragment run, then arms recording and settles so the consume loop drains the (parking) iterator and timeshift.time reaches the configured duration. The options
+// steer the copy-or-transcode decision: the description the buffer's init carries, and the recording configuration HomeKit selected.
+async function buildTransmittingDelegate(factory: RecordingProcessFactory, options: { config?: CameraRecordingConfiguration; description?: LivestreamDescription } = {}):
+Promise<TransmittingArrange> {
 
   const { clock, controller, host, logEntries, nvr } = makeTestCameraHost({ recordingProcessFactory: factory });
 
@@ -197,13 +211,16 @@ async function buildTransmittingDelegate(factory: RecordingProcessFactory): Prom
 
   // Over-fill the buffer: the timeshift caps at its segment count (100), so any value at or above that fills time to exactly the configured duration. We over-fill by a
   // margin so the strict time < configuredDuration gate clears with room to spare.
-  host.livestreamMediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
+  const mediaSegments = Math.ceil(PROTECT_TIMESHIFT_BUFFER_MAXDURATION / PROTECT_SEGMENT_RESOLUTION) + 10;
+
+  host.livestreamMediaSegments = mediaSegments;
+  host.livestreamSubscriptions = (options.description === undefined) ? [] : [makeLivestreamSubscriptionDouble({ description: options.description, mediaSegments })];
   host.hasFeature = (option: string): boolean => option === "Debug.Video.HKSV.Telemetry";
 
   const supervisor = new ProtectTimeshiftSupervisor(host);
   const delegate = new ProtectRecordingDelegate(host, supervisor);
 
-  delegate.updateRecordingConfiguration(makeRecordingConfig());
+  delegate.updateRecordingConfiguration(options.config ?? makeRecordingConfig());
   delegate.updateRecordingActive(true);
 
   // Drain the background consume loop up to the iterator's park, so the buffer reaches the configured duration before the first request.
@@ -669,5 +686,65 @@ describe("recording delegate transmit-path behavior", () => {
     delegate.acknowledgeStream();
 
     assert.equal(countLogs(logEntries, "warn", "while the camera was still streaming"), 0);
+  });
+});
+
+describe("the recording's audio: copied when the stream is the selected format, transcoded otherwise", () => {
+
+  // Drive one recording event to its process construction and read what the recording asked of the process: whether it transcodes its audio, and the filters it runs.
+  async function transcodeFor(options: { config?: CameraRecordingConfiguration; description: LivestreamDescription }): Promise<boolean | undefined> {
+
+    const recordingProcessFactory = new TestRecordingProcessFactory(new TestRecordingProcess({ initSegment: Buffer.from("init"), segments: [Buffer.from("seg1")] }));
+    const { clock, delegate } = await buildTransmittingDelegate(recordingProcessFactory, options);
+
+    await drainPaced(delegate.handleRecordingStreamRequest(1, new AbortController().signal), clock);
+
+    assert.equal(recordingProcessFactory.createCalls.length, 1, "the recording constructed its process once");
+
+    return recordingProcessFactory.createCalls[0]?.init.recording?.transcodeAudio;
+  }
+
+  // The first-party camera's case: the stream's audio already is AAC-LC at the rate and channel count HomeKit selected, so the recording copies it untouched.
+  test("a stream whose audio is the selected AAC format is copied, with no transcode", async () => {
+
+    assert.equal(await transcodeFor({ description: describedWith({ channels: 1, codec: "aac", sampleRate: 16000 }) }), false, "a matching stream copies its audio");
+  });
+
+  test("a stream that differs from the selected format by rate, by channels, by codec, or has no audio track transcodes to it", async () => {
+
+    assert.equal(await transcodeFor({ description: describedWith({ channels: 1, codec: "aac", sampleRate: 8000 }) }), true, "an 8000 Hz stream transcodes to 16000 Hz");
+    assert.equal(await transcodeFor({ description: describedWith({ channels: 2, codec: "aac", sampleRate: 16000 }) }), true, "a stereo stream transcodes to mono");
+    assert.equal(await transcodeFor({ description: describedWith({ channels: 1, codec: "opus", sampleRate: 16000 }) }), true,
+      "an Opus stream at the selected rate transcodes to AAC");
+    assert.equal(await transcodeFor({ description: { tracks: [] } }), true, "a stream with no readable audio track transcodes");
+  });
+
+  // The selected rate, not the stream's, decides a match: the same 8000 Hz stream copies once HomeKit selected 8000 Hz.
+  test("an 8000 Hz stream copies when HomeKit selected 8000 Hz", async () => {
+
+    const config = makeRecordingConfig({ ...SELECTED_AUDIO, samplerate: AudioRecordingSamplerate.KHZ_8 });
+
+    assert.equal(await transcodeFor({ config, description: describedWith({ channels: 1, codec: "aac", sampleRate: 8000 }) }), false,
+      "a stream at the selected 8000 Hz copies its audio");
+  });
+
+  // A transcode is the recording doing its job, not an event worth a line: nothing at info or warn names the audio, on the first recording or the next.
+  test("a recording whose audio is transcoded logs no line about it, across two recordings of one camera", async () => {
+
+    const recordingProcessFactory = new TestRecordingProcessFactory(new TestRecordingProcess({ initSegment: Buffer.from("init"), segments: [Buffer.from("seg1")] }));
+    const { clock, delegate, logEntries } = await buildTransmittingDelegate(recordingProcessFactory,
+      { description: describedWith({ channels: 1, codec: "aac", sampleRate: 8000 }) });
+
+    await drainPaced(delegate.handleRecordingStreamRequest(1, new AbortController().signal), clock);
+    delegate.closeRecordingStream(1);
+    await drainPaced(delegate.handleRecordingStreamRequest(2, new AbortController().signal), clock);
+    delegate.closeRecordingStream(2);
+
+    assert.equal(recordingProcessFactory.createCalls.length, 2, "both recordings constructed their process");
+    assert.ok(recordingProcessFactory.createCalls.every((call) => call.init.recording?.transcodeAudio === true), "both recordings transcoded their audio");
+
+    const audioLines = logEntries.filter((entry) => [ "info", "warn" ].includes(entry.level) && /audio/i.test(entry.message));
+
+    assert.deepEqual(audioLines, [], "no line at info or warn names the recording's audio");
   });
 });

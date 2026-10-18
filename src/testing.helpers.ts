@@ -28,6 +28,7 @@ import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } 
 import type { DeepPartial, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig,
   ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState, ProtectStateRecord, ProtectViewerConfig, StateModelKey,
   StateStore } from "unifi-protect";
+import type { AdvertisedStreams } from "./devices/cameras/camera.ts";
 import type { ChannelProfile } from "./media/resolution.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectCameraHost } from "./media/camera-host.ts";
@@ -1588,16 +1589,18 @@ export class TestStreamingDelegate implements StreamingDelegate {
 }
 
 // The stub StreamingDelegateFactory satisfying the platform's dependency-inversion interface. Records every create call (the camera identity, the resolutions array,
-// the delegate it returned, and whether the accessory carried a MotionSensor service at that moment) so tests can assert the interface was exercised exactly once with
-// exactly the advertised resolutions, prove a motion sensor stood before the controller that captures it was built, and hand back the recorded delegate's sentinel
-// controller for identity assertions. The maxSourcePixels ceiling is forwarded into every delegate it creates - set it before construction to exercise the
-// recording-channel pixel cap with a finite value.
+// the recording audio format and the probe the derivation handed it, the delegate it returned, and whether the accessory carried a MotionSensor service at that moment)
+// so tests can assert the interface was exercised exactly once with exactly the advertised resolutions, read what the derivation's probe produced, prove a motion
+// sensor stood before the controller that captures it was built, and hand back the recorded delegate's sentinel controller for identity assertions. The
+// maxSourcePixels ceiling is forwarded into every delegate it creates - set it before construction to exercise the recording-channel pixel cap with a finite value.
 export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
 
-  public readonly createCalls: { camera: ProtectCameraHost; delegate: TestStreamingDelegate; motionSensorPresent: boolean; resolutions: Resolution[] }[] = [];
+  public readonly createCalls: { audioFormat: AdvertisedStreams["audioFormat"]; camera: ProtectCameraHost; delegate: TestStreamingDelegate; motionSensorPresent: boolean;
+    probe: AdvertisedStreams["probe"]; resolutions: Resolution[]; }[] = [];
+
   public maxSourcePixels = Infinity;
 
-  public create(camera: ProtectCameraHost, resolutions: Resolution[]): StreamingDelegate {
+  public create(camera: ProtectCameraHost, derived: AdvertisedStreams): StreamingDelegate {
 
     // Capture the camera's controller identity through the same derivation production's ProtectStreamingDelegate reads at its own construction. This makes a
     // construction whose capabilities are present yield a delegate already built for the current identity, so the capability reconcile's staleness check is a no-op
@@ -1608,7 +1611,8 @@ export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
     // kicks land on a spy rather than an inert stand-in. Cast at the confined double->production boundary the harness uses throughout.
     delegate.timeshift = makeTimeshiftSupervisorDouble() as unknown as StreamingDelegate["timeshift"];
 
-    this.createCalls.push({ camera, delegate, motionSensorPresent: camera.accessory.getService(camera.api.hap.Service.MotionSensor) !== undefined, resolutions });
+    this.createCalls.push({ audioFormat: derived.audioFormat, camera, delegate,
+      motionSensorPresent: camera.accessory.getService(camera.api.hap.Service.MotionSensor) !== undefined, probe: derived.probe, resolutions: derived.resolutions });
 
     return delegate;
   }

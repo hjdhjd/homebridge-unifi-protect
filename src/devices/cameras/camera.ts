@@ -2,16 +2,18 @@
  *
  * camera.ts: Camera device class for UniFi Protect.
  */
-import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, formatErrorMessage, parseValueList, toStartCase,
-  validCharacteristic } from "homebridge-plugin-utils";
+import { AudioRecordingCodecType, capabilityGate, formatErrorMessage, parseValueList, toStartCase, validCharacteristic } from "homebridge-plugin-utils";
 import type { Camera, LivestreamSource, ProtectState, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, Resolution } from "homebridge";
+import type { LivestreamAudioFormat, StreamingDelegate } from "../../media/stream-delegate.ts";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
-import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
+import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS, PROTECT_NVR_REBOOT_RECENCY_MS,
+  PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState } from "../../types.ts";
-import { ProtectAuthorizationError, deviceSelectors, livestreamAudioSampleRate } from "unifi-protect";
+import { ProtectAuthorizationError, deviceSelectors } from "unifi-protect";
+import { RECORDING_AUDIO_STAND_IN, describeAudioFormat, livestreamAudioFormat } from "../../media/stream-delegate.ts";
 import { STREAM_QUALITY_TIERS, smartDetectLabel } from "../../options.ts";
-import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl } from "../../media/resolution.ts";
+import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl, selectSubstrateChannelFrom } from "../../media/resolution.ts";
 import { canBackHksv, shouldDeliverBareMotion } from "./motion-policy.ts";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
   parseNightVisionMode } from "./night-vision-policy.ts";
@@ -29,7 +31,6 @@ import { ProtectReservedNames } from "../../types.ts";
 import { RtspLivestreamSubscription } from "../../media/livestream.ts";
 import type { StreamQualityTier } from "../../options.ts";
 import type { StreamingCapability } from "./streaming.ts";
-import type { StreamingDelegate } from "../../media/stream-delegate.ts";
 import { canUseLivestreamApi } from "../../media/stream-source-policy.ts";
 import { capabilityReconcileAction } from "./capability-reconcile-policy.ts";
 import { mqttTopics } from "../../mqtt.ts";
@@ -40,15 +41,19 @@ import { resolveLegacySelection } from "../../options-legacy.ts";
 // "Enabling" log - branch on it; the members with no resting state ignore it.
 type ReconcileSource = "construct" | "observe";
 
-/* The streaming surface a camera derives for HomeKit: the advertised channel-profile list its selectors choose from, and the HomeKit resolution list its
- * CameraController is built with. The two travel together as one derivation RESULT rather than as separate held state, so the narration that reads the profiles and the
- * create call that consumes the resolutions can never disagree about which derivation they are working from.
+/* The streaming surface a camera derives for HomeKit: the advertised channel-profile list its selectors choose from, the HomeKit resolution list its CameraController is
+ * built with, the recording audio format read from the camera's livestream (null when it was not read, or the stream carries no readable audio track), and the probe
+ * subscription that read it, which the delegate's buffer adopts (null when no probe ran or none survived it). They travel together as one derivation RESULT rather than
+ * as separate held state, so the narration that reads the profiles, the create call that consumes the rest, and the buffer that adopts the probe can never disagree
+ * about which derivation they are working from.
  *
- * It is declared here, in the camera family, rather than in the media layer: both the member that produces it and the members that consume it are camera host surface,
- * and the media layer's contracts take only a plain resolution list.
+ * It is declared here, in the camera family, because the member that produces it is camera host surface. The media layer's contract takes the derived streams whole,
+ * type-imported from this layer exactly as camera-host.ts already imports the camera's hint bag.
  */
 export interface AdvertisedStreams {
 
+  audioFormat: LivestreamAudioFormat | null;
+  probe: { profile: ChannelProfile; subscription: LivestreamSubscription } | null;
   profiles: ChannelProfile[];
   resolutions: Resolution[];
 }
@@ -163,6 +168,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // later reboot is the same unresolved story, not a fresh one, so the watch speaks once per outage and the return is what closes it. Initialized through a field
   // initializer and written only by the watch's own two methods below.
   #rebootReturnWarned = false;
+  // Whether this camera has already said that its recording audio format could not be read before its controller was built. The stand-in it advertises instead holds
+  // until a restart, so the line is said once per camera rather than on every derivation that finds the stream unreadable.
+  #reportedRecordingAudioStandIn = false;
   // Narrow the inherited hint bag to the camera family's shape. The bag is not projection-derived, so it cannot ride the class's projection parameter the way the device
   // handle and the config view do; a type-only re-declaration is the honest mechanism, and it costs one line because nothing is emitted for it.
   declare public hints: ProtectCameraHints;
@@ -354,9 +362,21 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // We use an IIFE here since we can't make the enclosing function asynchronous.
     (async (): Promise<void> => {
 
-      // Reconcile the capability-gated services and the video streaming surface in parallel since they are independent operations. The construct source establishes the
-      // capability resting states (it is the adoption-or-restart path), distinct from the live observe reconciles the capability observers drive later.
-      await Promise.all([ this.reconcileCapabilities("construct"), this.acquireStreaming().reconcile() ]);
+      /* Reconcile the capability-gated services and the video streaming surface in parallel since they are independent operations. The construct source establishes the
+       * capability resting states (it is the adoption-or-restart path), distinct from the live observe reconciles the capability observers drive later.
+       *
+       * Only the camera details wait on the streaming reconcile. The streaming derivation waits on the camera's livestream to read its recording audio format, and the
+       * camera details wait on it because a registered controller runs that pass itself. The switches depend on neither, so they configure as soon as the capability
+       * resting states are established, chained onto the capability reconcile alone so that neither promise is left unobserved while the other is awaited.
+       */
+      await Promise.all([ this.reconcileCapabilities("construct").then(() => this.#configureConstructionSwitches()), this.acquireStreaming().reconcile() ]);
+
+      // The camera can be removed while the streaming derivation waits on its livestream, and the camera details read the live record, so a vanished camera has nothing
+      // left to configure.
+      if(!this.recordPresent) {
+
+        return;
+      }
 
       // Configure our camera details when the reconcile registered no controller. A registration runs the pass itself through onControllerRegistered, so each initial
       // value is written once; with no controller, an operating-mode service restored from the accessory cache stands alone, and the gate still rules on it.
@@ -364,20 +384,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
         this.configureCameraDetails();
       }
-
-      // Configure our NVR recording switches.
-      this.configureNvrRecordingSwitch();
-
-      // Configure the status indicator light switch.
-      this.configureStatusLedSwitch();
-
-      // Configure the doorbell trigger. It runs BEFORE the mute switch because the trigger is what creates the Doorbell service on a plain camera, and the mute switch's
-      // gate requires that service to already exist. A camera the controller demoted (a cached Doorbell service, trigger now disabled) takes the trigger's disabled
-      // branch here, which removes the stale service first, so the mute switch below is correctly absent immediately rather than one session later.
-      this.configureDoorbellTrigger();
-
-      // Configure the doorbell mute switch.
-      this.configureDoorbellMuteSwitch();
     })();
 
     // Attach the doorbell capability when the controller already reports this camera as a doorbell. This runs at the END of configureDevice's synchronous body, after
@@ -388,6 +394,32 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.reconcileDoorbellCapability("construct");
 
     return true;
+  }
+
+  /* Configure the switches the construction tail stands up. None of them reads the streaming surface, so the tail runs them once the capability resting states are
+   * established rather than behind the streaming derivation, which can wait on the camera's livestream. The camera can be removed while the capability reconcile
+   * awaits, and every configure here reads the live record, so a vanished camera configures none of them.
+   */
+  #configureConstructionSwitches(): void {
+
+    if(!this.recordPresent) {
+
+      return;
+    }
+
+    // Configure our NVR recording switches.
+    this.configureNvrRecordingSwitch();
+
+    // Configure the status indicator light switch.
+    this.configureStatusLedSwitch();
+
+    // Configure the doorbell trigger. It runs BEFORE the mute switch because the trigger is what creates the Doorbell service on a plain camera, and the mute switch's
+    // gate requires that service to already exist. A camera the controller demoted (a cached Doorbell service, trigger now disabled) takes the trigger's disabled
+    // branch here, which removes the stale service first, so the mute switch below is correctly absent immediately rather than one session later.
+    this.configureDoorbellTrigger();
+
+    // Configure the doorbell mute switch.
+    this.configureDoorbellMuteSwitch();
   }
 
   /* Reconcile this camera's doorbell capability against the controller's live state - the single chokepoint the construction-time arm and the always-armed isDoorbell
@@ -673,7 +705,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // The RTSP-debug path (Debug.Video.Timeshift.UseRtsp) transcodes the camera's RTSP stream through FFmpeg to feed the timeshift buffer instead of the controller's
     // native livestream. It is gated on the debug feature alone - no HKSV recording precondition - so it engages from startup for the standing buffer. The audio target
-    // mirrors the livestream API's native delivery, derived from camera facts rather than any HKSV recording configuration.
+    // is the recording stand-in rather than any HKSV recording configuration HomeKit selected.
     if(this.hasFeature("Debug.Video.Timeshift.UseRtsp") && this.stream) {
 
       // The debug feed dials the handed channel over RTSP, so a channel the controller has not enabled has nothing for FFmpeg to connect to. We say so once and fall
@@ -690,12 +722,11 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
         this.#reportedRtspDebugFallback = false;
 
-        // Mono AAC-LC at the camera's livestream (fMP4) audio rate, which livestreamAudioSampleRate owns.
-        const samplerate = (livestreamAudioSampleRate(this.ufp) === 48000) ? AudioRecordingSamplerate.KHZ_48 : AudioRecordingSamplerate.KHZ_16;
-
+        // Mono AAC-LC at the recording stand-in's rate. The adapter encodes to the format HomeKit is told, so its own init matches the advertisement by construction,
+        // which is why the derivation runs no probe for a camera whose buffer this adapter feeds.
         return new RtspLivestreamSubscription({
 
-          audio: { channels: 1, codec: AudioRecordingCodecType.AAC_LC, samplerate: samplerate },
+          audio: { channels: 1, codec: AudioRecordingCodecType.AAC_LC, samplerate: RECORDING_AUDIO_STAND_IN.samplerate },
           enableAudio: this.ufp.featureFlags.hasMic && this.hasFeature("Audio"),
           ffmpegOptions: this.stream.ffmpegOptions,
           processFactory: this.platform.livestreamProcessFactory,
@@ -1444,8 +1475,99 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       return null;
     }
 
-    // Hand back the derived surface: the supported profiles with their URLs, and the resolution list the CameraController is built from.
-    return { profiles: profiles, resolutions: profiles.map(profile => profile.resolution) };
+    const recordingAudio = await this.#probeRecordingAudio(profiles);
+
+    // The camera can be removed while the probe waits on its stream, the same exposure the RTSP write above carries across its await. A vanished camera has nothing to
+    // derive, and handing back a surface would build a controller against a record that is gone, so any probe still held is released with it.
+    if(!this.recordPresent) {
+
+      void recordingAudio.probe?.subscription[Symbol.asyncDispose]();
+
+      return null;
+    }
+
+    // Hand back the derived surface: the recording audio format and the probe that read it, the supported profiles with their URLs, and the resolution list the
+    // CameraController is built from.
+    return { ...recordingAudio, profiles: profiles, resolutions: profiles.map(profile => profile.resolution) };
+  }
+
+  /* Read the audio format this camera's livestream carries, so HomeKit Secure Video is told the format the camera actually records in. The read is upfront, in the
+   * derivation that runs before the controller is built, because HAP freezes the advertised recording configuration when the controller is built: a changed
+   * advertisement later is a controller rebuild that resets the camera's HomeKit Secure Video, and a guessed format outlives the firmware that made it true.
+   *
+   * It runs only when every term holds: the camera can back HomeKit Secure Video, since the recording arm exists exactly when it can; no delegate stands yet, since a
+   * re-derive with a controller in place cannot move the advertisement; the camera is reachable; and the buffer's channel would be fed by the livestream API rather than
+   * the RTSP-debug adapter, which encodes to the advertised format by construction. The channel is the one the buffer selects, through the same pure selection, so the
+   * probe opens the stream the buffer later wants. An unreachable camera, or a stream that does not establish, advertises the stand-in and says so once; any other
+   * unmet term advertises the stand-in silently.
+   *
+   * The subscription that read the format is handed on rather than released, because the pool tears a session down when its last subscriber leaves: the delegate's
+   * buffer adopts it at its first supervisor pass, so one stream opens rather than two, and it carries the same stall urgency the buffer gives its own subscription for
+   * its whole life. The design spends one short-lived connection on a camera with no buffer demand at that first pass, whose supervisor disposes the probe. The cost is
+   * the wait: a probed camera's controller registration waits for the stream's first media, bounded by unifi-protect's 30-second establishment deadline, and the camera
+   * has no HomeKit controller until it settles. A stream that establishes with no readable audio track keeps its subscription and advertises the stand-in with no line,
+   * since a recording from it has no audio to mislabel.
+   */
+  async #probeRecordingAudio(profiles: readonly ChannelProfile[]): Promise<Pick<AdvertisedStreams, "audioFormat" | "probe">> {
+
+    const unread = { audioFormat: null, probe: null };
+
+    if(!this.isHksvCapable || this.stream) {
+
+      return unread;
+    }
+
+    const profile = selectSubstrateChannelFrom(profiles, { hostSystem: this.platform.codecSupport.hostSystem, pin: this.resolveChannelPin("Video.Timeshift.Only") });
+
+    if(!profile || (this.hasFeature("Debug.Video.Timeshift.UseRtsp") && profile.channel.isRtspEnabled)) {
+
+      return unread;
+    }
+
+    if(!this.isReachable) {
+
+      this.#reportRecordingAudioStandIn();
+
+      return unread;
+    }
+
+    const subscription = this.livestream(profile, { discardOnDispose: true, segmentLength: PROTECT_SEGMENT_RESOLUTION, signal: this.observeSignal,
+      urgency: () => (this.stream?.hksv?.isTransmitting ? PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS : PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS) });
+    const established = await subscription.whenEstablished();
+
+    // The camera can be removed, or the controller shut down, while the stream establishes. Nothing will build a delegate for it, so the subscription is released here
+    // and nothing is narrated.
+    if(!this.recordPresent || this.observeSignal.aborted) {
+
+      void subscription[Symbol.asyncDispose]();
+
+      return unread;
+    }
+
+    const init = subscription.initSegment;
+
+    if(!established || !init) {
+
+      void subscription[Symbol.asyncDispose]();
+      this.#reportRecordingAudioStandIn();
+
+      return unread;
+    }
+
+    return { audioFormat: livestreamAudioFormat(init.description), probe: { profile, subscription } };
+  }
+
+  // Say, once per camera, that its livestream's audio format could not be read before its controller was built, naming the stand-in it advertises instead.
+  #reportRecordingAudioStandIn(): void {
+
+    if(this.#reportedRecordingAudioStandIn) {
+
+      return;
+    }
+
+    this.#reportedRecordingAudioStandIn = true;
+    this.log.info("Unable to read this camera's livestream audio format before publishing it to HomeKit. Recordings use %s until HBUP restarts and transcode audio " +
+      "that differs.", describeAudioFormat(RECORDING_AUDIO_STAND_IN.format));
   }
 
   /* The camera family's establishment HOST HOOK: everything a camera pins and narrates at the moment its streaming delegate is about to be built. Public because the
@@ -2123,9 +2245,12 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }, 0);
   }
 
-  // Return the audio filter pipeline for this camera. The optional sampleRate parameter (in Hz) is used to validate that filter frequencies don't exceed the Nyquist
-  // limit (half the sample rate)...filters above Nyquist are physically impossible to apply and cause FFmpeg to reject them.
-  public getAudioFilters(sampleRate?: number): string[] {
+  /* Return the audio filter pipeline for this camera at an output sample rate, in hertz: the rate the encoder converts to, which is the rate HomeKit requested for a live
+   * view or selected for a recording. The chain leads with a resample to that rate, so the filters run at the output rate. That moves the conversion the encoder already
+   * performs ahead of the filters rather than adding one, and it means no path reads an input rate: the cutoff check needs no fact about what the camera delivers. The
+   * resample keeps timestamps, so the noise profile's measuring window below is unchanged.
+   */
+  public getAudioFilters(outputSampleRate: number): string[] {
 
     // If we don't have audio filtering enabled, we're done.
     if(!this.hasFeature("Audio.Filter.Noise")) {
@@ -2133,8 +2258,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       return [];
     }
 
-    const afOptions: string[] = [];
-    const nyquist = sampleRate ? sampleRate / 2 : undefined;
+    const afOptions: string[] = ["aresample=" + outputSampleRate.toString()];
+    const nyquist = outputSampleRate / 2;
 
     // See what the user has set for the afftdn filter for this camera.
     let fftNr = this.getFeatureFloat("Audio.Filter.Noise.FftNr") ?? PROTECT_FFMPEG_AUDIO_FILTER_FFTNR;
@@ -2146,14 +2271,14 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     const highpass = this.getFeatureNumber("Audio.Filter.Noise.HighPass");
     const lowpass = this.getFeatureNumber("Audio.Filter.Noise.LowPass");
 
-    // We use the following order of operations for our filter: highpass, then lowpass, and finally afftdn. Filters at or above the Nyquist limit are skipped...there's no
-    // representable frequency content to operate on.
-    if((typeof highpass === "number") && (!nyquist || (highpass < nyquist))) {
+    // We use the following order of operations for our filter: the resample, then highpass, then lowpass, and finally afftdn. A highpass or lowpass at or above the
+    // Nyquist limit (half the output rate) is skipped...there's no representable frequency content to operate on, and FFmpeg rejects the filter.
+    if((typeof highpass === "number") && (highpass < nyquist)) {
 
       afOptions.push("highpass=p=2:f=" + highpass.toString());
     }
 
-    if((typeof lowpass === "number") && (!nyquist || (lowpass < nyquist))) {
+    if((typeof lowpass === "number") && (lowpass < nyquist)) {
 
       afOptions.push("lowpass=p=2:f=" + lowpass.toString());
     }

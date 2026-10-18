@@ -17,6 +17,7 @@
  * Matches the pure-module voice of livestream-recovery-policy.ts and nvr-policy.ts: a small, exported, side-effect-free surface paired with a thin live-read wrapper.
  */
 import type { Nullable } from "homebridge-plugin-utils";
+import { PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../settings.ts";
 import type { ProtectCameraChannelConfig } from "unifi-protect";
 import type { Resolution } from "homebridge";
 
@@ -223,6 +224,38 @@ export function selectChannelProfile(entries: readonly ChannelProfile[], request
       return null;
     }
   }
+}
+
+/**
+ * Select the channel that populates the standing timeshift buffer from an already pixel-capped entry list. The policy is source-independent,
+ * HomeKit-Secure-Video-state-independent, and RTSP-independent by construction, in order: (1) a user pin wins outright - an exact name match, null on a miss, the loud
+ * user-pin failure; (2) a pixel-constrained encoder host (a Raspberry Pi) takes the highest-quality channel at or below its constrained target, biased downward,
+ * preference-free so the buffer does not inherit the direct-RTSP quality preference; (3) otherwise the highest-quality channel, taken structurally as the first entry
+ * with no name lookup. Pure, so the camera's derivation can select the buffer's channel over a list it has not published yet, exactly as the buffer later will.
+ *
+ * @param entries          - The candidate channel profiles, sorted high to low and already filtered by the host encoder's pixel cap.
+ * @param input.hostSystem - The host system the codec support reports, which marks a pixel-constrained encoder host.
+ * @param input.pin        - The user's pinned channel name, or null when no channel is pinned.
+ *
+ * @returns The channel profile that populates the buffer, or null when the pin names no available channel or there is nothing to choose from.
+ */
+export function selectSubstrateChannelFrom(entries: readonly ChannelProfile[], input: { hostSystem: string; pin: Nullable<string> }): Nullable<ChannelProfile> {
+
+  // (1) A user pin wins outright: exact name match, null on a miss.
+  if(input.pin) {
+
+    return selectChannelProfile(entries, { mode: "name", name: input.pin });
+  }
+
+  // (2) A pixel-constrained encoder host: the highest-quality channel at or below the constrained target, biased downward and preference-free.
+  if(input.hostSystem === "raspbian") {
+
+    return selectChannelProfile(entries, { bias: "lower", height: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.height, mode: "nearest",
+      width: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.width });
+  }
+
+  // (3) Otherwise, the highest-quality channel - the first surviving entry, taken structurally with no name lookup.
+  return entries[0] ?? null;
 }
 
 // Build the per-camera advertised resolution list HomeKit consumes, from the camera's native RTSP entries. This is the entangled crux of the resolution surface, and it

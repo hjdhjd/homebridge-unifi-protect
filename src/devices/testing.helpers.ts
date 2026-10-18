@@ -12,10 +12,11 @@
  * controller's own. The cross-cutting core - the HAP double, the state store, the streaming and timeshift stubs - lives in the root harness this file imports from.
  */
 import { DISABLED_THRESHOLD_SETTINGS, DISABLED_VAPE_SENSITIVITY, NOT_CAPABLE_AIR_QUALITY } from "./air-quality-policy.ts";
-import type { PlaySpeakerOptions, ProtectAirQualityThresholdSettings, ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig,
-  ProtectLightConfig, ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorAirQuality, ProtectSensorConfig, ProtectSensorSmokeStatus,
-  ProtectViewerConfig, Sensor } from "unifi-protect";
+import type { LivestreamDescription, LivestreamInit, LivestreamOptions, LivestreamSubscriptionState, PlaySpeakerOptions, ProtectAirQualityThresholdSettings,
+  ProtectCameraChannelConfig, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectNvrLiveviewConfig, ProtectRelayConfig,
+  ProtectRingtoneConfig, ProtectSensorAirQuality, ProtectSensorConfig, ProtectSensorSmokeStatus, ProtectViewerConfig, Segment, Sensor } from "unifi-protect";
 import { FIXTURE_HOST } from "../camera.fixtures.ts";
+import type { LivestreamSubscription } from "../media/livestream.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectConfigurePass } from "./device.ts";
 import { ProtectDevice } from "./device.ts";
@@ -596,12 +597,25 @@ export function makeLiveviewConfig(options: { cameras?: string[]; id?: string; n
  * package-camera flashlight pulse (the dark-guarded retry-and-heartbeat) - each RECORDING its calls and resolving by default with a settable rejection so a test
  * drives the real sentinel-swallowing failure paths. It also exposes the recorded UniFi Access unlock command (unlockCalls / unlockRejection) the lock's
  * LockTargetState onSet dispatches, resolving by default with a settable rejection so a test drives the runDeviceCommand failure -> optimistic-revert path.
- * The remaining METHODS (livestream, talkback, snapshot, reboot) sit behind gates the minimal construction scenario never opens and are deliberately omitted
- * - a test that reaches one fails loudly on the missing member instead of silently succeeding against a stub.
+ * It also exposes the pooled livestream the camera's derivation opens to read its recording audio format, RECORDING each call with the subscription double it
+ * answered, so every device suite that builds a reachable camera able to back HomeKit Secure Video completes its derivation, and a probe test reads the calls.
+ * The remaining METHODS (talkback, snapshot, reboot) sit behind gates the minimal construction scenario never opens and are deliberately omitted - a test that
+ * reaches one fails loudly on the missing member instead of silently succeeding against a stub.
  */
 export class TestCameraProjection {
 
   public readonly id: string;
+  // The recorded livestream calls: the options the camera handed the pool (the source it selected, the urgency closure, the signal) and the subscription double each
+  // call answered, whose disposal a test reads.
+  public readonly livestreamCalls: { options: LivestreamOptions; subscription: TestLivestreamSubscription }[] = [];
+  // The description each answered subscription's init carries once it establishes. No tracks by default - a stream with no readable audio track - so a construction
+  // derives no audio format unless a test scripts one before construction.
+  public livestreamDescription: LivestreamDescription = { tracks: [] };
+  // Whether each answered subscription establishes. True by default; a test sets it false to drive the stream that never establishes.
+  public livestreamEstablishes = true;
+  // When set, each answered subscription's establishment waits on this promise before it answers, so a test can land an event - a removal, a shutdown, a second
+  // reconcile - while the derivation is still waiting on its stream.
+  public livestreamGate: Nullable<Promise<void>> = null;
   public readonly modelKey = "camera" as const;
   // The recorded update payloads the camera's real onSet write-through commands dispatch, so a test asserts the exact payload (the ispSettings / recordingSettings /
   // ledSettings the bound handlers issue). The shape stays general because the camera issues distinct payload shapes through this one member.
@@ -717,6 +731,88 @@ export class TestCameraProjection {
 
       throw this.flashlightRejection;
     }
+  }
+
+  // Open a pooled livestream subscription, mirroring the projection's one-argument contract: RECORDS the options and answers a subscription double scripted by the
+  // levers above, read at the moment of the call.
+  public livestream(options: LivestreamOptions): TestLivestreamSubscription {
+
+    const subscription = new TestLivestreamSubscription({ description: this.livestreamDescription, establishes: this.livestreamEstablishes, gate: this.livestreamGate,
+      signal: options.signal });
+
+    this.livestreamCalls.push({ options, subscription });
+
+    return subscription;
+  }
+}
+
+/* The subscription double the camera projection double's livestream answers, satisfying the plugin's LivestreamSubscription contract. It establishes promptly with an
+ * init carrying its scripted description (or declines when scripted to), waiting first on an optional gate so a test can hold the establishment open. Its init is null
+ * until it establishes, as the pool's cached init is, and a disposal - directly, or through the signal it was handed, as the pool's subscription binds it - records
+ * disposed, reads "closed", and answers any later establishment false. Its iterator delivers nothing: the device suites' streaming delegate is a stub whose
+ * supervisor never consumes it.
+ */
+export class TestLivestreamSubscription implements LivestreamSubscription {
+
+  public disposed = false;
+  public readonly id: string;
+  #init: Nullable<LivestreamInit> = null;
+  readonly #description: LivestreamDescription;
+  readonly #establishes: boolean;
+  readonly #gate: Nullable<Promise<void>>;
+  static #counter = 0;
+
+  public constructor(options: { description: LivestreamDescription; establishes: boolean; gate: Nullable<Promise<void>>; signal?: AbortSignal }) {
+
+    this.id = "test-projection-livestream-" + (++TestLivestreamSubscription.#counter).toString();
+    this.#description = options.description;
+    this.#establishes = options.establishes;
+    this.#gate = options.gate;
+    options.signal?.addEventListener("abort", () => void this[Symbol.asyncDispose](), { once: true });
+  }
+
+  public get initSegment(): Nullable<LivestreamInit> {
+
+    return this.#init;
+  }
+
+  public get state(): LivestreamSubscriptionState {
+
+    if(this.disposed) {
+
+      return "closed";
+    }
+
+    return this.#init ? "live" : "connecting";
+  }
+
+  public reassess(): void {
+
+    // Nothing to re-decide - the double has no recovery loop.
+  }
+
+  public async whenEstablished(): Promise<boolean> {
+
+    await this.#gate;
+
+    if(this.disposed || !this.#establishes) {
+
+      return false;
+    }
+
+    this.#init = { codec: "avc1.4d4032", data: Buffer.from("test-projection-init"), description: this.#description };
+
+    return true;
+  }
+
+  public async *[Symbol.asyncIterator](): AsyncGenerator<Segment> {
+
+    // The double delivers no segments.
+  }
+
+  public async [Symbol.asyncDispose](): Promise<void> {
+
+    this.disposed = true;
   }
 }
 

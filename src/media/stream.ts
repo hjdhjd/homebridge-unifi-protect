@@ -4,22 +4,23 @@
  *
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code. Thank you for your contributions to the HomeKit world.
  */
-import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
+import { AudioRecordingCodecType, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
   FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites, StreamRequestTypes,
   VideoCodecType, formatBps, formatErrorMessage, guardedDispatch, isHbpuAbortReason, mqttTopic } from "homebridge-plugin-utils";
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { Clock, HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
-import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
+import type { ControllerIdentity, LivestreamAudioFormat, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_PROBESIZE_OVERRIDE_MAX,
   PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
-import { ProtectAbortedError, livestreamAudioSampleRate } from "unifi-protect";
 import { ProtectReservedNames, isPackageCameraContext } from "../types.ts";
+import { RECORDING_AUDIO_STAND_IN, controllerIdentityOf, recordingSamplerateOf, streamingSamplerates } from "./stream-delegate.ts";
 import { canUseLivestreamApi, resolveSessionSource } from "./stream-source-policy.ts";
-import { controllerIdentityOf, streamingSamplerates } from "./stream-delegate.ts";
 import { resolveChannelRequest, resolveTranscodeDecision, resolveVideoEncoding } from "./stream-encode-policy.ts";
+import type { AdvertisedStreams } from "../devices/cameras/camera.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
+import { ProtectAbortedError } from "unifi-protect";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
@@ -184,6 +185,10 @@ class ProbesizeSelfTune {
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate, StreamingDelegate {
 
+  // The recording audio format this delegate's CameraController advertises to HomeKit Secure Video: the camera's own livestream format as the derivation read it, in
+  // one channel, or the stand-in when the stream could not be read or carries a rate HomeKit has no recording member for. The supervisor compares the buffer's format
+  // against it.
+  public readonly advertisedAudioFormat: LivestreamAudioFormat;
   // The controller identity the CameraController was built for, captured at construction through the one derivation the live capability reconcile also reads, from
   // the same live-volatile camera facts the options below freeze. The reconcile reads this off this.stream to detect a stale controller (a camera the controller
   // reports a capability for only after adoption) and rebuilds only when a term has appeared.
@@ -206,9 +211,18 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   // A/B comparison can run without restarting the plugin.
   private abTest = false;
 
-  // Create an instance of a HomeKit streaming delegate.
-  constructor(protectCamera: ProtectCameraHost, resolutions: [number, number, number][]) {
+  // Create an instance of a HomeKit streaming delegate. The derived audio half - the recording audio format the camera's derivation read from its livestream and the
+  // probe subscription that read it - defaults to nothing read, which advertises the stand-in and hands the supervisor nothing to adopt.
+  constructor(protectCamera: ProtectCameraHost, resolutions: Resolution[], derived: Pick<AdvertisedStreams, "audioFormat" | "probe"> = { audioFormat: null,
+    probe: null }) {
 
+    // The recording audio format we advertise: the camera's own, in one channel because every advertisement we ship is mono and a stereo stream is transcoded to it,
+    // or the whole stand-in when the stream was not read or its rate has no HomeKit recording member.
+    const samplerate = derived.audioFormat ? recordingSamplerateOf(derived.audioFormat.sampleRate) : null;
+    const advertised = (derived.audioFormat && (samplerate !== null)) ? { format: { ...derived.audioFormat, channels: 1 }, samplerate: samplerate } :
+      RECORDING_AUDIO_STAND_IN;
+
+    this.advertisedAudioFormat = advertised.format;
     this.builtFor = controllerIdentityOf(protectCamera);
     this.hap = protectCamera.api.hap;
     this.hksv = null;
@@ -249,7 +263,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // recording delegate - the streaming-only column of the OR made flesh.
     if(canUseLivestreamApi(this.protectCamera.ufp)) {
 
-      this.timeshift = new ProtectTimeshiftSupervisor(protectCamera);
+      this.timeshift = new ProtectTimeshiftSupervisor(protectCamera, { adopt: derived.probe, advertised: advertised.format });
 
       if(this.protectCamera.isHksvCapable) {
 
@@ -282,8 +296,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
             codecs: [
               {
 
-                // The advertised recording sample rate follows the camera's livestream (fMP4) audio rate, which livestreamAudioSampleRate owns.
-                samplerate: (livestreamAudioSampleRate(this.protectCamera.ufp) === 48000) ? AudioRecordingSamplerate.KHZ_48 : AudioRecordingSamplerate.KHZ_16,
+                // The advertised recording format is the camera's own, read from its livestream before this controller was built, so a recording copies its audio
+                // untouched whenever the stream matches. The stand-in takes its place only where the stream could not be read, and a recording whose stream differs from
+                // what HomeKit selected is transcoded to it rather than mislabeled.
+                audioChannels: 1,
+                samplerate: advertised.samplerate,
                 type: AudioRecordingCodecType.AAC_LC
               }
             ]
@@ -334,12 +351,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
             {
 
               audioChannels: 1,
-              bitrate: 0,
 
-              // Protect doorbells and the Opus audio track over RTSP both use a 48 kHz audio sampling rate, which HomeKit doesn't support; the samplerate helper hands
-              // HomeKit both 16 and 24 kHz to choose from there (each divides 48 cleanly) and just 16 kHz when the buffer-backed livestream API delivers it. This surface
-              // is constructor-frozen, so the capability is sampled at construction here, and livestream-API reach is a term of the controller identity for exactly that
-              // reason: a camera that gains reach while the delegate stands rebuilds it, while a lost reach leaves the delegate as it was built.
+              // The samplerate helper hands HomeKit both of its streaming rates to choose from for a doorbell and for a camera served directly over RTSP, and the lower
+              // rate alone for every other camera. This surface is constructor-frozen, so the capability is sampled at construction here, and livestream-API reach is a
+              // term of the controller identity for exactly that reason: a camera that gains reach while the delegate stands rebuilds it, while a lost reach leaves the
+              // delegate as it was built.
               samplerate: streamingSamplerates({ canUseLivestreamApi: canUseLivestreamApi(this.protectCamera.ufp),
                 isDoorbell: this.protectCamera.ufp.featureFlags.isDoorbell }),
               type: AudioStreamingCodecType.AAC_ELD
@@ -963,16 +979,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         "-ac", request.audio.channel.toString()
       );
 
-      // If we are audio filtering, address it here.
-      // The input sample rate FFmpeg's audio filters operate on is the camera's livestream (fMP4) audio rate that livestreamAudioSampleRate owns, independent of the
-      // output rate HomeKit requests. getAudioFilters checks each filter's frequency against that rate's Nyquist limit, so a doorbell's higher source rate lifts the
-      // ceiling far enough that a user's 8-24 kHz highpass/lowpass passes through on a doorbell.
-      const afOptions = this.protectCamera.getAudioFilters(livestreamAudioSampleRate(this.protectCamera.ufp));
-
-      if(afOptions.length) {
-
-        ffmpegArgs.push("-filter:a", afOptions.join(", "));
-      }
+      // If we are audio filtering, address it here, at the output rate HomeKit requested for this stream.
+      ffmpegArgs.push(...liveAudioFilterArgs(this.protectCamera, request.audio.sample_rate));
     }
 
     // Send the stream to HomeKit through a single tee-muxed output rather than two top-level outputs. The distinction matters: a top-level output that ends up
@@ -1484,9 +1492,26 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   }
 }
 
+/**
+ * The live view's audio-filter arguments: the camera's filter chain as one -filter:a, or nothing when the camera filters nothing. The filters run at the output rate
+ * HomeKit requested for the stream, which the encoder converts to anyway: the chain leads with a resample to that rate, and each filter's frequency is checked against
+ * that rate's Nyquist limit. Pure over its host, so the argument shape a live view spawns with is testable without spawning one.
+ *
+ * @param host         - The camera whose filter chain the live view runs.
+ * @param requestedKhz - The audio sample rate HomeKit requested for the stream, in kilohertz.
+ *
+ * @returns The -filter:a pair, or an empty list when no filters apply.
+ */
+export function liveAudioFilterArgs(host: Pick<ProtectCameraHost, "getAudioFilters">, requestedKhz: number): string[] {
+
+  const afOptions = host.getAudioFilters(requestedKhz * 1000);
+
+  return afOptions.length ? [ "-filter:a", afOptions.join(", ") ] : [];
+}
+
 // The production StreamingDelegateFactory: builds the concrete FFmpeg-backed delegate. The platform holds this typed as the abstraction; a test platform substitutes a
 // stub. The factory's create is exactly a constructor call, so wiring construction through it is behavior-neutral.
 export const streamingDelegateFactory: StreamingDelegateFactory = {
 
-  create: (camera: ProtectCameraHost, resolutions: Resolution[]): StreamingDelegate => new ProtectStreamingDelegate(camera, resolutions)
+  create: (camera: ProtectCameraHost, derived: AdvertisedStreams): StreamingDelegate => new ProtectStreamingDelegate(camera, derived.resolutions, derived)
 };

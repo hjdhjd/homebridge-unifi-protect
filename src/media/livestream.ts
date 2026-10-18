@@ -14,8 +14,8 @@
  *   - logLivestreamIterationError: the shared classification and logging for errors thrown from a livestream subscription iterator, used by every consumer.
  */
 import type { FMp4AudioTarget, FfmpegOptions, HomebridgePluginLogging, LivestreamProcess, LivestreamProcessFactory } from "homebridge-plugin-utils";
-import type { LivestreamSubscriptionState, Segment } from "unifi-protect";
-import { ProtectCodecChangeError, ProtectLivestreamUnavailableError } from "unifi-protect";
+import type { LivestreamInit, LivestreamSubscriptionState, Segment } from "unifi-protect";
+import { ProtectClient, ProtectCodecChangeError, ProtectLivestreamUnavailableError } from "unifi-protect";
 import { formatErrorMessage, splitMoofMdat } from "homebridge-plugin-utils";
 
 // Process-local monotonic counter used to mint stable RTSP-debug subscription ids. A counter is sufficient here (no cross-process uniqueness needed) and keeps
@@ -25,22 +25,23 @@ let rtspSubscriptionCounter = 0;
 /**
  * The minimal livestream-subscription surface the plugin's FFmpeg consumers depend on. The plugin OWNS this abstraction (dependency inversion): the unifi-protect
  * library's pooled LivestreamSubscription class and the RTSP-debug adapter below are interchangeable implementations behind it. It is a deliberate subset of the
- * library's richer class (interface segregation) - the plugin needs the segment stream, the cached init, the coarse lifecycle state (the timeshift's `isRestarting` reads
- * it), the in-flight recovery re-decision (the timeshift's transmit-start escalation calls it), disposal, identity, and the establishment latch, and nothing more (no
- * stats/codec). The coupling is a feature: a unifi-protect library change that breaks this surface fails to compile at ProtectCamera.livestream()'s return.
+ * library's richer class (interface segregation) - the plugin needs the segment stream, the cached init with the description read from its bytes (the tracks the
+ * timeshift buffer reads its audio format from), the coarse lifecycle state (the timeshift's `isRestarting` reads it), the in-flight recovery re-decision (the
+ * timeshift's transmit-start escalation calls it), disposal, identity, and the establishment latch, and nothing more (no stats/codec). The coupling is a feature: a
+ * unifi-protect library change that breaks this surface fails to compile at ProtectCamera.livestream()'s return.
  */
 export interface LivestreamSubscription extends AsyncIterable<Segment>, AsyncDisposable {
 
   readonly id: string;
-  readonly initSegment: { codec: string; data: Buffer } | null;
+  readonly initSegment: LivestreamInit | null;
   readonly state: LivestreamSubscriptionState;
   reassess(): void;
   whenEstablished(): Promise<boolean>;
 }
 
 // The fully-resolved options the RTSP-debug adapter needs. Every value but the process factory is derived from camera facts at the camera interface, so the adapter never
-// re-narrows or uses non-null assertions; the process factory is the platform's, which the camera passes through. The audio target mirrors the livestream API's native
-// delivery shape and is the adapter's sole audio-encode input - it carries no HKSV recording configuration.
+// re-narrows or uses non-null assertions; the process factory is the platform's, which the camera passes through. The audio target is the format the camera
+// advertises when its stream is not read, and is the adapter's sole audio-encode input - it carries no HKSV recording configuration.
 interface RtspLivestreamSubscriptionOptions {
 
   audio: FMp4AudioTarget;
@@ -68,8 +69,8 @@ interface RtspLivestreamSubscriptionOptions {
 export class RtspLivestreamSubscription implements LivestreamSubscription {
 
   public readonly id: string;
-  readonly #initPromise: Promise<Buffer>;
-  #initSegment: { codec: string; data: Buffer } | null;
+  readonly #initPromise: Promise<LivestreamInit>;
+  #initSegment: LivestreamInit | null;
   #disposed: boolean;
   readonly #proc: LivestreamProcess;
   readonly #signal?: AbortSignal;
@@ -93,18 +94,23 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
       signal: options.signal
     });
 
-    // Drive initSegment and whenEstablished from the process's init segment. We cache the resolved buffer and flip to "live" on success. We attach a no-op catch
-    // so a construct-then-dispose-without-iterating sequence cannot float an unhandled rejection; the genuine consumers read the resolved value through
-    // whenEstablished() and the iterator, both of which observe the original promise's outcome.
-    this.#initPromise = this.#proc.getInitSegment();
-    this.#initPromise.then((data): void => {
+    /* Drive initSegment and whenEstablished from the process's init segment. We cache the resolved init and flip to "live" on success. We attach a no-op catch so a
+     * construct-then-dispose-without-iterating sequence cannot float an unhandled rejection; the genuine consumers read the resolved value through whenEstablished() and
+     * the iterator, both of which observe the original promise's outcome.
+     *
+     * The init is described from its own bytes here, once, for the cached init and the yielded one alike. Every init the library's pool delivers arrives already
+     * described, and this is the one init the library does not describe for us, because our own muxer produced it rather than the controller; the library's
+     * describeInitSegment static exists for exactly that, so the adapter's init reports its tracks the way the controller's does.
+     */
+    this.#initPromise = this.#proc.getInitSegment().then((data) => ({ codec: this.#videoCodec, data: data, description: ProtectClient.describeInitSegment(data) }));
+    this.#initPromise.then((init): void => {
 
       if(this.#disposed) {
 
         return;
       }
 
-      this.#initSegment = { codec: this.#videoCodec, data: data };
+      this.#initSegment = init;
       this.#state = "live";
     }, (): void => { /* No-op: the rejection is observed through whenEstablished() and the iterator. */ });
   }
@@ -117,7 +123,7 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
   }
 
   // Synchronous peek at the cached fMP4 initialization segment, or null until the process's init segment resolves.
-  public get initSegment(): { codec: string; data: Buffer } | null {
+  public get initSegment(): LivestreamInit | null {
 
     return this.#initSegment;
   }
@@ -161,14 +167,14 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
   // iteration by a normal return, the way the process's segments end on an abort after init, so a consumer narrates nothing for its own teardown.
   async *#iterate(): AsyncGenerator<Segment> {
 
-    // The init buffer; this also drives initSegment / whenEstablished via the cached promise above. The process rejects its init promise when it is torn down before
-    // its first segment. When our owner ended us, by abort or by disposal, that rejection is the owner's own teardown and ends the iteration cleanly; any other
+    // The described init; this also drives initSegment / whenEstablished via the cached promise above. The process rejects its init promise when it is torn down
+    // before its first segment. When our owner ended us, by abort or by disposal, that rejection is the owner's own teardown and ends the iteration cleanly; any other
     // rejection is a genuine FFmpeg failure before its first segment, rethrown so the consumer narrates it.
-    let data: Buffer;
+    let init: LivestreamInit;
 
     try {
 
-      data = await this.#initPromise;
+      init = await this.#initPromise;
     } catch(error) {
 
       if(this.#isEndedByOwner) {
@@ -179,7 +185,7 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
       throw error;
     }
 
-    yield { codec: this.#videoCodec, data: data, type: "init" };
+    yield { ...init, type: "init" };
 
     for await (const fragment of this.#proc.segments({ signal: this.#signal })) {
 
