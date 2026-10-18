@@ -85,8 +85,8 @@ export interface ProtectCameraHost extends ProtectDeviceContext {
   // dropped - the bare MAC is read through the dedicated mac member above, not this throwing projection.
   readonly ufp: Readonly<WithoutIdentity<ProtectCameraConfig>>;
 
-  // Whether buffer-backed livestreaming is enabled and the camera is capable of it - the streaming demand arm of the standing buffer, read live by the supervisor, the
-  // session-source decision, and the samplerate advertisement.
+  // Whether buffer-backed livestreaming is enabled and the camera is capable of it - the streaming demand arm of the standing buffer, read live by the supervisor and
+  // the session-source decision.
   readonly usesTimeshiftLivestream: boolean;
 
   // The human-readable video codec label for log lines.

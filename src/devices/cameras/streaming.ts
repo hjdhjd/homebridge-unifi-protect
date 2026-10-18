@@ -5,12 +5,12 @@
 import type { AdvertisedStreams, ProtectCamera } from "./camera.ts";
 import type { ChannelProfile, SelectRequest } from "../../media/resolution.ts";
 import { capByPixels, selectChannelProfile } from "../../media/resolution.ts";
+import { controllerCapabilityAppeared, controllerIdentityOf } from "../../media/stream-delegate.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import { PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../../settings.ts";
 import { ProtectDeviceCapability } from "../device-capability.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { StreamingDelegate } from "../../media/stream-delegate.ts";
-import { audioCapabilityAppeared } from "../../media/stream-delegate.ts";
 
 /* The streaming capability composed onto a ProtectCamera: the camera family's whole streaming LIFECYCLE POLICY in one place - when a delegate may be built, when it is
  * rebuilt, when it is torn down, and which channel each consumer selects. The media machinery underneath (ProtectStreamingDelegate and everything it owns) is untouched
@@ -127,11 +127,16 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
     void this.#stream.timeshift?.reconcile();
   }
 
-  // Reconcile the delegate's constructor-frozen audio surface against the controller's live capabilities. The CameraController's two-way audio support and its
-  // recording/streaming sample rates are baked from live-volatile inputs - the speaker-derived two-way audio hint and isDoorbell - so a camera the controller reports
-  // as having a speaker (or as a doorbell) only after adoption carries a controller built for the wrong audio surface, with the talk button baked off until a restart.
-  // This refreshes those hints and rebuilds the controller in place when a frozen audio capability has appeared, single-sourcing the late-doorbell controller rebuild.
-  public reconcileAudioCapabilities(): void {
+  /* Reconcile the delegate's constructor-frozen controller identity against the camera's live capabilities. A CameraController is built from live-volatile camera facts -
+   * every term of its controller identity - so a camera the controller reports a capability for only after adoption carries a controller built for the wrong identity,
+   * with that capability baked off until a restart. This refreshes the speaker-derived hints and rebuilds the controller in place when a frozen term has appeared,
+   * single-sourcing the in-place controller rebuild across every late capability.
+   *
+   * A reading taken while the camera's record does not report it connected is not acted on: the decline sits ahead of the rising edge, and the camera's state observer
+   * re-runs the capability reconcile when the camera connects, which is when a held-back reading lands. The hint refresh runs ahead of the decline, so a speaker the
+   * controller reports while the camera is not connected raises the sticky hint at once and its rebuild applies on connect.
+   */
+  public reconcileControllerCapabilities(): void {
 
     // Additively refresh the speaker-derived hints, mirroring the additive rebuild below: a capability appearing raises the hint (so a deferred first stream build and
     // the runtime talkback path read it), while a transient incomplete-bootstrap drain that reports the speaker absent leaves an established hint untouched - the same
@@ -146,10 +151,16 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
       return;
     }
 
-    // Rebuild the controller in place only when a frozen audio capability has appeared since it was built - the additive-eager, subtractive-conservative rising edge. A
-    // capability reading false (the all-false featureFlags drain a camera delivers on every reconnect, a settled demotion) never rebuilds, so a routine reconnect
-    // never flickers the controller (an HKSV reset and a stream interruption).
-    if(!audioCapabilityAppeared(this.#stream.builtFor, { isDoorbell: this.host.ufp.featureFlags.isDoorbell, twoWayAudio: this.host.hints.twoWayAudio })) {
+    // The camera's record does not report it connected, so the reading waits for the connect re-run rather than rebuilding a controller for a camera that is away.
+    if(!this.host.isOnline) {
+
+      return;
+    }
+
+    // Rebuild the controller in place only when a frozen term has appeared since it was built - the additive-eager, subtractive-conservative rising edge. A term
+    // reading false (the all-false featureFlags drain a camera delivers on every reconnect, a settled withdrawal) never rebuilds, so a routine reconnect never flickers
+    // the controller (an HKSV reset and a stream interruption).
+    if(!controllerCapabilityAppeared(this.#stream.builtFor, controllerIdentityOf(this.host))) {
 
       return;
     }
@@ -157,14 +168,14 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
     this.#rebuild();
   }
 
-  /* Rebuild the delegate and its CameraController in place - the one HAP object the audio reconcile cannot mutate (its audio options, the twoWayAudio/Speaker service,
-   * and the supported-configuration TLVs are constructor-frozen). The teardown's removeController runs synchronously; clearing the field re-opens the create-once gate;
-   * reconcile's create half lands as soon as the host's derivation resolves, so remove-before-configure ordering holds and exactly one removeController plus one
-   * configureController fire here. This is the shipped reclassification semantics - the HKSV factory reset (removeController) and the supported-config hash change -
-   * preserved at exactly this transition. The tail can resolve on a later microtask, since the parent's derivation may await a write-through update, so the create half's
-   * construction gate is what prevents a re-register when the accessory is removed, or controller shutdown begins, inside that window. The re-create rides the host's own
-   * derivation, so each camera view rebuilds from the surface it actually advertises. (It inherits the benign fire-and-forget updateRecordingActive(false) call in
-   * #teardown below, which issues that write without awaiting it.)
+  /* Rebuild the delegate and its CameraController in place - the one HAP object the capability reconcile cannot mutate, since every surface its controller identity
+   * decides is constructor-frozen. The teardown's removeController runs synchronously; clearing the field re-opens the create-once gate; reconcile's create half lands
+   * as soon as the host's derivation resolves, so remove-before-configure ordering holds and exactly one removeController plus one configureController fire here. The
+   * HomeKit consequences of a reclassification - the HKSV factory reset (removeController) and the supported-config hash change - land at exactly this transition. The
+   * tail can resolve on a later microtask, since the parent's derivation may await a write-through update, so the create half's construction gate is what prevents a
+   * re-register when the accessory is removed, or controller shutdown begins, inside that window. The re-create goes through the host's own derivation, so each camera
+   * view rebuilds from the surface it actually advertises, reading every term of its identity live. (It inherits the benign fire-and-forget
+   * updateRecordingActive(false) call in #teardown below, which issues that write without awaiting it.)
    */
   #rebuild(): void {
 
@@ -174,8 +185,8 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
     void this.reconcile();
   }
 
-  // Tear this camera's delegate down and unregister its CameraController. Both cleanup (on deletion) and the audio-capability rebuild tear the delegate down through one
-  // path: HKSV recording off, the live and timeshift consumers shut down (releasing their pool subscriptions), and the controller removed from HomeKit.
+  // Tear this camera's delegate down and unregister its CameraController. Both cleanup (on deletion) and the controller-identity rebuild tear the delegate down through
+  // one path: HKSV recording off, the live and timeshift consumers shut down (releasing their pool subscriptions), and the controller removed from HomeKit.
   #teardown(): void {
 
     // If we've got HomeKit Secure Video enabled and recording, disable it - fire-and-forget, since teardown does not wait on the controller's acknowledgment.

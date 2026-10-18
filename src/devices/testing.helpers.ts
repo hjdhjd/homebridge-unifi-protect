@@ -52,7 +52,8 @@ export interface TestCameraFeatureFlags {
  * @param options - accessDeviceMetadata: seeds the paired Access reader's supportUnlock capability flag for the camera's UniFi Access lock construction tests;
  *                  channels: the typed channel array (reuse the camera.fixtures.ts corpus); featureFlags: per-flag overrides merged over the all-false
  *                  defaults (a doorbell test sets isDoorbell, a package test adds hasPackageCamera); chimeDuration / enableNfc / isDark / lcdMessage: the
- *                  doorbell-adjacent fields its configure paths read; id / mac / name: optional identity overrides; isPairedWithAiPort /
+ *                  doorbell-adjacent fields its configure paths read; id / mac / name: optional identity overrides; isAdoptedByAccessApp: whether UniFi Access
+ *                  has adopted the camera, the term that with the AI Port fields below decides HomeKit Secure Video eligibility (default false); isPairedWithAiPort /
  *                  isThirdPartyCamera: the livestream-API capability pair, overridable so a test can model a third-party camera with no AiPort (both default
  *                  to the first-party camera every other suite assumes); smartDetectSettings: the controller-side smart-detection settings, whose
  *                  enabled-type lists default to mirroring the advertised capability (see below); videoCodec: the codec string (default "h264"), overridable
@@ -61,8 +62,9 @@ export interface TestCameraFeatureFlags {
  * @returns a camera config record the construction path reads as real.
  */
 export function makeCameraConfig(options: { accessDeviceMetadata?: { featureFlags: { supportUnlock: boolean } }; channels: ProtectCameraChannelConfig[];
-  chimeDuration?: number; enableNfc?: boolean; featureFlags?: Partial<TestCameraFeatureFlags>; id?: string; isDark?: boolean; isPairedWithAiPort?: boolean;
-  isThirdPartyCamera?: boolean; lcdMessage?: { duration?: number; resetAt?: Nullable<number>; text?: string; type?: string }; mac?: string; name?: string;
+  chimeDuration?: number; enableNfc?: boolean; featureFlags?: Partial<TestCameraFeatureFlags>; id?: string; isAdoptedByAccessApp?: boolean; isDark?: boolean;
+  isPairedWithAiPort?: boolean; isThirdPartyCamera?: boolean; lcdMessage?: { duration?: number; resetAt?: Nullable<number>; text?: string; type?: string }; mac?: string;
+  name?: string;
   smartDetectSettings?: { audioTypes?: string[]; enableTamperDetection?: boolean; objectTypes?: string[] }; videoCodec?: string; }): ProtectCameraConfig {
 
   const name = options.name ?? "Test Camera";
@@ -94,7 +96,10 @@ export function makeCameraConfig(options: { accessDeviceMetadata?: { featureFlag
     },
     firmwareVersion: "5.0.0",
     id: options.id ?? "test-camera-1",
-    isAdoptedByAccessApp: false,
+
+    // Whether UniFi Access has adopted the camera, overridable so a test can model a first-party camera that cannot back HomeKit Secure Video until Access releases it.
+    // It defaults to the unadopted camera every other suite assumes, and with the AI Port pair below it decides the camera's HKSV eligibility.
+    isAdoptedByAccessApp: options.isAdoptedByAccessApp ?? false,
     isDark: options.isDark ?? false,
 
     // The livestream-API capability pair, overridable so a test can model the one population that cannot reach the API: a third-party camera with no AiPort. Both

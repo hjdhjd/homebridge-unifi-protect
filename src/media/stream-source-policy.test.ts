@@ -1,16 +1,14 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * stream-source-policy.test.ts: Exhaustive red-green coverage of the pure session-source decision and the pure streaming-samplerate helper.
+ * stream-source-policy.test.ts: Exhaustive red-green coverage of the pure session-source decision.
  *
- * Each is a pure function - no `this`, no I/O - so every cell is provable against constructed inputs, the property that makes pure decision modules exhaustively testable
+ * It is a pure function - no `this`, no I/O - so every cell is provable against constructed inputs, the property that makes pure decision modules exhaustively testable
  * in a way `this`-bound logic is not. The session-source table walks the seed, the A/B test flip, the recording-demand overrides, and the buffer-liveness fallback across
- * the codec and package axes; the samplerate table walks the doorbell and capability axes.
+ * the codec and package axes.
  */
 import { describe, test } from "node:test";
-import { AudioStreamingSamplerate } from "homebridge-plugin-utils";
 import assert from "node:assert/strict";
 import { resolveSessionSource } from "./stream-source-policy.ts";
-import { streamingSamplerates } from "./stream-delegate.ts";
 
 // The neutral session-source input: buffer-backed livestreaming off, no recording, buffer down, a plain camera on H.264 that can reach the livestream API and has an
 // RTSP-enabled stream to dial, no A/B flip. Each test overrides only the axes it exercises, so the single variable per cell is the input under test. The capability
@@ -173,29 +171,5 @@ describe("resolveSessionSource - the unavailable terminal (the camera cannot rea
   test("no buffer but an RTSP stream on H.264 dials RTSP exactly as it always has", () => {
 
     assert.deepEqual(resolveSessionSource(input({ canUseBuffer: false, usesTimeshiftLivestream: false })), { kick: false, source: "rtsp" });
-  });
-});
-
-describe("streamingSamplerates - the doorbell and capability axes", () => {
-
-  test("a doorbell advertises both 16 and 24 kHz in every population", () => {
-
-    assert.deepEqual(streamingSamplerates({ canUseLivestreamApi: true, isDoorbell: true }),
-      [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ]);
-    assert.deepEqual(streamingSamplerates({ canUseLivestreamApi: false, isDoorbell: true }),
-      [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ]);
-  });
-
-  // The capability, not the user's transport preference, is what decides: a camera that can reach the livestream API may serve any given session from the 16 kHz buffer
-  // track whatever the toggle says, so it advertises only what every one of its sessions can actually deliver.
-  test("a non-doorbell that can reach the livestream API advertises just 16 kHz", () => {
-
-    assert.equal(streamingSamplerates({ canUseLivestreamApi: true, isDoorbell: false }), AudioStreamingSamplerate.KHZ_16);
-  });
-
-  test("a non-doorbell that cannot reach the livestream API is RTSP-served and advertises both 16 and 24 kHz", () => {
-
-    assert.deepEqual(streamingSamplerates({ canUseLivestreamApi: false, isDoorbell: false }),
-      [ AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24 ]);
   });
 });

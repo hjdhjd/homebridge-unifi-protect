@@ -155,7 +155,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       // The plain-camera census: the base observers (name, firmware) plus the camera's narrow observers. A drift here means an extra or missing observer slipped in.
       const store = built.nvr.client.state;
 
-      assert.equal(store.observerCount, 14, "the plain camera wires exactly fourteen observers (the base pair plus the camera's twelve)");
+      assert.equal(store.observerCount, 15, "the plain camera wires exactly fifteen observers (the base pair plus the camera's thirteen)");
 
       // The videoCodec reaction is identical to the (already-netted) channels reaction: both drive the streaming reconcile. Its only observable output is the WAKE KEY
       // re-derive side effect (the factory is not invoked again), so a one-shot wake subscription windows the single push and the create-call count proves the re-run
@@ -399,7 +399,8 @@ describe("camera-family observer reactions and bound read handlers (camera-react
   /* The camera details across controller registrations. The accessory double records a controller's registration and removal and touches no service, where hap-nodejs
    * removes the CameraOperatingMode service with its controller and, when a controller with a recording arm registers on an accessory that carries none, builds a fresh
    * one with neither the status indicator nor night vision. Each row mirrors that on its own accessory before construction, so a registration hands the camera the
-   * service a live one would. Every camera these rows register a controller for is HomeKit Secure Video capable, so its controller carries a recording arm.
+   * service a live one would. The mirror builds a fresh service on every registration, recording arm or not, which is exactly what the controls' gate needs to rule on:
+   * a camera that cannot back HomeKit Secure Video gets the service with no camera-details control, and one that can gets each control its hardware reports.
    */
   describe("the camera details across controller registrations", () => {
 
@@ -476,6 +477,35 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         assert.deepEqual(built.accessory.controllerEvents.slice(churnBaseline).map((event) => event.kind), [ "remove", "configure" ],
           "the late speaker rebuilt the controller once");
+
+        const rebuilt = built.accessory.getService(Service.CameraOperatingMode);
+
+        assert.ok(rebuilt, "the rebuilt controller gave the accessory an operating-mode service");
+        assert.notEqual(rebuilt, initial, "the operating-mode service is the fresh one the rebuild built");
+
+        await assertDetailBound(built, rebuilt, cameraDetail);
+      });
+
+      test("a rebuild for a HomeKit Secure Video gain gives the fresh operating-mode service the " + cameraDetail.label + " control, bound to the camera", async () => {
+
+        // A third-party camera with no AI Port pairing cannot back HomeKit Secure Video, so its first registration's operating-mode service carries neither control.
+        built = await buildCamera({ featureFlags, isThirdPartyCamera: true, seedAccessory: mirrorOperatingMode });
+
+        const initial = built.accessory.getService(Service.CameraOperatingMode);
+
+        assert.ok(initial, "the first registration gave the accessory its operating-mode service");
+        assert.equal(initial.testCharacteristic(cameraDetail.characteristic), false, "the " + cameraDetail.label + " control is absent before the gain");
+
+        const churnBaseline = built.accessory.controllerEvents.length;
+
+        // The camera is paired with an AI Port, which makes it eligible and rebuilds the controller in place: the removal takes the service with it, and the
+        // registration builds a fresh one, which the camera-details gate rules on as eligible.
+        built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { isPairedWithAiPort: true });
+
+        await settle();
+
+        assert.deepEqual(built.accessory.controllerEvents.slice(churnBaseline).map((event) => event.kind), [ "remove", "configure" ],
+          "the gain rebuilt the controller once");
 
         const rebuilt = built.accessory.getService(Service.CameraOperatingMode);
 

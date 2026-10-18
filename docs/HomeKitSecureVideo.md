@@ -38,7 +38,7 @@ HomeKit Secure Video has been a feature in HomeKit since the launch of iOS 13. I
 
 #### Third-Party Cameras and AI Port
 
-Third-party cameras connected to Protect via ONVIF do not have native motion detection exposed through the Protect API, which means HKSV is not available for them by default. However, if you pair a third-party camera with a UniFi AI Port, the AI Port provides the necessary motion detection and smart detection capabilities, enabling full HKSV support for that camera. If a camera is later unpaired from its AI Port, HKSV support will be automatically disabled.
+Third-party cameras connected to Protect via ONVIF do not have native motion detection exposed through the Protect API, which means HKSV is not available for them by default. However, if you pair a third-party camera with a UniFi AI Port, the AI Port provides the necessary motion detection and smart detection capabilities, enabling full HKSV support for that camera. Pairing a camera with an AI Port while HBUP is running enables HKSV support without a restart. If a camera is later unpaired from its AI Port, HBUP logs a warning and its HKSV support is removed the next time HBUP restarts.
 
 #### Interactions With UniFi Protect Smart Motion Detection
 UniFi Protect has its own smart motion detection capabilities that [can be used](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md#motion-sensors-motion-switches-and-push-notifications) with `homebridge-unifi-protect`. When you have smart motion detection enabled and you have HomeKit Secure Video enabled **and** configured in the Home app to record events, `homebridge-unifi-protect` is faced with a dilemma: when do I notify a user of a motion detection event?

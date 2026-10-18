@@ -90,12 +90,12 @@ describe("real doorbell construction (suite A)", () => {
     assert.equal(doorbellService.isPrimary, true, "configureDoorbellService marked the Doorbell service primary");
   });
 
-  test("the doorbell wires eighteen observers - the camera's plain-camera set plus the capability's four - and fires none at construction", () => {
+  test("the doorbell wires nineteen observers - the camera's plain-camera set plus the capability's four - and fires none at construction", () => {
 
     // The census: the base observers (name, firmware) + the camera set (the always-armed isDoorbell observer, the bare-motion lastMotion observer, the
-    // capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer all join the doorbell-attached camera's set) + the capability observers
-    // (lcdMessage, hasPackageCamera, chimeDuration, chimeVolume) = the doorbell's full observer set.
-    assert.equal(store.observerCount, 18, "the eighteen-observer census holds across the capability collapse and the always-armed isDoorbell observer");
+    // capability-reconcile featureFlags observer, the Access-lock supportUnlock observer, and the HomeKit Secure Video eligibility observer all join the
+    // doorbell-attached camera's set) + the capability observers (lcdMessage, hasPackageCamera, chimeDuration, chimeVolume) = the doorbell's full observer set.
+    assert.equal(store.observerCount, 19, "the nineteen-observer census holds across the capability collapse and the always-armed isDoorbell observer");
     assert.equal(constructionWakes, 0, "observers arm against the baseline and stay silent at construction");
   });
 
@@ -291,13 +291,13 @@ describe("doorbell + package camera family construction (suite B)", () => {
       "the HomeKit-visible name carries the suffix");
   });
 
-  test("the family wires but does not fire: eighteen doorbell observers plus four package observers, zero construction wakes", () => {
+  test("the family wires but does not fire: nineteen doorbell observers plus four package observers, zero construction wakes", () => {
 
     // The package census: the inherited base observers (name, firmware) plus its bespoke camera.state availability and package-channel observers - and nothing from the
-    // camera set. The doorbell-attached camera contributes its full observer set (its plain-camera set, now including the always-armed isDoorbell observer, the
-    // bare-motion lastMotion observer, the capability-reconcile featureFlags observer, and the Access-lock supportUnlock observer, plus the capability's own plus the
-    // base observers).
-    assert.equal(store.observerCount, 22, "eighteen doorbell observers plus the package's four");
+    // camera set. The doorbell-attached camera contributes its full observer set (its plain-camera set, including the always-armed isDoorbell observer, the
+    // bare-motion lastMotion observer, the capability-reconcile featureFlags observer, the Access-lock supportUnlock observer, and the HomeKit Secure Video
+    // eligibility observer, plus the capability's own plus the base observers).
+    assert.equal(store.observerCount, 23, "nineteen doorbell observers plus the package's four");
     assert.equal(constructionWakes, 0, "no observer fired during family construction");
   });
 
@@ -391,8 +391,8 @@ describe("doorbell + package camera family construction (suite B)", () => {
     assert.equal(logEntries.filter((entry) => entry.level === "warn").length, warnBaseline, "the within-drain flap raises no withdrawal warning - it self-collapsed");
     assert.ok(doorbell.doorbell, "the doorbell capability survives the flap, never detached");
 
-    // No controller churn: the self-collapse leaves isDoorbell at the value the controller was already built for, so the capability reconcile's audio rebuild sees no
-    // frozen audio capability appeared and skips the in-place controller rebuild - no removeController/configureController fired at the flap.
+    // No controller churn: the self-collapse leaves isDoorbell at the value the controller was already built for, so the capability reconcile's controller-identity
+    // check sees no frozen term appeared and skips the in-place controller rebuild - no removeController/configureController fired at the flap.
     assert.equal(accessory.controllerEvents.length, churnBaseline, "the flap drove zero controller churn - no rebuild");
   });
 

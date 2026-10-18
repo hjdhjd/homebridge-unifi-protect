@@ -23,8 +23,8 @@
  * Co-located with production code under src/ so the type-check pass covers this file alongside everything else, while tsconfig.build.json excludes every *.helpers.ts,
  * *.fixtures.ts, and *.test.ts from the emitted dist/, so none of the rig reaches the published package.
  */
-import type { AudioOptionsIdentity, StreamingDelegate, StreamingDelegateFactory } from "./media/stream-delegate.ts";
 import type { CameraController, CameraControllerOptions, Resolution } from "homebridge";
+import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } from "./media/stream-delegate.ts";
 import type { DeepPartial, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig,
   ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState, ProtectStateRecord, ProtectViewerConfig, StateModelKey,
   StateStore } from "unifi-protect";
@@ -32,6 +32,7 @@ import type { ChannelProfile } from "./media/resolution.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectCameraHost } from "./media/camera-host.ts";
 import type { SnapshotSource } from "./media/timeshift.ts";
+import { controllerIdentityOf } from "./media/stream-delegate.ts";
 import { createStateStore } from "unifi-protect";
 
 // Identity class for a HAP Characteristic kind. Each characteristic kind is its own marker class; production code passes the class as a key to
@@ -1316,6 +1317,13 @@ export class TestStateStore {
     this.store.dispatch({ id, kind: "deviceRemoved", modelKey: "camera" });
   }
 
+  // Add a camera record outright, exactly as the controller's realtime add packet would - the counterpart to removeCameraRecord, so a test can model a record that
+  // vanishes and returns within the removal grace and assert what the camera's observers do across the gap.
+  public addCameraRecord(config: ProtectCameraConfig): void {
+
+    this.store.dispatch({ data: config, id: config.id, kind: "deviceAdded", modelKey: "camera" });
+  }
+
   /* Observe a selector over the state. The real store owns the semantics - lazy registration when iteration begins, a baseline seeded at that moment, an unbounded
    * in-order queue, drain-then-close on abort, and deregistration on every exit path - and this wrapper adds only the count. It repeats the store's own already-aborted
    * check first so the count never moves for an iteration the store declines to register, which keeps observerCount equal to real registration rather than merely
@@ -1519,10 +1527,9 @@ export function makeTimeshiftSupervisorDouble(): TestTimeshiftSupervisor {
  */
 export class TestStreamingDelegate implements StreamingDelegate {
 
-  // The frozen audio-options identity this stub controller was built for, mirroring production's ProtectStreamingDelegate.builtFor so the live capability reconcile's
-  // staleness check (rebuild only when a frozen audio capability has appeared since this.stream.builtFor) exercises against the real value the factory recorded at create
-  // time.
-  public readonly builtFor: AudioOptionsIdentity;
+  // The controller identity this stub controller was built for, mirroring production's ProtectStreamingDelegate.builtFor so the live capability reconcile's staleness
+  // check (rebuild only when a term has appeared since this.stream.builtFor) exercises against the real value the factory recorded at create time.
+  public readonly builtFor: ControllerIdentity;
   public controller: CameraController;
   public readonly ffmpegOptions: StreamingDelegate["ffmpegOptions"];
   // Whether this stub reports the host running its hardware encoder, read through the ffmpegOptions.hardwareEncodes closure. Defaults false, the software-neutral state
@@ -1536,7 +1543,9 @@ export class TestStreamingDelegate implements StreamingDelegate {
   public shutdownCalls = 0;
   public timeshift: StreamingDelegate["timeshift"];
 
-  public constructor(builtFor: AudioOptionsIdentity = { isDoorbell: false, twoWayAudio: false }, maxSourcePixels = Infinity) {
+  // The default identity, which no host stands behind, is the record with every term false: a delegate built for nothing, so any term a test raises is an appearance.
+  public constructor(builtFor: ControllerIdentity = { canUseLivestreamApi: false, hksvCapable: false, isDoorbell: false, twoWayAudio: false },
+    maxSourcePixels = Infinity) {
 
     this.builtFor = builtFor;
 
@@ -1579,26 +1588,27 @@ export class TestStreamingDelegate implements StreamingDelegate {
 }
 
 // The stub StreamingDelegateFactory satisfying the platform's dependency-inversion interface. Records every create call (the camera identity, the resolutions array,
-// and the delegate it returned) so tests can assert the interface was exercised exactly once with exactly the advertised resolutions, then hand back the recorded
-// delegate's sentinel controller for identity assertions. The maxSourcePixels ceiling is forwarded into every delegate it creates - set it before construction to
-// exercise the recording-channel pixel cap with a finite value.
+// the delegate it returned, and whether the accessory carried a MotionSensor service at that moment) so tests can assert the interface was exercised exactly once with
+// exactly the advertised resolutions, prove a motion sensor stood before the controller that captures it was built, and hand back the recorded delegate's sentinel
+// controller for identity assertions. The maxSourcePixels ceiling is forwarded into every delegate it creates - set it before construction to exercise the
+// recording-channel pixel cap with a finite value.
 export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
 
-  public readonly createCalls: { camera: ProtectCameraHost; delegate: TestStreamingDelegate; resolutions: Resolution[] }[] = [];
+  public readonly createCalls: { camera: ProtectCameraHost; delegate: TestStreamingDelegate; motionSensorPresent: boolean; resolutions: Resolution[] }[] = [];
   public maxSourcePixels = Infinity;
 
   public create(camera: ProtectCameraHost, resolutions: Resolution[]): StreamingDelegate {
 
-    // Capture the camera's frozen audio identity - both isDoorbell and the speaker-derived two-way audio hint - exactly as production's ProtectStreamingDelegate
-    // reads them at its own construction. This makes a construction whose capabilities are present yield a delegate already built for the current identity, so the
-    // capability reconcile's staleness check is a no-op (zero controller churn), and only a genuine late capability - a delegate built before it appeared - rebuilds.
-    const delegate = new TestStreamingDelegate({ isDoorbell: camera.ufp.featureFlags.isDoorbell, twoWayAudio: camera.hints.twoWayAudio }, this.maxSourcePixels);
+    // Capture the camera's controller identity through the same derivation production's ProtectStreamingDelegate reads at its own construction. This makes a
+    // construction whose capabilities are present yield a delegate already built for the current identity, so the capability reconcile's staleness check is a no-op
+    // (zero controller churn), and only a genuine late capability - a delegate built before it appeared - rebuilds.
+    const delegate = new TestStreamingDelegate(controllerIdentityOf(camera), this.maxSourcePixels);
 
     // Install the timeshift-supervisor double at create time - before the camera's construction-time activation kick reads it - so the kick and the per-edge availability
     // kicks land on a spy rather than an inert stand-in. Cast at the confined double->production boundary the harness uses throughout.
     delegate.timeshift = makeTimeshiftSupervisorDouble() as unknown as StreamingDelegate["timeshift"];
 
-    this.createCalls.push({ camera, delegate, resolutions });
+    this.createCalls.push({ camera, delegate, motionSensorPresent: camera.accessory.getService(camera.api.hap.Service.MotionSensor) !== undefined, resolutions });
 
     return delegate;
   }

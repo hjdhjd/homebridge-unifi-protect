@@ -18,7 +18,9 @@ import { retry } from "homebridge-plugin-utils";
 // Package camera class. Extends ProtectCamera and represents the secondary camera channel on Protect doorbells that ship with one. The package camera is a HomeKit
 // sub-view of its parent doorbell's shared camera projection, not a Protect device of its own - it is self-observing over that shared projection, deriving its identity
 // and display name from the parent's, while its motion is driven by the parent camera's lastMotion leaf observer (the package has no motion signal of its own, so the
-// parent's bare-motion observe forwards a recording package camera's motion for it).
+// parent's bare-motion observe forwards a recording package camera's motion for it). Its controller follows the parent the same way: the parent's capability reconcile
+// re-checks the package's frozen controller identity in the same pass, so a capability the controller reports late - HomeKit Secure Video eligibility among them -
+// rebuilds the package's controller alongside the parent's.
 export class ProtectCameraPackage extends ProtectCamera {
 
   // Whether the flashlight is currently lit. The literal initializer is safe under ES2024 field-define semantics precisely because it carries no constructor-chain-
@@ -87,15 +89,10 @@ export class ProtectCameraPackage extends ProtectCamera {
     // scope, so the only hint set here is the package-specific probesize floor - package camera streams are sparse enough that FFmpeg needs a deeper probe to lock on.
     this.hints.probesize = 32768;
 
-    // Preserve the persisted user-state keys across the context reset: motion detection always, plus the HKSV-recording switch state when its feature is enabled. The
+    // Preserve the persisted user-state keys across the context reset: motion detection, and no HKSV recording state, since the package builds no recording switch. The
     // values here are the resting defaults; resetAccessoryContext keeps whatever was actually persisted and falls back to these only when nothing was. The
     // seedContextIdentity override below seeds the package's synthetic identity rather than a real MAC.
     const preserved: ProtectPersistedContextState = { detectMotion: true };
-
-    if(this.hasFeature("Video.HKSV.Recording.Switch")) {
-
-      preserved.hksvRecordingDisabled = false;
-    }
 
     this.resetAccessoryContext(preserved);
 

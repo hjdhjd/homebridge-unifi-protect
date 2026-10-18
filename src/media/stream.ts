@@ -4,18 +4,19 @@
  *
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code. Thank you for your contributions to the HomeKit world.
  */
-import type { AudioOptionsIdentity, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
   FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites, StreamRequestTypes,
   VideoCodecType, formatBps, formatErrorMessage, guardedDispatch, isHbpuAbortReason, mqttTopic } from "homebridge-plugin-utils";
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { Clock, HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
+import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_PROBESIZE_OVERRIDE_MAX,
   PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectAbortedError, livestreamAudioSampleRate } from "unifi-protect";
 import { ProtectReservedNames, isPackageCameraContext } from "../types.ts";
 import { canUseLivestreamApi, resolveSessionSource } from "./stream-source-policy.ts";
+import { controllerIdentityOf, streamingSamplerates } from "./stream-delegate.ts";
 import { resolveChannelRequest, resolveTranscodeDecision, resolveVideoEncoding } from "./stream-encode-policy.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
@@ -29,7 +30,6 @@ import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import type { TalkbackSession } from "unifi-protect";
 import { logLivestreamIterationError } from "./livestream.ts";
 import { mqttTopics } from "../mqtt.ts";
-import { streamingSamplerates } from "./stream-delegate.ts";
 
 interface OngoingSessionEntry {
 
@@ -184,10 +184,10 @@ class ProbesizeSelfTune {
 // Camera streaming delegate implementation for Protect.
 export class ProtectStreamingDelegate implements CameraStreamingDelegate, StreamingDelegate {
 
-  // The frozen audio-options identity the CameraController was built for, captured at construction from the same live-volatile inputs the audio options freeze below:
-  // isDoorbell (the recording and streaming sample rates) and the two-way audio hint (the streaming twoWayAudio flag). The live capability reconcile reads this off
-  // this.stream to detect a stale controller (a camera the controller late-reports as a doorbell or as having a speaker) and rebuilds only when a capability appeared.
-  public readonly builtFor: AudioOptionsIdentity;
+  // The controller identity the CameraController was built for, captured at construction through the one derivation the live capability reconcile also reads, from
+  // the same live-volatile camera facts the options below freeze. The reconcile reads this off this.stream to detect a stale controller (a camera the controller
+  // reports a capability for only after adoption) and rebuilds only when a term has appeared.
+  public readonly builtFor: ControllerIdentity;
   public controller: CameraController;
   public readonly ffmpegOptions: FfmpegOptions;
   private readonly hap: HAP;
@@ -209,7 +209,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   // Create an instance of a HomeKit streaming delegate.
   constructor(protectCamera: ProtectCameraHost, resolutions: [number, number, number][]) {
 
-    this.builtFor = { isDoorbell: protectCamera.ufp.featureFlags.isDoorbell, twoWayAudio: protectCamera.hints.twoWayAudio };
+    this.builtFor = controllerIdentityOf(protectCamera);
     this.hap = protectCamera.api.hap;
     this.hksv = null;
     this.log = protectCamera.log;
@@ -338,8 +338,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
               // Protect doorbells and the Opus audio track over RTSP both use a 48 kHz audio sampling rate, which HomeKit doesn't support; the samplerate helper hands
               // HomeKit both 16 and 24 kHz to choose from there (each divides 48 cleanly) and just 16 kHz when the buffer-backed livestream API delivers it. This surface
-              // is constructor-frozen, so the capability is sampled at construction here - which is safe precisely because it is a capability rather than a preference:
-              // a camera's livestream-API reach does not change under it while the delegate stands.
+              // is constructor-frozen, so the capability is sampled at construction here, and livestream-API reach is a term of the controller identity for exactly that
+              // reason: a camera that gains reach while the delegate stands rebuilds it, while a lost reach leaves the delegate as it was built.
               samplerate: streamingSamplerates({ canUseLivestreamApi: canUseLivestreamApi(this.protectCamera.ufp),
                 isDoorbell: this.protectCamera.ufp.featureFlags.isDoorbell }),
               type: AudioStreamingCodecType.AAC_ELD

@@ -5,9 +5,8 @@
  * These abstractions are the dependency-inversion boundary between the camera devices and the concrete, FFmpeg-bound ProtectStreamingDelegate. A camera depends only on
  * the StreamingDelegate surface it reads off this.stream, and constructs its delegate through the StreamingDelegateFactory the platform holds (typed as the abstraction).
  * This keeps the camera free of any direct dependency on the FFmpeg-backed implementation, and lets a test platform substitute a stub factory so construction completes
- * without a real FFmpeg/HAP environment. The imports here are almost entirely type-only by design; the one runtime import is the hap `AudioStreamingSamplerate` enum the
- * pure samplerate helper returns. The runtime exports - the pure audioCapabilityAppeared and streamingSamplerates helpers - pull in only that hap enum, so this module
- * never drags FFmpeg into the dependency graph.
+ * without a real FFmpeg/HAP environment. The imports here are type-only by design except for what the pure helpers below compute with, and each of those is a leaf
+ * that reaches no FFmpeg, so this module never drags FFmpeg into the dependency graph.
  */
 import type { CameraController, Resolution, SnapshotRequest, SnapshotRequestCallback } from "homebridge";
 import type { FfmpegOptions, Nullable } from "homebridge-plugin-utils";
@@ -15,22 +14,43 @@ import { AudioStreamingSamplerate } from "homebridge-plugin-utils";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { ProtectRecordingDelegate } from "./record.ts";
 import type { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
+import { canUseLivestreamApi } from "./stream-source-policy.ts";
 
-// The frozen audio-options inputs a CameraController is built from - the live-volatile capabilities that shape its constructor-frozen audio surface. A camera the
-// controller late-reports as a doorbell, or as having a speaker, carries a controller built for the wrong identity; the live capability reconcile compares the
-// controller's current capabilities against this and rebuilds in place only when one has appeared.
-export interface AudioOptionsIdentity {
+// The identity a CameraController is built for: every live-volatile camera fact its constructor freezes into it. HAP fixes a controller's options at construction, so
+// a camera the controller reports a capability for only after adoption carries a controller built for the wrong identity; the live capability reconcile compares the
+// camera's current identity against this and rebuilds in place only when a term has appeared.
+export interface ControllerIdentity {
 
+  // Whether the camera could reach the livestream API when the controller was built, which decides its streaming sample rates and whether a timeshift supervisor
+  // stands behind it.
+  readonly canUseLivestreamApi: boolean;
+
+  // Whether the camera could back HomeKit Secure Video when the controller was built, which decides its recording arm and its link to the motion sensor.
+  readonly hksvCapable: boolean;
+
+  // Whether the controller was built for a doorbell, which decides its recording and streaming sample rates.
   readonly isDoorbell: boolean;
+
+  // Whether the controller was built with two-way audio, which decides its streaming audio options and its speaker service.
   readonly twoWayAudio: boolean;
 }
 
-// True when current reports a frozen audio capability that built lacked - the additive-eager, subtractive-conservative rising edge over an audio-options identity. A
-// capability appearing (false to true) warrants an in-place controller rebuild; a capability reading false (a transient incomplete-bootstrap drain, a settled demotion)
-// never does, so the symmetric "the identities differ" comparison - which would rebuild on the all-false reconnect drain - is deliberately not what this expresses.
-export function audioCapabilityAppeared(built: AudioOptionsIdentity, current: AudioOptionsIdentity): boolean {
+// True when current carries a term that built lacked - the additive-eager, subtractive-conservative rising edge over a controller identity. A term appearing (false to
+// true) warrants an in-place controller rebuild; a term reading false (a transient incomplete-bootstrap drain, a settled withdrawal) never does, so the symmetric "the
+// identities differ" comparison - which would rebuild on the all-false reconnect drain - is deliberately not what this expresses. The edge runs over the record's own
+// keys, so a term the identity gains joins it with no edit here.
+export function controllerCapabilityAppeared(built: ControllerIdentity, current: ControllerIdentity): boolean {
 
-  return (current.isDoorbell && !built.isDoorbell) || (current.twoWayAudio && !built.twoWayAudio);
+  return (Object.keys(current) as (keyof ControllerIdentity)[]).some((term) => current[term] && !built[term]);
+}
+
+// The one derivation of a controller identity from the camera a controller serves. The production delegate and the test stub both capture their builtFor through it,
+// and the live capability reconcile reads the camera's current identity through it, so the identity a controller is built for and the identity it is checked against
+// are spelled once.
+export function controllerIdentityOf(host: ProtectCameraHost): ControllerIdentity {
+
+  return { canUseLivestreamApi: canUseLivestreamApi(host.ufp), hksvCapable: host.isHksvCapable, isDoorbell: host.ufp.featureFlags.isDoorbell,
+    twoWayAudio: host.hints.twoWayAudio };
 }
 
 // The streaming audio sample rates a camera advertises to HomeKit. This condition deliberately encodes TWO wire facts, so it does not defer to livestreamAudioSampleRate:
@@ -49,11 +69,10 @@ export function streamingSamplerates(input: { canUseLivestreamApi: boolean; isDo
 // implementation is ProtectStreamingDelegate; a test substitutes a stub. Properties are listed alphabetically.
 export interface StreamingDelegate {
 
-  // The frozen audio-options identity the controller was built for - its live-volatile capabilities, doorbell-ness and two-way audio. The CameraController's audio
-  // options, twoWayAudio/Speaker service, and supported-configuration TLVs are constructor-frozen, so a camera the controller late-reports as a doorbell or as having a
-  // speaker carries a controller built for the wrong identity; the live capability reconcile reads this to detect that staleness and rebuilds in place only when a frozen
-  // audio capability has appeared, performing zero controller churn when the delegate was already built for the current identity.
-  readonly builtFor: AudioOptionsIdentity;
+  // The controller identity this delegate's CameraController was built for, captured at construction through controllerIdentityOf. Every surface the identity decides
+  // is constructor-frozen, so the live capability reconcile reads this to tell a controller built for a stale identity from a current one, and rebuilds in place only
+  // when a term has appeared since, performing zero controller churn when the delegate was already built for the current identity.
+  readonly builtFor: ControllerIdentity;
 
   // The HAP CameraController this delegate drives.
   controller: CameraController;
@@ -77,9 +96,9 @@ export interface StreamingDelegate {
   // to reset - so a caller that pairs this with another teardown never needs to track whether it has already run.
   shutdown(): void;
 
-  // The camera's standing-buffer supervision interface: the timeshift supervisor that owns the standing buffer's lifecycle for an HKSV-capable camera, or null when the
-  // camera cannot back HomeKit Secure Video. The controller-disconnect and camera-teardown paths reach through this to shut supervision down terminally, and the
-  // snapshot and livestream paths read the supervised buffer through it.
+  // The camera's standing-buffer supervision interface: the timeshift supervisor that owns the standing buffer's lifecycle for a camera that can reach the livestream
+  // API, or null when the camera cannot. The controller-disconnect and camera-teardown paths reach through this to shut supervision down terminally, and the snapshot
+  // and livestream paths read the supervised buffer through it.
   timeshift: Nullable<ProtectTimeshiftSupervisor>;
 }
 

@@ -674,16 +674,15 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   // per-operation reachability.
   public get isReachable(): boolean {
 
-    // Controller health gates every device at once. Then the device's own online state - read non-throwing through peek() so a vanished record (a device lingering in the
-    // removal grace) reports unreachable rather than throwing, the total form this single availability helper needs to be safe on every path that consults it.
-    if(!this.nvr.client.connection.isHealthy) {
+    return this.nvr.client.connection.isHealthy && this.isOnline;
+  }
 
-      return false;
-    }
+  // The device half of reachability: whether this device's own controller record reports it connected, with no regard to the controller's health. Read non-throwing
+  // through the record, so a vanished record (a device lingering in the removal grace) reports offline rather than throwing, the total form every path that consults
+  // it needs. The camera family's capability reconcile reads it as its connected gate.
+  public get isOnline(): boolean {
 
-    const config = this.device.peek();
-
-    return (config !== undefined) && isDeviceOnline(config);
+    return this.fromRecord(isDeviceOnline, false);
   }
 
   // Spawn this accessory's narrow-selector state observers: one for-await loop per reaction, each yielding only when its watched slice changes by reference, so

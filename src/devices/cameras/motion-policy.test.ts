@@ -1,14 +1,40 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * motion-policy.test.ts: Unit tests for the pure bare-motion delivery policy (shouldDeliverBareMotion) extracted to the importable leaf motion-policy.ts.
+ * motion-policy.test.ts: Unit tests for the pure motion policies (canBackHksv and shouldDeliverBareMotion) extracted to the importable leaf motion-policy.ts.
  *
- * shouldDeliverBareMotion is a pure free function - three camera facts in, a boolean out, no this, no HAP - so the natural coverage is to import the REAL leaf and drive
- * it directly, exactly as chime-volume.test.ts / smart-detect-metadata.test.ts import their pure leaves. Because the policy is a pure leaf type-importing nothing, it is
- * importable by both the camera leaf and this test, so this is real-code coverage of the shipping decision rather than a model that could drift.
+ * Each policy is a pure free function - camera facts in, a boolean out, no this, no HAP - so the natural coverage is to import the REAL leaf and drive it directly,
+ * exactly as chime-volume.test.ts / smart-detect-metadata.test.ts import their pure leaves. Because the policies are a pure leaf type-importing nothing, they are
+ * importable by both the camera leaf and this test, so this is real-code coverage of the shipping decisions rather than a model that could drift.
  */
+import { canBackHksv, shouldDeliverBareMotion } from "./motion-policy.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { shouldDeliverBareMotion } from "./motion-policy.ts";
+
+describe("HomeKit Secure Video eligibility (canBackHksv)", () => {
+
+  test("a first-party camera can back HKSV unless Access has adopted it, and a third-party camera only when paired with an AI Port", () => {
+
+    // The predicate: eligible = (first-party AND not Access-adopted) OR (third-party AND paired with an AI Port). The AI Port term is read only for a third-party camera
+    // and the Access term only for a first-party one, so each half of the table moves on its own term alone.
+    const cases: { expected: boolean; isAdoptedByAccessApp: boolean; isPairedWithAiPort: boolean; isThirdPartyCamera: boolean }[] = [
+
+      { expected: true, isAdoptedByAccessApp: false, isPairedWithAiPort: false, isThirdPartyCamera: false },
+      { expected: true, isAdoptedByAccessApp: false, isPairedWithAiPort: true, isThirdPartyCamera: false },
+      { expected: false, isAdoptedByAccessApp: true, isPairedWithAiPort: false, isThirdPartyCamera: false },
+      { expected: false, isAdoptedByAccessApp: true, isPairedWithAiPort: true, isThirdPartyCamera: false },
+      { expected: false, isAdoptedByAccessApp: false, isPairedWithAiPort: false, isThirdPartyCamera: true },
+      { expected: true, isAdoptedByAccessApp: false, isPairedWithAiPort: true, isThirdPartyCamera: true },
+      { expected: false, isAdoptedByAccessApp: true, isPairedWithAiPort: false, isThirdPartyCamera: true },
+      { expected: true, isAdoptedByAccessApp: true, isPairedWithAiPort: true, isThirdPartyCamera: true }
+    ];
+
+    for(const { expected, isAdoptedByAccessApp, isPairedWithAiPort, isThirdPartyCamera } of cases) {
+
+      assert.equal(canBackHksv({ isAdoptedByAccessApp, isPairedWithAiPort, isThirdPartyCamera }), expected, "isAdoptedByAccessApp=" + String(isAdoptedByAccessApp) +
+        " isPairedWithAiPort=" + String(isPairedWithAiPort) + " isThirdPartyCamera=" + String(isThirdPartyCamera));
+    }
+  });
+});
 
 describe("bare-motion delivery policy (shouldDeliverBareMotion)", () => {
 

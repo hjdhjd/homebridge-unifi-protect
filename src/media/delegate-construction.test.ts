@@ -19,13 +19,13 @@
  */
 import { PROTECT_PROBESIZE_OVERRIDE_MAX, PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS,
   PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
+import { Service, TestCameraController } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectSnapshot } from "./snapshot.ts";
 import { ProtectStreamingDelegate } from "./stream.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
-import { TestCameraController } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import { formatLogEntry } from "homebridge-plugin-utils/testing";
 import { makeTestCameraHost } from "./testing.helpers.ts";
@@ -124,6 +124,28 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
     // The macOS hardware-acceleration nudge is the only warn-level line construction can emit, and it requires a hostSystem beginning with "macOS." - the harness
     // reports a bare "macOS", so it stays silent. A warn here would mean the real FfmpegOptions reached something the stub profile does not model.
     assert.equal(logEntries.filter((entry) => entry.level === "warn").length, 0, "construction warned about nothing");
+  });
+
+  // The capable column of the same construction: a host that can back HKSV gets the recording delegate, the controller options carry the recording arm that delegate
+  // drives, and the controller's motion link is the accessory's own MotionSensor - the service the camera stands up before any controller that links it is built.
+  test("ProtectStreamingDelegate against an HKSV-capable host builds the recording arm and links the accessory's motion sensor", () => {
+
+    const { accessory, controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    const motionSensor = accessory.addService(Service.MotionSensor, "Test Camera");
+
+    host.isHksvCapable = true;
+
+    const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]);
+    const cameraController = stream.controller;
+
+    assert.ok(cameraController instanceof TestCameraController, "the delegate constructed the hap camera controller");
+    assert.ok(stream.hksv instanceof ProtectRecordingDelegate, "a recording delegate constructed for a host that can back HKSV");
+    assert.equal(cameraController.options.recording?.delegate, stream.hksv, "the controller's recording arm is driven by that recording delegate");
+    assert.ok(cameraController.options.recording.options, "the controller's recording arm carries its recording options");
+    assert.equal(cameraController.options.sensors?.motion, motionSensor, "the controller's motion link is the accessory's own motion sensor");
   });
 
   // Shutdown ends this camera's probesize self-tuning along with its streams. The distinguishing assertion is the IMMEDIATE post-shutdown read: a shutdown that leaves

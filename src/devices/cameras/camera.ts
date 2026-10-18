@@ -4,7 +4,7 @@
  */
 import { AudioRecordingCodecType, AudioRecordingSamplerate, capabilityGate, formatErrorMessage, parseValueList, toStartCase,
   validCharacteristic } from "homebridge-plugin-utils";
-import type { Camera, LivestreamSource, SnapshotOptions, TalkbackSession } from "unifi-protect";
+import type { Camera, LivestreamSource, ProtectState, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, Resolution } from "homebridge";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
@@ -12,6 +12,7 @@ import type { ProtectAccessory, ProtectPersistedContextState } from "../../types
 import { ProtectAuthorizationError, deviceSelectors, livestreamAudioSampleRate } from "unifi-protect";
 import { STREAM_QUALITY_TIERS, smartDetectLabel } from "../../options.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl } from "../../media/resolution.ts";
+import { canBackHksv, shouldDeliverBareMotion } from "./motion-policy.ts";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
   parseNightVisionMode } from "./night-vision-policy.ts";
 import type { AmbientLightCapability } from "./ambient-light.ts";
@@ -30,10 +31,9 @@ import type { StreamQualityTier } from "../../options.ts";
 import type { StreamingCapability } from "./streaming.ts";
 import type { StreamingDelegate } from "../../media/stream-delegate.ts";
 import { canUseLivestreamApi } from "../../media/stream-source-policy.ts";
-import { doorbellReconcileAction } from "./doorbell-reconcile-policy.ts";
+import { capabilityReconcileAction } from "./capability-reconcile-policy.ts";
 import { mqttTopics } from "../../mqtt.ts";
 import { resolveLegacySelection } from "../../options-legacy.ts";
-import { shouldDeliverBareMotion } from "./motion-policy.ts";
 
 // The source tag threaded through the capability-reconcile and doorbell-capability methods: "construct" marks establishment (a fresh adoption or a Homebridge
 // restart), "observe" a live reconcile. The establishment-only side effects - the Access lock's SECURED resting stamp, the night vision dimmer's value push and its
@@ -391,16 +391,16 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   }
 
   /* Reconcile this camera's doorbell capability against the controller's live state - the single chokepoint the construction-time arm and the always-armed isDoorbell
-   * observer both route through, driven by the pure doorbellReconcileAction over (hasCapability, isDoorbell). A promotion composes the capability onto the running
-   * instance in place; the one HAP object that cannot change in place (the CameraController) is rebuilt by the streaming capability's audio reconcile, not here, since a
-   * doorbell-ness is one of the frozen audio capabilities that reconcile watches for. The source tag separates the two attach contexts: at
+   * observer both route through, driven by the pure capabilityReconcileAction over (attached, reported). A promotion composes the capability onto the running
+   * instance in place; the one HAP object that cannot change in place (the CameraController) is rebuilt by the streaming capability's controller-identity reconcile,
+   * not here, since doorbell-ness is a term of the controller identity that reconcile watches. The source tag separates the two attach contexts: at
    * construction the normal flow (the pending IIFE building the stream with the now-true flag, the IIFE tail running mute/trigger, configureMqtt registering ring) covers
    * the camera-side wiring, so the construct arm does only the capability compose; a live promotion ("observe") must additionally re-run that camera-side wiring because
    * the construction flow already ran with the flag false.
    */
   private reconcileDoorbellCapability(source: ReconcileSource): void {
 
-    switch(doorbellReconcileAction({ hasCapability: this.doorbell !== null, isDoorbell: this.ufp.featureFlags.isDoorbell })) {
+    switch(capabilityReconcileAction({ attached: this.doorbell !== null, reported: this.ufp.featureFlags.isDoorbell })) {
 
       case "attach":
 
@@ -436,9 +436,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
    * had the flag been true at adoption. The construct arm does only the capability compose: the normal construction flow covers everything else. The observe arm, a
    * promotion of a running plain camera, additionally: re-runs the mute switch and trigger (the construction IIFE tail already ran them while the flag was false, and the
    * Doorbell service now exists); registers the ring-trigger MQTT (a late promotion the construction configureMqtt could not have registered); and narrates the promotion
-   * once. The late-doorbell controller rebuild lives in the streaming capability's audio reconcile, driven by the featureFlags observer, so this method only composes the
-   * capability: an isDoorbell change also wakes that observer, and that reconcile rebuilds the streaming delegate when a frozen audio capability
-   * has appeared (a late doorbell-ness or a late speaker), single-sourcing that rebuild across both late inputs.
+   * once. The late-doorbell controller rebuild lives in the streaming capability's controller-identity reconcile, driven by the featureFlags observer, so this method
+   * only composes the capability: an isDoorbell change also wakes that observer, and that reconcile rebuilds the streaming delegate when a term of its controller
+   * identity has appeared, single-sourcing that rebuild across every late input.
    */
   private attachDoorbellCapability(source: ReconcileSource): void {
 
@@ -523,12 +523,19 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       () => void this.acquireStreaming().reconcile());
 
     // The lifecycle state enum drives independent reactions, so each gets its own observer on the same slice. We watch state because isOnline - and therefore the
-    // device-online half of isReachable - derives from it; the controller-health half is pushed by the NVR connection loop, not observed here. Two reactions ride this
-    // wake: the availability projection, and the reboot-return watch, for which this is the path a camera that comes back on its own takes.
+    // device-online half of isReachable - derives from it; the controller-health half is pushed by the NVR connection loop, not observed here. This wake carries the
+    // availability projection, the reboot-return watch (the path a camera that comes back on its own takes), and, on the connect edge, the capability reconcile.
     this.observeState({ key: "camera.state", selector: state => cam(state)?.state, title: "availability" }, () => {
 
       this.updateAvailability();
       this.#reconcileRebootReturn();
+
+      // The capability reconcile holds back a frozen-capability reading taken while the camera is not connected, so the connect edge is a capability wake: it lands
+      // whatever the controller reported while the camera was away.
+      if(this.isOnline) {
+
+        void this.reconcileCapabilities("observe");
+      }
     });
 
     // The tamper-detection setting governs whether the StatusTampered characteristic exists at all; the tamper occurrence itself is a firehose event the router delivers.
@@ -566,6 +573,35 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // lock.
     this.observeState({ key: "camera.supportUnlock", selector: state => cam(state)?.accessDeviceMetadata?.featureFlags.supportUnlock, title: "Access lock support" },
       () => void this.reconcileCapabilities("observe"));
+
+    /* A camera's HomeKit Secure Video eligibility moves with fields at the top of its record: pairing a third-party camera with an AI Port, or releasing a camera from
+     * UniFi Access, makes it eligible, and the reverse withdraws it. A VALUE selector over the derived eligibility - mirroring the supportUnlock observer above -
+     * dedups to the one boolean, so a refresh bootstrap that replaces the camera record wholesale wakes this only when eligibility itself moved.
+     *
+     * The handler reads live state rather than the yielded value: a flap within one drain collapses to its final reading, and a record that vanishes and returns before
+     * the drain runs raises no false withdrawal from the absent reading in between. A withdrawal is narrated here, once per edge, rather than in the chokepoint's leaf,
+     * because the leaf runs on every unrelated capability wake and would repeat the warning on each; it removes nothing, and what remains until a restart is the
+     * documentation's to state. Every other reading routes through the capability reconcile chokepoint, whose leaf composes a gain in place.
+     */
+    const hksvCapable = (state: ProtectState): boolean | undefined => {
+
+      const config = cam(state);
+
+      return (config === undefined) ? undefined : canBackHksv(config);
+    };
+
+    this.observeState({ key: "camera.hksvCapable", selector: hksvCapable, title: "HomeKit Secure Video" }, () => {
+
+      if(this.hksvSupportAction === "report-withdrawn") {
+
+        this.log.warn(this.ufp.isThirdPartyCamera ? "This camera is no longer paired with an AI Port and can no longer support HomeKit Secure Video." :
+          "This camera is now managed by UniFi Access and can no longer support HomeKit Secure Video.");
+
+        return;
+      }
+
+      void this.reconcileCapabilities("observe");
+    });
 
     // Bare motion is a device-state field, not a firehose occurrence: the controller signals a raw motion start by advancing the camera record's lastMotion timestamp, so
     // the camera observes it here exactly like the sensor and light families observe their own motion state. The store seeds this observer's baseline at subscribe and
@@ -1208,14 +1244,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   }
 
   // Reconcile the capability-gated services this camera advertises against the controller's currently-reported capabilities. The single chokepoint that runs once at
-  // adoption AND live whenever a capability-bearing slice changes, so a capability the controller reports only after adoption is reflected without a restart. Today it
-  // reconciles the UniFi Access lock, the night vision dimmer, the smart-detect contact sensors, the ambient light sensor, the tamper-detection characteristic, and the
-  // streaming delegate's frozen audio surface (two-way audio and the doorbell sample rates, rebuilt in place when a late speaker or doorbell-ness appears); the remaining
-  // camera-family capability gates fold in here as they gain their own observers. It is deliberately observeState-free - the capability observers that drive it are
-  // registered once, in spawnCameraObservers. The source separates establishment (construct: a fresh adoption or a Homebridge restart) from a live reconcile (observe),
-  // which the Access lock's resting-state stamp and the night vision dimmer's establishment-only push consume; the smart-detect sensors, the ambient light sensor, the
-  // tamper-detection characteristic, and the streaming-audio reconcile ignore it, each deciding from live state alone. The isDeleted guard mirrors the streaming
-  // delegate's create-half: a being-removed camera must not reconcile against a vanishing record.
+  // adoption AND live whenever a capability-bearing slice changes or the camera connects, so a capability the controller reports only after adoption is reflected
+  // without a restart. It reconciles HomeKit Secure Video eligibility, the UniFi Access lock, the night vision dimmer, the tamper-detection characteristic, the
+  // streaming delegate's frozen controller identity (rebuilt in place when a late capability appears) for this camera and then for its package camera, the smart-detect
+  // contact sensors, and the ambient light sensor. It is deliberately observeState-free - the observers that drive it are registered once, in spawnCameraObservers. The
+  // source separates establishment (construct: a fresh adoption or a Homebridge restart) from a live reconcile (observe), which the Access lock's resting-state stamp
+  // and the night vision dimmer's establishment-only push consume; every other leaf ignores it, each deciding from live state alone. The isDeleted guard mirrors the
+  // streaming delegate's create-half: a being-removed camera must not reconcile against a vanishing record.
   protected async reconcileCapabilities(source: ReconcileSource): Promise<void> {
 
     if(this.isDeleted) {
@@ -1223,13 +1258,21 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       return;
     }
 
+    this.reconcileHksvSupport();
+
     this.configureAccessFeatures(source);
 
     this.configureNightVisionDimmer(source);
 
     this.configureTamperDetection();
 
-    this.acquireStreaming().reconcileAudioCapabilities();
+    this.acquireStreaming().reconcileControllerCapabilities();
+
+    // The package camera follows its parent through this pass rather than observing anything itself: it shares the parent's record, has no featureFlags observer by
+    // design, and already takes its motion from the parent's forward the same way. Re-checking its frozen controller identity here means an eligibility gain, a late
+    // speaker, or a doorbell promotion rebuilds the parent's view and the package's together, and a reading the connected gate held back lands for each on the parent's
+    // connect re-run.
+    this.packageCamera?.streaming?.reconcileControllerCapabilities();
 
     this.reconcileSmartDetectSensors();
 
@@ -1469,6 +1512,41 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.configureCameraDetails();
   }
 
+  /* Compose HomeKit Secure Video support onto this camera when it becomes eligible while the plugin runs - a reconcileCapabilities leaf, so a third-party camera
+   * paired with an AI Port, or a camera released from UniFi Access, gains HKSV without a restart. It runs first in the chokepoint, ahead of the tamper leaf, because
+   * the tamper leaf and the controller each read the motion sensor it creates: the tamper leaf dresses that sensor with StatusTampered in the same pass, and the
+   * controller-identity reconcile further down rebuilds the controller, which captures the sensor as its HKSV motion link at construction.
+   *
+   * The motion sensor's existence is the latch: a camera that already stands one has nothing to gain, so the leaf is safe to run on every wake. It is the additive
+   * half alone - a withdrawn eligibility removes nothing, the subtractive-conservative rule every capability leaf follows - and it narrates no withdrawal, which the
+   * eligibility observer narrates once per edge. A reading taken while the camera is not connected waits for the connect re-run, like every frozen term.
+   */
+  private reconcileHksvSupport(): boolean {
+
+    if(!this.isOnline || (this.hksvSupportAction !== "attach")) {
+
+      return false;
+    }
+
+    // Stand the motion sensor up dressed, then the recording switch and the smart-motion advisory the construction pass runs for an eligible camera.
+    this.configureMotionSensor({ enabled: true, initialized: true });
+    this.configureHksvRecordingSwitch();
+    this.configureHksv();
+
+    this.log.info(this.ufp.isThirdPartyCamera ? "This camera is paired with an AI Port and can now support HomeKit Secure Video." :
+      "This camera is no longer managed by UniFi Access and can now support HomeKit Secure Video.");
+
+    // The gain can make a derivation possible that returned nothing before - a third-party camera with no RTSP-enabled channel streams through the livestream API once
+    // an AI Port gives it reach - so a camera holding no delegate re-runs the streaming reconcile, whose create-once gate builds the first controller with the sensor in
+    // place.
+    if(!this.stream) {
+
+      void this.acquireStreaming().reconcile();
+    }
+
+    return true;
+  }
+
   // Configure HomeKit Secure Video support.
   private configureHksv(): boolean {
 
@@ -1486,9 +1564,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // Configure a switch to manually enable or disable HKSV recording for a camera.
   private configureHksvRecordingSwitch(): boolean {
 
-    // Validate whether we should have this service enabled.
+    // Validate whether we should have this service enabled. The switch exists only for a camera that can back HomeKit Secure Video, since it governs a recording arm
+    // no other camera's controller carries.
     const { service } = this.validService({ name: this.accessoryName + " HKSV Recording", serviceType: this.hap.Service.Switch,
-      subtype: ProtectReservedNames.SWITCH_HKSV_RECORDING, validate: this.hasFeature("Video.HKSV.Recording.Switch") });
+      subtype: ProtectReservedNames.SWITCH_HKSV_RECORDING, validate: this.hasFeature("Video.HKSV.Recording.Switch") && this.isHksvCapable });
 
     if(!service) {
 
@@ -1985,20 +2064,27 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return this.fromRecord((config) => config.videoCodec.replace("h265", "hevc"), "").toUpperCase();
   }
 
-  // Utility property to return whether the camera is HKSV capable or not.
+  // Whether this camera can back HomeKit Secure Video, through the shared eligibility predicate. Read non-throwing through the record (fromRecord), so a camera whose
+  // record has vanished in the removal grace reports false rather than throwing, exactly as usesTimeshiftLivestream does below.
   public get isHksvCapable(): boolean {
 
-    return (!this.ufp.isThirdPartyCamera && !this.ufp.isAdoptedByAccessApp) || (this.ufp.isThirdPartyCamera && this.ufp.isPairedWithAiPort);
+    return this.fromRecord(canBackHksv, false);
+  }
+
+  // The HomeKit Secure Video eligibility reconcile action, read from live state: whether the motion sensor HKSV links to stands on this camera, weighed against the
+  // camera's current eligibility. The eligibility observer and the chokepoint's leaf each act on this one answer.
+  private get hksvSupportAction(): ReturnType<typeof capabilityReconcileAction> {
+
+    return capabilityReconcileAction({ attached: this.accessory.getService(this.hap.Service.MotionSensor) !== undefined, reported: this.isHksvCapable });
   }
 
   // Whether buffer-backed livestreaming is enabled and this camera is capable of it - the streaming demand arm of the standing timeshift buffer. This composes the
-  // user's toggle with the shared livestream-API capability predicate, deliberately not the borrowed isHksvCapable, whose real meaning is motion-event capability for
-  // HomeKit Secure Video. Because it does not exclude Access-adopted Ubiquiti cameras, those cameras join the streaming arm and the toggle does real work for them. The
-  // one remaining provisional corner: a non-AiPort third-party camera stays excluded pending its own livestream-accessibility verification, and canUseLivestreamApi is
-  // the single definition to widen when that is settled. The capability read goes through the record non-throwing (fromRecord), so a camera whose record has vanished in
-  // the removal grace reports false rather than throwing on every consumer that reads it - the reconcile pass, the session-source decision, and the samplerate
-  // advertisement. Evaluated live; the one restart-scoped consumer that samples it at construction (the streaming delegate's samplerate advertisement) is documented at
-  // that call site.
+  // user's toggle with the shared livestream-API capability predicate, deliberately not isHksvCapable, whose meaning is motion-event capability for HomeKit Secure
+  // Video. Because it does not exclude Access-adopted Ubiquiti cameras, those cameras join the streaming arm and the toggle does real work for them. The one remaining
+  // provisional corner: a non-AiPort third-party camera stays excluded pending its own livestream-accessibility verification, and canUseLivestreamApi is the single
+  // definition to widen when that is settled. The capability read goes through the record non-throwing (fromRecord), so a camera whose record has vanished in the
+  // removal grace reports false rather than throwing on every consumer that reads it - the supervisor's reconcile pass, the parent's channel derivation, and the
+  // session-source decision - each of which reads it live.
   public get usesTimeshiftLivestream(): boolean {
 
     return this.hints.tsbStreaming && this.fromRecord(canUseLivestreamApi, false);

@@ -5,8 +5,10 @@
  * the Device.AmbientLightSensor user toggle), the UniFi Access lock (gated on accessDeviceMetadata.featureFlags.supportUnlock plus the UniFi.Access.Lock user toggle),
  * the night vision dimmer (gated on featureFlags.hasInfrared and hasIcrSensitivity plus the Device.NightVision.Dimmer user toggle), tamper detection (gated on
  * featureFlags.hasTamperDetection plus the smartDetectSettings.enableTamperDetection controller setting), two-way audio (gated on featureFlags.hasSpeaker, which
- * rebuilds the streaming controller in place rather than toggling a HomeKit service), and the smart-detect contact sensors (gated on featureFlags.hasSmartDetect plus the
- * Motion.SmartDetect and Motion.SmartDetect.ObjectSensors user toggles, with the controller-reported per-type set reconciling in both directions beneath them).
+ * rebuilds the streaming controller in place rather than toggling a HomeKit service), the smart-detect contact sensors (gated on featureFlags.hasSmartDetect plus the
+ * Motion.SmartDetect and Motion.SmartDetect.ObjectSensors user toggles, with the controller-reported per-type set reconciling in both directions beneath them), and
+ * HomeKit Secure Video eligibility (gated on the record's AI Port pairing and UniFi Access adoption, a gain composing the motion sensor and the recording arm in place
+ * and a withdrawal narrated once), with the package camera's controller following its parent's through the same pass.
  *
  * The suite drives a REAL constructed ProtectCamera against the camera-construction harness doubles (the faithful store, the read-through Camera projection, the stub
  * streaming-delegate factory) and exercises the capability observers and the reconcileCapabilities chokepoint they drive. Each scenario is behavior-FIRST - a
@@ -33,6 +35,7 @@ import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
@@ -1280,7 +1283,7 @@ describe("the camera capability reconcile - two-way audio", () => {
 
       await settle();
 
-      // The featureFlags observer drove reconcileCapabilities, whose streaming-audio reconcile refreshed the hint and rebuilt the controller: exactly one
+      // The featureFlags observer drove reconcileCapabilities, whose controller-identity reconcile refreshed the hint and rebuilt the controller: exactly one
       // removeController then one configureController. Removing that reconcile from reconcileCapabilities leaves this RED - no rebuild fires
       // and builtFor.twoWayAudio stays false.
       const churn = accessory.controllerEvents.slice(churnBaseline);
@@ -1290,6 +1293,54 @@ describe("the camera capability reconcile - two-way audio", () => {
       assert.equal(churn[1]?.kind, "configure", "the second controller event is the configureController");
       assert.equal(camera.stream.builtFor.twoWayAudio, true, "the rebuilt controller is now built for two-way audio");
       assert.equal(camera.hints.twoWayAudio, true, "the two-way audio hint refreshed to true");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a late hasSpeaker reported while the camera is disconnected rebuilds nothing until the camera connects, then rebuilds exactly once (fails without the " +
+    "connected gate, fails without the connect re-run)", async () => {
+
+    // A camera the controller adopts WITHOUT a speaker, so its controller is built with two-way audio off.
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: false } });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { nvr } = buildTestNvr({ store });
+    const accessory = makeTestAccessory("Test Camera", "uuid:two-way-audio-disconnected");
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+
+    await settle();
+
+    try {
+
+      assert.equal(camera.stream?.builtFor.twoWayAudio, false, "the construction-built controller carries two-way audio off");
+
+      // The camera drops off the controller, and while it is away the controller reports its speaker.
+      store.pushCameraPatch(cameraConfig.id, { state: "DISCONNECTED" });
+
+      await settle();
+
+      const churnBaseline = accessory.controllerEvents.length;
+
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasSpeaker: true });
+
+      await settle();
+
+      // The connected gate held the reading back: no controller churn, and the controller is still built without two-way audio. The hint refresh runs ahead of the
+      // gate, so the sticky hint has already risen. Removing the gate rebuilds here -> RED.
+      assert.equal(accessory.controllerEvents.length, churnBaseline, "the speaker reported while the camera is disconnected rebuilt nothing");
+      assert.equal(camera.stream.builtFor.twoWayAudio, false, "the standing controller is still built without two-way audio");
+      assert.equal(camera.hints.twoWayAudio, true, "the two-way audio hint rose ahead of the connected gate");
+
+      // The camera connects. The state observer re-runs the capability reconcile on the connect edge, which lands the held-back reading as exactly one rebuild.
+      // Removing that re-run leaves the controller unbuilt for two-way audio -> RED.
+      store.pushCameraPatch(cameraConfig.id, { state: "CONNECTED" });
+
+      await settle();
+
+      assert.deepEqual(accessory.controllerEvents.slice(churnBaseline).map((event) => event.kind), [ "remove", "configure" ],
+        "the connect rebuilt the controller exactly once, remove then configure");
+      assert.equal(camera.stream.builtFor.twoWayAudio, true, "the rebuilt controller is built for two-way audio");
     } finally {
 
       camera.cleanup();
@@ -1334,7 +1385,7 @@ describe("the camera capability reconcile - two-way audio", () => {
   test("a wholesale all-false featureFlags drain then the real values drives zero controller churn (the empirical reconnect contract, fails on a symmetric " +
     "predicate)", async () => {
 
-    // A doorbell-with-speaker: the controller is built for both frozen audio capabilities. Every offline-to-online re-adopt delivers a wholesale all-false featureFlags
+    // A doorbell-with-speaker: the controller is built for a doorbell with two-way audio. Every offline-to-online re-adopt delivers a wholesale all-false featureFlags
     // drain before the real values land, so the reconcile must not rebuild on the transient false.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: true, isDoorbell: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
@@ -1432,7 +1483,7 @@ describe("the camera capability reconcile - two-way audio", () => {
       }
     });
 
-  test("an unrelated featureFlags change never churns the controller built for its audio identity (routine wake, pinning the additive !built guard)", async () => {
+  test("an unrelated featureFlags change never churns a controller built for the camera's current identity (routine wake, the additive !built guard)", async () => {
 
     // A camera adopted WITH a speaker, already built for two-way audio. An unrelated capability change wakes the featureFlags observer but must not rebuild it.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: true } });
@@ -1454,9 +1505,9 @@ describe("the camera capability reconcile - two-way audio", () => {
 
       await settle();
 
-      // Zero churn: audioCapabilityAppeared reads no rising edge, since both built and current carry two-way audio true. Removing the if(!audioCapabilityAppeared(...))
-      // return guard rebuilds on any wake -> RED; dropping the !built.twoWayAudio term (leaving current.twoWayAudio alone) reads true while built is already true so it
-      // now reads appeared -> rebuild -> RED. This pins the additive !built guard.
+      // Zero churn: controllerCapabilityAppeared reads no rising edge, since built and current carry the same terms. Removing the if(!controllerCapabilityAppeared(...))
+      // return guard rebuilds on any wake -> RED; dropping the !built[term] half (leaving current[term] alone) reads two-way audio as appeared while built already
+      // carries it -> rebuild -> RED. This is the regression assertion for the additive !built guard.
       assert.equal(accessory.controllerEvents.length, churnBaseline, "the unrelated wake drove zero controller churn");
     } finally {
 
@@ -1464,22 +1515,494 @@ describe("the camera capability reconcile - two-way audio", () => {
     }
   });
 
-  /* The package camera's negative control. The audio reconcile is reachable only through reconcileCapabilities, which only the parent camera's observers drive - the
-   * package replaces the camera observer set wholesale and never spawns one. So a speaker appearing on the shared parent record must rebuild the PARENT's controller and
-   * leave the package's completely alone, even though both cameras read the same record and the package's hint bag carries the same twoWayAudio value.
+  /* The package camera follows its parent. The package spawns no capability observer of its own - it replaces the camera observer set wholesale - so the parent's
+   * capability reconcile re-checks the package's frozen controller identity in the same pass. A speaker appearing on the shared parent record therefore rebuilds the
+   * PARENT's controller and the package's together, each exactly once, and the package's rebuilt controller carries the two-way audio its hint bag reads after the push.
    *
-   * The package channel is present in the fixture deliberately: a package with no delegate could not churn its controller no matter what the reconcile did, so a
-   * stream-less package would make this pin pass vacuously. Both delegates exist here, so the package's stillness is a real result.
+   * The package channel is present in the fixture deliberately: a package with no delegate could not rebuild its controller no matter what the reconcile did, so both
+   * delegates exist here and the package's rebuild is a real result.
    */
-  test("a late hasSpeaker rebuilds only the parent's controller - the package camera's audio path stays unreachable", async () => {
+  test("a late hasSpeaker rebuilds the parent's controller and the package camera's together, each exactly once (fails without the parent's package re-check)",
+    async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, hasSpeaker: false, isDoorbell: true } });
-    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { controller, nvr } = buildTestNvr({ store });
-    const accessory = makeTestAccessory("Test Doorbell", "uuid:two-way-audio-package");
-    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+      const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, hasSpeaker: false, isDoorbell: true } });
+      const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+      const { controller, nvr } = buildTestNvr({ store });
+      const accessory = makeTestAccessory("Test Doorbell", "uuid:two-way-audio-package");
+      const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+
+      await settle();
+
+      try {
+
+        const packageAccessory = camera.packageCamera?.accessory as unknown as TestAccessory | undefined;
+
+        assert.ok(packageAccessory, "the package camera was composed");
+
+        // The vacuity guards: the parent and the package each hold a real delegate genuinely built without two-way audio, so the push below is a real transition
+        // for each.
+        assert.ok(camera.stream, "the parent holds a delegate");
+        assert.ok(camera.packageCamera?.stream, "the package holds a delegate");
+        assert.equal(camera.stream.builtFor.twoWayAudio, false, "the parent's controller was built with two-way audio off");
+        assert.equal(camera.packageCamera.stream.builtFor.twoWayAudio, false, "the package's controller was built with two-way audio off");
+
+        const parentBaseline = accessory.controllerEvents.length;
+        const packageBaseline = packageAccessory.controllerEvents.length;
+
+        store.pushCameraFeatureFlags(cameraConfig.id, { hasSpeaker: true });
+
+        await settle();
+
+        // Removing the parent's re-check of the package leaves the package's controller untouched -> RED.
+        assert.deepEqual(accessory.controllerEvents.slice(parentBaseline).map((event) => event.kind), [ "remove", "configure" ],
+          "the parent rebuilt its controller exactly once");
+        assert.deepEqual(packageAccessory.controllerEvents.slice(packageBaseline).map((event) => event.kind), [ "remove", "configure" ],
+          "the package rebuilt its controller exactly once, in the same pass");
+        assert.equal(camera.packageCamera.stream.builtFor.twoWayAudio, true, "the package's rebuilt controller is built for two-way audio");
+      } finally {
+
+        camera.cleanup();
+
+        controller.abort();
+      }
+    });
+});
+
+/* HomeKit Secure Video eligibility observed live. A camera's eligibility moves with fields at the top of its record - a third-party camera's AI Port pairing, a
+ * first-party camera's UniFi Access adoption - and the camera follows it through the eligibility observer and the chokepoint's leaf: a gain stands the motion sensor up
+ * first and then rebuilds the controller once, carrying the recording arm, the motion link, and livestream reach; a withdrawal warns once with its cause and removes
+ * nothing; a reading taken while the camera is not connected waits for the connect; and the package camera follows its parent through the parent's pass.
+ */
+describe("the camera capability reconcile - HomeKit Secure Video eligibility", () => {
+
+  // The gain and withdrawal lines, one per cause: a third-party camera names the AI Port, any other camera names UniFi Access.
+  const AI_PORT_GAIN = "This camera is paired with an AI Port and can now support HomeKit Secure Video.";
+  const ACCESS_GAIN = "This camera is no longer managed by UniFi Access and can now support HomeKit Secure Video.";
+  const AI_PORT_LOSS = "This camera is no longer paired with an AI Port and can no longer support HomeKit Secure Video.";
+  const ACCESS_LOSS = "This camera is now managed by UniFi Access and can no longer support HomeKit Secure Video.";
+
+  // The smart-motion overlap advisory an eligible camera with smart detection enabled logs.
+  const OVERLAP = "Smart motion detection and HomeKit Secure Video provide overlapping functionality.";
+
+  // The handles a row reads: the camera, its accessory, its store, and the harness around it.
+  interface EligibilityCamera {
+
+    accessory: TestAccessory;
+    camera: ProtectCamera;
+    harness: ReturnType<typeof buildTestNvr>;
+    store: TestStateStore;
+  }
+
+  // Build a real camera from a config and settle it. The harness controller is captured by buildTestNvr for the suite's drain.
+  const build = async (options: { cameraConfig: ProtectCameraConfig; mqtt?: boolean; userOptions?: string[] }): Promise<EligibilityCamera> => {
+
+    const store = new TestStateStore(makeProtectState({ cameras: [options.cameraConfig] }));
+    const harness = buildTestNvr({ mqtt: options.mqtt, store, userOptions: options.userOptions });
+    const accessory = makeTestAccessory("Test Camera", "uuid:hksv-eligibility");
+    const camera = construct(harness.nvr, accessory, new TestCameraProjection(options.cameraConfig.id, store));
 
     await settle();
+
+    return { accessory, camera, harness, store };
+  };
+
+  // The count of log lines at one level carrying a fragment, read from a baseline index on so each assertion windows exactly the push it is about.
+  const countLines = (entries: readonly TestLogEntry[], level: TestLogEntry["level"], fragment: string, from = 0): number => {
+
+    return entries.slice(from).filter((entry) => (entry.level === level) && formatLogEntry(entry).includes(fragment)).length;
+  };
+
+  // The controller events an accessory logged from a baseline on, by kind.
+  const churnSince = (accessory: TestAccessory, from: number): string[] => accessory.controllerEvents.slice(from).map((event) => event.kind);
+
+  // The count of motion MQTT registrations of one kind on the default camera's MAC-scoped topic.
+  const motionRegistrations = (harness: EligibilityCamera["harness"], kind: "get" | "set"): number => {
+
+    return harness.mqtt?.subscriptions.filter((subscription) => (subscription.kind === kind) && (subscription.topic === ("74ACB9000001/motion/" + kind))).length ?? 0;
+  };
+
+  // The camera's HKSV recording switch, looked up by its reserved subtype exactly as production acquires it.
+  const recordingSwitch = (accessory: TestAccessory): TestService | undefined => accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_HKSV_RECORDING);
+
+  test("a third-party camera paired with an AI Port while running gains its motion sensor, then one rebuild carrying recording, the motion link, and reach " +
+    "(fails without the leaf, fails with the leaf after the tamper leaf)", async () => {
+
+    // A third-party camera with no AI Port, reporting tamper detection with the setting on. It cannot back HKSV or reach the livestream API, so it constructs with no
+    // motion sensor and a controller built for neither.
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasTamperDetection: true }, isThirdPartyCamera: true,
+      smartDetectSettings: { enableTamperDetection: true } });
+    const { accessory, camera, harness, store } = await build({ cameraConfig, mqtt: true });
+
+    try {
+
+      assert.equal(motionSensor(accessory), undefined, "a camera that cannot back HKSV constructs with no motion sensor");
+      assert.equal(camera.stream?.builtFor.hksvCapable, false, "the construction-built controller is built without HKSV eligibility");
+      assert.equal(camera.stream.builtFor.canUseLivestreamApi, false, "the construction-built controller is built without livestream-API reach");
+      assert.equal(motionRegistrations(harness, "get") + motionRegistrations(harness, "set"), 0, "no motion MQTT is registered without the sensor");
+
+      const churnBaseline = accessory.controllerEvents.length;
+      const createBaseline = harness.factory.createCalls.length;
+      const logBaseline = harness.logEntries.length;
+
+      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
+
+      await settle();
+
+      // The leaf stood the motion sensor up dressed: its resting state, StatusActive from reachability, and its motion MQTT. The leaf runs ahead of the tamper leaf, so
+      // the same pass dressed the new sensor with StatusTampered bound to the camera's tamper latch; moving the leaf after the tamper leaf leaves it absent -> RED.
+      const sensor = motionSensor(accessory);
+
+      assert.ok(sensor, "the gain created the motion sensor");
+      assert.equal(sensor.getCharacteristic(Characteristic.MotionDetected).value, false, "MotionDetected initialized to false");
+      assert.equal(sensor.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive initialized from reachability");
+      assert.equal(motionRegistrations(harness, "get"), 1, "the motion MQTT get registered once");
+      assert.equal(motionRegistrations(harness, "set"), 1, "the motion MQTT set registered once");
+      assert.equal(sensor.testCharacteristic(Characteristic.StatusTampered), true, "the tamper leaf dressed the new sensor with StatusTampered in the same pass");
+
+      camera.isTampered = true;
+
+      assert.equal(await sensor.getCharacteristic(Characteristic.StatusTampered).triggerGet(), true, "StatusTampered is bound to the camera's tamper latch");
+
+      // Then exactly one rebuild, whose controller was built with the sensor already standing and for each risen term.
+      assert.deepEqual(churnSince(accessory, churnBaseline), [ "remove", "configure" ], "the gain rebuilt the controller exactly once, remove then configure");
+      assert.equal(harness.factory.createCalls.length - createBaseline, 1, "exactly one controller was built for the gain");
+      assert.equal(harness.factory.createCalls.at(-1)?.motionSensorPresent, true, "the motion sensor stood when the rebuilt controller was built");
+      assert.equal(camera.stream.builtFor.hksvCapable, true, "the rebuilt controller is built for HKSV eligibility");
+      assert.equal(camera.stream.builtFor.canUseLivestreamApi, true, "the rebuilt controller is built for livestream-API reach");
+      assert.equal(countLines(harness.logEntries, "info", AI_PORT_GAIN, logBaseline), 1, "exactly one info line names the AI Port gain");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a first-party camera released from UniFi Access gains its motion sensor and one rebuild, naming Access", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isAdoptedByAccessApp: true });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      assert.equal(motionSensor(accessory), undefined, "an Access-adopted camera constructs with no motion sensor");
+      assert.equal(camera.stream?.builtFor.hksvCapable, false, "the construction-built controller is built without HKSV eligibility");
+
+      const churnBaseline = accessory.controllerEvents.length;
+      const logBaseline = harness.logEntries.length;
+
+      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+
+      await settle();
+
+      assert.ok(motionSensor(accessory), "the release created the motion sensor");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [ "remove", "configure" ], "the release rebuilt the controller exactly once, remove then configure");
+      assert.equal(camera.stream.builtFor.hksvCapable, true, "the rebuilt controller is built for HKSV eligibility");
+      assert.equal(countLines(harness.logEntries, "info", ACCESS_GAIN, logBaseline), 1, "exactly one info line names the Access release");
+      assert.equal(countLines(harness.logEntries, "info", AI_PORT_GAIN, logBaseline), 0, "no line names an AI Port");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a release taken while the camera is disconnected creates nothing and rebuilds nothing until the camera connects (fails without the connected gate, " +
+    "fails without the connect re-run)", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isAdoptedByAccessApp: true });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      store.pushCameraPatch(cameraConfig.id, { state: "DISCONNECTED" });
+
+      await settle();
+
+      const churnBaseline = accessory.controllerEvents.length;
+      const logBaseline = harness.logEntries.length;
+
+      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+
+      await settle();
+
+      assert.equal(motionSensor(accessory), undefined, "the release read while disconnected created no motion sensor");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [], "the release read while disconnected rebuilt nothing");
+      assert.equal(countLines(harness.logEntries, "info", ACCESS_GAIN, logBaseline), 0, "no gain is narrated while the camera is away");
+
+      store.pushCameraPatch(cameraConfig.id, { state: "CONNECTED" });
+
+      await settle();
+
+      assert.ok(motionSensor(accessory), "the connect landed the gain's motion sensor");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [ "remove", "configure" ], "the connect landed exactly one rebuild");
+      assert.equal(camera.stream?.builtFor.hksvCapable, true, "the rebuilt controller is built for HKSV eligibility");
+      assert.equal(countLines(harness.logEntries, "info", ACCESS_GAIN, logBaseline), 1, "the gain is narrated once, on connect");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("an eligibility that comes and goes while the camera is disconnected creates nothing, rebuilds nothing, and warns nothing", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isAdoptedByAccessApp: true });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      store.pushCameraPatch(cameraConfig.id, { state: "DISCONNECTED" });
+
+      await settle();
+
+      const churnBaseline = accessory.controllerEvents.length;
+      const logBaseline = harness.logEntries.length;
+
+      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+
+      await settle();
+
+      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: true });
+
+      await settle();
+
+      store.pushCameraPatch(cameraConfig.id, { state: "CONNECTED" });
+
+      await settle();
+
+      assert.equal(motionSensor(accessory), undefined, "no motion sensor was created");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [], "no controller was rebuilt");
+      assert.equal(countLines(harness.logEntries, "warn", "HomeKit Secure Video", logBaseline), 0, "no withdrawal was warned");
+      assert.equal(countLines(harness.logEntries, "info", "HomeKit Secure Video", logBaseline), 0, "no gain was narrated");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a withdrawal warns once with its cause, removes nothing, and an unrelated chokepoint wake adds no second warning (fails with the warning in the leaf)",
+    async () => {
+
+      const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isPairedWithAiPort: true, isThirdPartyCamera: true });
+      const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+      try {
+
+        const sensor = motionSensor(accessory);
+
+        assert.ok(sensor, "an eligible camera constructs with its motion sensor");
+        assert.equal(camera.stream?.builtFor.hksvCapable, true, "the construction-built controller is built for HKSV eligibility");
+
+        const churnBaseline = accessory.controllerEvents.length;
+        const logBaseline = harness.logEntries.length;
+
+        store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: false });
+
+        await settle();
+
+        assert.equal(countLines(harness.logEntries, "warn", AI_PORT_LOSS, logBaseline), 1, "exactly one warning names the AI Port withdrawal");
+        assert.deepEqual(churnSince(accessory, churnBaseline), [], "the withdrawal fired zero controller events");
+        assert.equal(motionSensor(accessory), sensor, "the motion sensor remains");
+        assert.equal(camera.stream.builtFor.hksvCapable, true, "the standing controller keeps its HKSV eligibility term");
+        assert.equal(camera.stream.builtFor.canUseLivestreamApi, true, "the standing controller keeps its reach term");
+
+        // An unrelated setting change re-runs the chokepoint with no rising edge. The leaf narrates nothing, so the warning stays single; narrating the withdrawal in
+        // the leaf repeats it here -> RED.
+        store.pushCameraPatch(cameraConfig.id, cameraPatch({ smartDetectSettings: { enableTamperDetection: true } }));
+
+        await settle();
+
+        assert.equal(countLines(harness.logEntries, "warn", AI_PORT_LOSS, logBaseline), 1, "the unrelated wake added no second warning");
+        assert.deepEqual(churnSince(accessory, churnBaseline), [], "the unrelated wake fired zero controller events");
+      } finally {
+
+        camera.cleanup();
+      }
+    });
+
+  test("a withdrawn camera made eligible again logs nothing and rebuilds nothing", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isPairedWithAiPort: true, isThirdPartyCamera: true });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: false });
+
+      await settle();
+
+      const churnBaseline = accessory.controllerEvents.length;
+      const logBaseline = harness.logEntries.length;
+
+      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
+
+      await settle();
+
+      assert.equal(harness.logEntries.length, logBaseline, "the regain logged nothing");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [], "the regain rebuilt nothing");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a repeated eligible reading after a gain, and an unrelated wake after it, rebuild nothing and narrate nothing (the sensor is the latch)", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isThirdPartyCamera: true });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
+
+      await settle();
+
+      assert.ok(motionSensor(accessory), "the gain created the motion sensor");
+
+      const churnBaseline = accessory.controllerEvents.length;
+      const logBaseline = harness.logEntries.length;
+
+      // The same reading again, then an unrelated capability that wakes the chokepoint: the standing sensor answers the leaf, so neither does anything.
+      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
+
+      await settle();
+
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasLedStatus: true });
+
+      await settle();
+
+      assert.deepEqual(churnSince(accessory, churnBaseline), [], "nothing rebuilt the controller again");
+      assert.equal(countLines(harness.logEntries, "info", AI_PORT_GAIN, logBaseline), 0, "the gain was not narrated again");
+      assert.equal(accessory.services.filter((service) => service.type === Service.MotionSensor).length, 1, "exactly one motion sensor stands");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a third-party camera with no RTSP channel and no delegate establishes its first controller on the AI Port gain, with the sensor in place", async () => {
+
+    // No channel has RTSP enabled, so the derivation of a camera that cannot reach the livestream API returns nothing and no delegate stands.
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS.map((channel) => ({ ...channel, isRtspEnabled: false })), isThirdPartyCamera: true });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      assert.equal(camera.stream, undefined, "no delegate stands for a camera that can reach neither transport");
+      assert.deepEqual(churnSince(accessory, 0), [], "no controller was ever registered");
+
+      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
+
+      await settle();
+
+      const create = harness.factory.createCalls.at(-1);
+
+      assert.ok(motionSensor(accessory), "the gain created the motion sensor");
+      assert.deepEqual(churnSince(accessory, 0), ["configure"], "the gain established the first controller: one configure and zero remove");
+      assert.ok(create, "the gain built a controller");
+      assert.equal(camera.stream, create.delegate, "the camera holds the delegate the gain built");
+      assert.equal(create.motionSensorPresent, true, "the motion sensor stood when the first controller was built");
+      assert.equal(create.delegate.builtFor.hksvCapable, true, "the first controller is built for HKSV eligibility");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a doorbell promotion and an Access release in one patch compose the doorbell capability and fire exactly two controller events", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isAdoptedByAccessApp: true });
+    const { accessory, camera, store } = await build({ cameraConfig });
+
+    try {
+
+      assert.equal(camera.doorbell, null, "the camera starts plain");
+
+      const churnBaseline = accessory.controllerEvents.length;
+
+      store.pushCameraPatch(cameraConfig.id, cameraPatch({ featureFlags: { isDoorbell: true }, isAdoptedByAccessApp: false }));
+
+      await settle();
+
+      assert.ok(camera.doorbell, "the doorbell capability composed onto the camera");
+      assert.ok(motionSensor(accessory), "the release created the motion sensor");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [ "remove", "configure" ], "the doorbell promotion and the release landed in exactly one rebuild");
+      assert.equal(camera.stream?.builtFor.isDoorbell, true, "the rebuilt controller is built for a doorbell");
+      assert.equal(camera.stream.builtFor.hksvCapable, true, "the rebuilt controller is built for HKSV eligibility");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a doorbell released from Access rebuilds the parent and its package camera once each, and the package says nothing", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, isAdoptedByAccessApp: true });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      const packageAccessory = camera.packageCamera?.accessory as unknown as TestAccessory | undefined;
+
+      assert.ok(packageAccessory, "the package camera was composed");
+      assert.equal(camera.packageCamera?.stream?.builtFor.hksvCapable, false, "the package's controller was built without HKSV eligibility");
+
+      const parentBaseline = accessory.controllerEvents.length;
+      const packageBaseline = packageAccessory.controllerEvents.length;
+      const logBaseline = harness.logEntries.length;
+
+      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+
+      await settle();
+
+      assert.deepEqual(churnSince(accessory, parentBaseline), [ "remove", "configure" ], "the parent rebuilt its controller exactly once");
+      assert.deepEqual(churnSince(packageAccessory, packageBaseline), [ "remove", "configure" ], "the package rebuilt its controller exactly once");
+      assert.equal(camera.packageCamera.stream.builtFor.hksvCapable, true, "the package's rebuilt controller is built for HKSV eligibility");
+      assert.equal(harness.logEntries.slice(logBaseline).filter((entry) => formatLogEntry(entry).includes("Package Camera")).length, 0,
+        "the package camera logged no line of its own");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a camera that cannot back HKSV constructs with no recording switch, even with the switch option on", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isThirdPartyCamera: true });
+    const { accessory, camera } = await build({ cameraConfig, userOptions: ["Enable.Video.HKSV.Recording.Switch"] });
+
+    try {
+
+      assert.equal(recordingSwitch(accessory), undefined, "no recording switch stands for a camera with no recording arm");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("the gain creates the recording switch the option asks for", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isThirdPartyCamera: true });
+    const { accessory, camera, store } = await build({ cameraConfig, userOptions: ["Enable.Video.HKSV.Recording.Switch"] });
+
+    try {
+
+      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
+
+      await settle();
+
+      const service = recordingSwitch(accessory);
+
+      assert.ok(service, "the gain created the recording switch");
+      assert.equal(service.getCharacteristic(Characteristic.On).value, true, "the new switch reads recording enabled");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a doorbell released from Access while disconnected rebuilds neither view until it connects, then each once (fails without the parent's connect " +
+    "re-run reaching the package)", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, isAdoptedByAccessApp: true });
+    const { accessory, camera, store } = await build({ cameraConfig });
 
     try {
 
@@ -1487,27 +2010,157 @@ describe("the camera capability reconcile - two-way audio", () => {
 
       assert.ok(packageAccessory, "the package camera was composed");
 
-      // Both vacuity guards: two real delegates exist, and the parent's was genuinely built without two-way audio, so the push below is a real transition for it.
-      assert.ok(camera.stream, "the parent holds a delegate");
-      assert.ok(camera.packageCamera?.stream, "the package holds a delegate, so it COULD churn if the audio path reached it");
-      assert.equal(camera.stream.builtFor.twoWayAudio, false, "the parent's controller was built with two-way audio off");
+      store.pushCameraPatch(cameraConfig.id, { state: "DISCONNECTED" });
 
-      const packageDelegate = camera.packageCamera.stream;
+      await settle();
+
       const parentBaseline = accessory.controllerEvents.length;
       const packageBaseline = packageAccessory.controllerEvents.length;
+
+      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+
+      await settle();
+
+      assert.deepEqual(churnSince(accessory, parentBaseline), [], "the parent rebuilt nothing while disconnected");
+      assert.deepEqual(churnSince(packageAccessory, packageBaseline), [], "the package rebuilt nothing while disconnected");
+
+      store.pushCameraPatch(cameraConfig.id, { state: "CONNECTED" });
+
+      await settle();
+
+      assert.deepEqual(churnSince(accessory, parentBaseline), [ "remove", "configure" ], "the connect rebuilt the parent exactly once");
+      assert.deepEqual(churnSince(packageAccessory, packageBaseline), [ "remove", "configure" ], "the connect rebuilt the package exactly once");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("the gain on a camera with smart detection enabled logs the overlap advisory exactly once more", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: ["person"] },
+      isAdoptedByAccessApp: true });
+    const { camera, harness, store } = await build({ cameraConfig, userOptions: ["Enable.Motion.SmartDetect"] });
+
+    try {
+
+      const logBaseline = harness.logEntries.length;
+
+      assert.equal(countLines(harness.logEntries, "warn", OVERLAP), 0, "a camera that cannot back HKSV logs no overlap advisory at construction");
+
+      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+
+      await settle();
+
+      assert.equal(countLines(harness.logEntries, "warn", OVERLAP, logBaseline), 1, "the gain logged the overlap advisory exactly once");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a first-party camera Access adopts while running warns once, naming Access", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      const churnBaseline = accessory.controllerEvents.length;
+      const logBaseline = harness.logEntries.length;
+
+      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: true });
+
+      await settle();
+
+      assert.equal(countLines(harness.logEntries, "warn", ACCESS_LOSS, logBaseline), 1, "exactly one warning names the Access adoption");
+      assert.equal(countLines(harness.logEntries, "warn", AI_PORT_LOSS, logBaseline), 0, "no warning names an AI Port");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [], "the withdrawal fired zero controller events");
+      assert.ok(motionSensor(accessory), "the motion sensor remains");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("an eligibility flap within one drain logs nothing and churns nothing (fails when the handler trusts the yielded value)", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      const churnBaseline = accessory.controllerEvents.length;
+      const logBaseline = harness.logEntries.length;
+
+      // Adopted and released before any consumer drains: the observer yields the false and then the true, and each wake reads the live, recovered state.
+      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: true });
+      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+
+      await settle();
+
+      assert.equal(harness.logEntries.length, logBaseline, "the flap logged nothing");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [], "the flap churned nothing");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a record that vanishes and returns with eligibility unchanged logs nothing and churns nothing", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      const churnBaseline = accessory.controllerEvents.length;
+      const logBaseline = harness.logEntries.length;
+
+      // The record leaves and returns before any consumer drains, so the eligibility observer yields the absent reading and then the eligible one with the record
+      // present at each wake: reading the absent value as a withdrawal would warn here.
+      store.removeCameraRecord(cameraConfig.id);
+
+      // While the record is absent, the eligibility getter reads false through the record rather than throwing, the vanished-record reading the ledger blesses.
+      assert.equal(camera.isHksvCapable, false, "the eligibility getter reads false over the vanished record");
+
+      store.addCameraRecord(cameraConfig);
+
+      await settle();
+
+      assert.equal(harness.logEntries.length, logBaseline, "the vanish and return logged nothing");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [], "the vanish and return churned nothing");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("after a withdrawal, a late speaker rebuilds once from current truth, building no recording arm, with no further warning", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isPairedWithAiPort: true, isThirdPartyCamera: true });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: false });
+
+      await settle();
+
+      const churnBaseline = accessory.controllerEvents.length;
+      const logBaseline = harness.logEntries.length;
 
       store.pushCameraFeatureFlags(cameraConfig.id, { hasSpeaker: true });
 
       await settle();
 
-      assert.equal(accessory.controllerEvents.length - parentBaseline, 2, "the parent rebuilt its controller: one remove then one configure");
-      assert.equal(packageAccessory.controllerEvents.length - packageBaseline, 0, "the package camera's controller was never touched");
-      assert.equal(camera.packageCamera.stream, packageDelegate, "the package still holds the very delegate it built - nothing rebuilt it");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [ "remove", "configure" ], "the late speaker rebuilt the controller exactly once");
+      assert.equal(camera.stream?.builtFor.twoWayAudio, true, "the rebuilt controller is built for two-way audio");
+      assert.equal(camera.stream.builtFor.hksvCapable, false, "the rebuilt controller reads eligibility live and is built without it");
+      assert.equal(countLines(harness.logEntries, "warn", "HomeKit Secure Video", logBaseline), 0, "the rebuild warned nothing further");
     } finally {
 
       camera.cleanup();
-
-      controller.abort();
     }
   });
 });
