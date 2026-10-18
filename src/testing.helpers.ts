@@ -1213,6 +1213,16 @@ export class TestStateStore {
     this.patchRecord("camera", id, { featureFlags: flags });
   }
 
+  // Push the controller's drain frame for a camera: every top-level boolean in its featureFlags reads false, with the lists left as they stand, as the controller
+  // delivers the block on a deep re-adopt before the real values follow. The frame derives from the camera's own record, so it covers every flag the record carries.
+  public pushCameraFeatureFlagsDrain(id: string): void {
+
+    const record = this.requirePresent({ id, label: "camera", record: this.snapshot().cameras.get(id) });
+    const drain = Object.fromEntries(Object.entries(record.featureFlags).filter((entry) => typeof entry[1] === "boolean").map((entry) => [ entry[0], false ]));
+
+    this.patchRecord("camera", id, { featureFlags: drain });
+  }
+
   // Push the paired Access reader's supportUnlock capability live. accessDeviceMetadata is OPTIONAL - a camera with no paired reader carries none - and the reducer
   // replaces an absent subtree wholesale while merging a present one key-wise, so this single patch shape serves both the first appearance and a later flip.
   public pushCameraSupportUnlock(id: string, supportUnlock: boolean): void {

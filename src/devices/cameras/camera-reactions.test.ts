@@ -91,13 +91,12 @@ interface CameraDetail {
 // record BEFORE the camera is constructed, so the lastMotion observer seeds its baseline against an already-present value - the bootstrap-hydration case where a value
 // present at subscribe must never fire. seedAccessory, when supplied, runs against the fresh accessory before construction, standing in for the services and context a
 // Homebridge restart restores from the accessory cache. channels, when supplied, stands in for the default channel set, so an empty list defers the first streaming
-// build until a channels push arrives; isThirdPartyCamera marks a third-party camera, which with no AI Port pairing is not HomeKit Secure Video capable.
+// build until a channels push arrives.
 async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { channels?: ProtectCameraConfig["channels"];
   construct?: (nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera) => C; featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>;
-  isThirdPartyCamera?: boolean; seedAccessory?: (accessory: TestAccessory) => void; seedLastMotion?: number; userOptions?: string[]; } = {}): Promise<BuiltCamera<C>> {
+  seedAccessory?: (accessory: TestAccessory) => void; seedLastMotion?: number; userOptions?: string[]; } = {}): Promise<BuiltCamera<C>> {
 
-  const cameraConfig = makeCameraConfig({ channels: options.channels ?? G2_PRO_CHANNELS, ...(options.featureFlags ? { featureFlags: options.featureFlags } : {}),
-    isThirdPartyCamera: options.isThirdPartyCamera });
+  const cameraConfig = makeCameraConfig({ channels: options.channels ?? G2_PRO_CHANNELS, ...(options.featureFlags ? { featureFlags: options.featureFlags } : {}) });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
 
   // Seed a hydrated lastMotion onto the store record before any observer exists, so the observer's baseline at subscribe carries it. No observer is registered yet, so
@@ -488,8 +487,8 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       test("a rebuild for a HomeKit Secure Video gain gives the fresh operating-mode service the " + cameraDetail.label + " control, bound to the camera", async () => {
 
-        // A third-party camera with no AI Port pairing cannot back HomeKit Secure Video, so its first registration's operating-mode service carries neither control.
-        built = await buildCamera({ featureFlags, isThirdPartyCamera: true, seedAccessory: mirrorOperatingMode });
+        // A camera Protect exposes no motion sensor for cannot back HomeKit Secure Video, so its first registration's operating-mode service carries neither control.
+        built = await buildCamera({ featureFlags: { ...featureFlags, hasMotionDetection: false }, seedAccessory: mirrorOperatingMode });
 
         const initial = built.accessory.getService(Service.CameraOperatingMode);
 
@@ -498,9 +497,9 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         const churnBaseline = built.accessory.controllerEvents.length;
 
-        // The camera is paired with an AI Port, which makes it eligible and rebuilds the controller in place: the removal takes the service with it, and the
-        // registration builds a fresh one, which the camera-details gate rules on as eligible.
-        built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { isPairedWithAiPort: true });
+        // Protect starts exposing a motion sensor for the camera, which makes it eligible and rebuilds the controller in place: the removal takes the service with
+        // it, and the registration builds a fresh one, which the camera-details gate rules on as eligible.
+        built.nvr.client.state.pushCameraFeatureFlags(built.cameraConfig.id, { hasMotionDetection: true });
 
         await settle();
 
@@ -544,7 +543,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       // A camera that is not HomeKit Secure Video capable, restored from the accessory cache with the status light and night vision on its operating-mode service, and
       // with its first build deferred. hap-nodejs strips a restored operating-mode service when a controller with no recording arm registers, so only a camera with no
       // controller yet holds one for the gate to rule on.
-      built = await buildCamera({ channels: [], featureFlags, isThirdPartyCamera: true, seedAccessory: (accessory) => {
+      built = await buildCamera({ channels: [], featureFlags: { ...featureFlags, hasMotionDetection: false }, seedAccessory: (accessory) => {
 
         mirrorOperatingMode(accessory);
 

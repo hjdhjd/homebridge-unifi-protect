@@ -9,8 +9,8 @@
  * declines the write - an account without the full management role, or any other failure - the camera narrates a warn and carries on, with its direct-RTSP selection
  * confined to the channels that are actually enabled. There is no failure latch: a later channels wake re-attempts the write.
  *
- * The terminals are pinned independently: a camera reporting no primary channels at all, and a camera that can neither reach the livestream API nor dial a usable RTSP
- * stream - the only population that declines to advertise.
+ * The terminals are asserted independently: a camera reporting no primary channels at all declines to advertise, while a camera with every channel RTSP-disabled, a
+ * third-party camera included, advertises and is served through the livestream API.
  *
  * The exact advertised-list mathematics for the mixed regime are the resolution suite's golden-master concern (resolution.test.ts pins buildAdvertisedProfiles over
  * MIXED_RTSP_DISABLED_CHANNELS); this net asserts the device wiring - which arm ran, the exact PATCH payload, the narration, whether the delegate stood up, and which
@@ -74,14 +74,13 @@ interface BuiltCamera {
 
 /* Build a REAL plain ProtectCamera against the doubles, exactly as the sibling camera suites assemble it, with the additions this net needs: an optional updateRejection
  * installed on the projection BEFORE construction so the construction-time enable write drives the failure arm, the feature-option strings that decide whether the
- * configuration needs RTSP at all, and the livestream-API capability pair that selects the population. The casts are confined to this constructor call - the instance is
- * the production ProtectCamera and everything it runs is the production path.
+ * configuration needs RTSP at all, and the third-party marker, so a row can show that a third-party camera follows the same rule as every other camera. The casts are
+ * confined to this constructor call - the instance is the production ProtectCamera and everything it runs is the production path.
  */
-async function buildCamera(options: { channels: ProtectCameraConfig["channels"]; isPairedWithAiPort?: boolean; isThirdPartyCamera?: boolean; updateRejection?: Error;
+async function buildCamera(options: { channels: ProtectCameraConfig["channels"]; isThirdPartyCamera?: boolean; updateRejection?: Error;
   userOptions?: string[]; }): Promise<BuiltCamera> {
 
-  const cameraConfig = makeCameraConfig({ channels: options.channels, isPairedWithAiPort: options.isPairedWithAiPort,
-    isThirdPartyCamera: options.isThirdPartyCamera });
+  const cameraConfig = makeCameraConfig({ channels: options.channels, isThirdPartyCamera: options.isThirdPartyCamera });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
   const { controller, factory, logEntries, nvr } = makeTestNvr({ store, userOptions: options.userOptions });
   const projection = new TestCameraProjection(cameraConfig.id, store);

@@ -12,26 +12,19 @@ import assert from "node:assert/strict";
 
 describe("HomeKit Secure Video eligibility (canBackHksv)", () => {
 
-  test("a first-party camera can back HKSV unless Access has adopted it, and a third-party camera only when paired with an AI Port", () => {
+  test("a camera can back HKSV exactly when Protect exposes a motion sensor for it", () => {
 
-    // The predicate: eligible = (first-party AND not Access-adopted) OR (third-party AND paired with an AI Port). The AI Port term is read only for a third-party camera
-    // and the Access term only for a first-party one, so each half of the table moves on its own term alone.
-    const cases: { expected: boolean; isAdoptedByAccessApp: boolean; isPairedWithAiPort: boolean; isThirdPartyCamera: boolean }[] = [
+    // The predicate is the controller's motion report alone: a camera Protect exposes a motion sensor for can back HKSV, and one it exposes none for cannot, whatever
+    // else the camera reports.
+    const cases: { expected: boolean; hasMotionDetection: boolean }[] = [
 
-      { expected: true, isAdoptedByAccessApp: false, isPairedWithAiPort: false, isThirdPartyCamera: false },
-      { expected: true, isAdoptedByAccessApp: false, isPairedWithAiPort: true, isThirdPartyCamera: false },
-      { expected: false, isAdoptedByAccessApp: true, isPairedWithAiPort: false, isThirdPartyCamera: false },
-      { expected: false, isAdoptedByAccessApp: true, isPairedWithAiPort: true, isThirdPartyCamera: false },
-      { expected: false, isAdoptedByAccessApp: false, isPairedWithAiPort: false, isThirdPartyCamera: true },
-      { expected: true, isAdoptedByAccessApp: false, isPairedWithAiPort: true, isThirdPartyCamera: true },
-      { expected: false, isAdoptedByAccessApp: true, isPairedWithAiPort: false, isThirdPartyCamera: true },
-      { expected: true, isAdoptedByAccessApp: true, isPairedWithAiPort: true, isThirdPartyCamera: true }
+      { expected: true, hasMotionDetection: true },
+      { expected: false, hasMotionDetection: false }
     ];
 
-    for(const { expected, isAdoptedByAccessApp, isPairedWithAiPort, isThirdPartyCamera } of cases) {
+    for(const { expected, hasMotionDetection } of cases) {
 
-      assert.equal(canBackHksv({ isAdoptedByAccessApp, isPairedWithAiPort, isThirdPartyCamera }), expected, "isAdoptedByAccessApp=" + String(isAdoptedByAccessApp) +
-        " isPairedWithAiPort=" + String(isPairedWithAiPort) + " isThirdPartyCamera=" + String(isThirdPartyCamera));
+      assert.equal(canBackHksv({ featureFlags: { hasMotionDetection } }), expected, "hasMotionDetection=" + String(hasMotionDetection));
     }
   });
 });

@@ -28,6 +28,7 @@ import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
+import { ProtectReservedNames } from "../../types.ts";
 import type { Resolution } from "homebridge";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
@@ -415,4 +416,43 @@ describe("the RTSP debug livestream", () => {
 
     controller.abort();
   });
+});
+
+/* The construction-time HomeKit Secure Video surface follows the controller's motion report and nothing else. A camera Protect exposes a motion sensor for constructs
+ * with its motion sensor, the recording switch its option asks for, and a controller built with the recording arm; a camera it exposes none for constructs with none
+ * of the three, and smart detection on its own changes nothing, since smart detection is the smart-detection features' concern.
+ */
+describe("the construction-time HomeKit Secure Video surface", () => {
+
+  const cases: { expected: boolean; featureFlags: Partial<ProtectCameraConfig["featureFlags"]>; label: string }[] = [
+
+    { expected: false, featureFlags: { hasMotionDetection: false }, label: "a camera Protect exposes no motion sensor for" },
+    { expected: true, featureFlags: { hasMotionDetection: true }, label: "a camera Protect exposes a motion sensor for" },
+    { expected: false, featureFlags: { hasMotionDetection: false, hasSmartDetect: true, smartDetectTypes: ["person"] },
+      label: "a camera reporting smart detection without a motion sensor" }
+  ];
+
+  for(const { expected, featureFlags, label } of cases) {
+
+    test(label + (expected ? " carries" : " carries none of") + " the motion sensor, the recording switch, and the recording arm", async () => {
+
+      const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags });
+      const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+      const { controller, nvr } = makeTestNvr({ store, userOptions: ["Enable.Video.HKSV.Recording.Switch"] });
+      const accessory = makeTestAccessory("HKSV Surface Camera", "55555555-6666-7777-8888-999999999999");
+      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory,
+        new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+
+      await settle();
+
+      assert.ok(camera.stream, "the camera built its controller, so the recording arm's presence is a real reading");
+      assert.equal(accessory.getService(Service.MotionSensor) !== undefined, expected, "the motion sensor's presence follows the motion report");
+      assert.equal(accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_HKSV_RECORDING) !== undefined, expected,
+        "the recording switch the option asks for follows the motion report");
+      assert.equal(camera.stream.builtFor.hksvCapable, expected, "the controller's recording arm follows the motion report");
+
+      camera.cleanup();
+      controller.abort();
+    });
+  }
 });

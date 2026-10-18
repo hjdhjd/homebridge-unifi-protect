@@ -318,12 +318,6 @@ const validOption = (device, option) => {
     return false;
   }
 
-  // Test for the explicit exclusion of a property if it's true.
-  if(device && option.meta?.isNotProperty?.some(x => device[x] === true)) {
-
-    return false;
-  }
-
   // Test for device class-specific features and properties.
   switch(device?.modelKey) {
 
@@ -373,12 +367,6 @@ const validOptionCategory = (device, category) => {
 
   // Only show device categories we're explicitly interested in.
   if(!category.meta?.modelKey?.some(model => [ "all", device.modelKey ].includes(model))) {
-
-    return false;
-  }
-
-  // Test for the explicit exclusion of a property if it's true.
-  if(category.meta?.isNotProperty?.some(x => device[x] === true)) {
 
     return false;
   }

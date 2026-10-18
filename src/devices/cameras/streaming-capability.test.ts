@@ -293,12 +293,10 @@ describe("the derivation's recording-audio probe", () => {
   // A real camera under the given options, its construction started but not settled, so a row can land an event before the derivation finishes, plus the handles the
   // rows read. The configure hook runs before construction, with the accessory, so a row can seed what a restart restores from the accessory cache.
   function constructCamera(options: { configure?: (projection: TestCameraProjection, nvr: TestProtectNvr, accessory: TestAccessory) => void;
-    featureFlags?: Partial<TestCameraFeatureFlags>; isAdoptedByAccessApp?: boolean; userOptions?: string[]; } = {}): { accessory: TestAccessory;
-    camera: ProtectCamera; cameraId: string; factory: TestStreamingDelegateFactory; logEntries: readonly TestLogEntry[]; nvr: TestProtectNvr;
-    projection: TestCameraProjection; store: TestStateStore; } {
+    featureFlags?: Partial<TestCameraFeatureFlags>; userOptions?: string[]; } = {}): { accessory: TestAccessory; camera: ProtectCamera; cameraId: string;
+    factory: TestStreamingDelegateFactory; logEntries: readonly TestLogEntry[]; nvr: TestProtectNvr; projection: TestCameraProjection; store: TestStateStore; } {
 
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: options.featureFlags, isAdoptedByAccessApp: options.isAdoptedByAccessApp,
-      name: "Driveway" });
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: options.featureFlags, name: "Driveway" });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { controller, factory, logEntries, nvr } = makeTestNvr({ store, userOptions: options.userOptions });
     const projection = new TestCameraProjection(cameraConfig.id, store);
@@ -363,7 +361,7 @@ describe("the derivation's recording-audio probe", () => {
 
   test("the gate: no probe for a camera that cannot back HomeKit Secure Video, nor for one whose buffer the RTSP-debug adapter feeds", async () => {
 
-    const ineligible = constructCamera({ isAdoptedByAccessApp: true });
+    const ineligible = constructCamera({ featureFlags: { hasMotionDetection: false } });
 
     await settle();
 

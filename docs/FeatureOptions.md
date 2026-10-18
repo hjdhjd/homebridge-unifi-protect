@@ -117,7 +117,7 @@ These option(s) apply to: Protect cameras, Protect lights, and Protect sensors.
 | Option                                     | Description
 |--------------------------------------------|-------------------------------------------------------------
 | <A NAME="Log.Doorbell"></A>`Log.Doorbell`  | Log doorbell ring events in Homebridge. **(default: enabled)**. <BR>*Supported on Protect cameras.*
-| <A NAME="Log.HKSV"></A>`Log.HKSV`          | Log HomeKit Secure Video recording events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect cameras.*
+| <A NAME="Log.HKSV"></A>`Log.HKSV`          | Log HomeKit Secure Video recording events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect cameras that have a motion sensor.*
 | <A NAME="Log.Motion"></A>`Log.Motion`      | Log motion events in Homebridge. **(default: disabled)**. <BR>*Supported on Protect devices that have a motion sensor.*
 | <A NAME="Log.FFmpeg"></A>`Log.FFmpeg`      | Log verbose FFmpeg output in Homebridge. Expect a significant amount of additional logging whenever FFmpeg is active. **(default: disabled)**. <BR>*Supported on Protect cameras.*
 

@@ -15,6 +15,7 @@ import { RECORDING_AUDIO_STAND_IN, describeAudioFormat, livestreamAudioFormat } 
 import { STREAM_QUALITY_TIERS, smartDetectLabel } from "../../options.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl, selectSubstrateChannelFrom } from "../../media/resolution.ts";
 import { canBackHksv, shouldDeliverBareMotion } from "./motion-policy.ts";
+import { capabilityReconcileAction, isFeatureFlagsDrain } from "./capability-reconcile-policy.ts";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
   parseNightVisionMode } from "./night-vision-policy.ts";
 import type { AmbientLightCapability } from "./ambient-light.ts";
@@ -31,7 +32,6 @@ import { ProtectReservedNames } from "../../types.ts";
 import { RtspLivestreamSubscription } from "../../media/livestream.ts";
 import type { StreamQualityTier } from "../../options.ts";
 import type { StreamingCapability } from "./streaming.ts";
-import { capabilityReconcileAction } from "./capability-reconcile-policy.ts";
 import { mqttTopics } from "../../mqtt.ts";
 import { resolveLegacySelection } from "../../options-legacy.ts";
 
@@ -441,9 +441,16 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       case "report-withdrawn":
 
+        // The controller's drain frame reads the doorbell false alongside every other flag, so an all-false block is no reading and narrates nothing. The real values
+        // follow it, and a doorbell they still report resolves to the steady state.
+        if(isFeatureFlagsDrain(this.ufp.featureFlags)) {
+
+          break;
+        }
+
         // Promotion-only: the controller no longer reports this camera as a doorbell, but its doorbell accessories remain until the plugin restarts. We narrate
         // the withdrawal once (a settled demotion; a within-drain flap self-collapses because the reconcile re-reads live state) and remove nothing.
-        this.log.warn("The controller no longer reports this camera as a doorbell; its doorbell accessories remain until UniFi Protect for HomeKit restarts.");
+        this.log.warn("The controller no longer reports this camera as a doorbell; its doorbell accessories remain until HBUP restarts.");
 
         break;
 
@@ -599,34 +606,40 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // The paired UniFi Access reader's unlock capability lives in accessDeviceMetadata, a TOP-LEVEL sibling of the camera's own featureFlags, and can complete AFTER
     // adoption (the reader pairs, or its capability finishes reporting, later). A VALUE selector over the one gating boolean - mirroring the isDoorbell observer above -
-    // routes the change through the same capability reconcile chokepoint, so the lock surfaces live without a restart. A value selector, not a whole-accessDeviceMetadata
-    // selector: the latter would over-fire on every bootstrap refresh that replaces the camera record wholesale, while the value dedups to the one boolean that gates the
-    // lock.
+    // routes the change through the same capability reconcile chokepoint, so the lock surfaces live without a restart. The value is the narrowest slice that answers the
+    // question, and it dedups to the one boolean that gates the lock, so a change anywhere else in accessDeviceMetadata wakes nothing here.
     this.observeState({ key: "camera.supportUnlock", selector: state => cam(state)?.accessDeviceMetadata?.featureFlags.supportUnlock, title: "Access lock support" },
       () => void this.reconcileCapabilities("observe"));
 
-    /* A camera's HomeKit Secure Video eligibility moves with fields at the top of its record: pairing a third-party camera with an AI Port, or releasing a camera from
-     * UniFi Access, makes it eligible, and the reverse withdraws it. A VALUE selector over the derived eligibility - mirroring the supportUnlock observer above -
-     * dedups to the one boolean, so a refresh bootstrap that replaces the camera record wholesale wakes this only when eligibility itself moved.
+    /* A camera's HomeKit Secure Video eligibility is the controller's motion report: Protect states in the camera's featureFlags whether it exposes a motion sensor for
+     * the camera, and the report can arrive or leave while the plugin runs. A VALUE selector over the derived eligibility - mirroring the supportUnlock observer above -
+     * reads the narrowest slice that answers the question and dedups to the one boolean that gates eligibility, so a change to any other flag wakes nothing here.
      *
      * The handler reads live state rather than the yielded value: a flap within one drain collapses to its final reading, and a record that vanishes and returns before
      * the drain runs raises no false withdrawal from the absent reading in between. A withdrawal is narrated here, once per edge, rather than in the chokepoint's leaf,
      * because the leaf runs on every unrelated capability wake and would repeat the warning on each; it removes nothing, and what remains until a restart is the
-     * documentation's to state. Every other reading routes through the capability reconcile chokepoint, whose leaf composes a gain in place.
+     * documentation's to state. The narration screens the controller's drain frame here for the same reason: a deep re-adopt delivers the whole featureFlags block with
+     * every flag false before the real values follow, and that block reads as a withdrawal unless it is recognized as no reading at all. Every other reading routes
+     * through the capability reconcile chokepoint, whose leaf composes a gain in place.
      */
     const hksvCapable = (state: ProtectState): boolean | undefined => {
 
-      const config = cam(state);
+      const featureFlags = cam(state)?.featureFlags;
 
-      return (config === undefined) ? undefined : canBackHksv(config);
+      return (featureFlags === undefined) ? undefined : canBackHksv({ featureFlags });
     };
 
     this.observeState({ key: "camera.hksvCapable", selector: hksvCapable, title: "HomeKit Secure Video" }, () => {
 
       if(this.hksvSupportAction === "report-withdrawn") {
 
-        this.log.warn(this.ufp.isThirdPartyCamera ? "This camera is no longer paired with an AI Port and can no longer support HomeKit Secure Video." :
-          "This camera is now managed by UniFi Access and can no longer support HomeKit Secure Video.");
+        if(isFeatureFlagsDrain(this.ufp.featureFlags)) {
+
+          return;
+        }
+
+        this.log.warn("Protect no longer exposes a motion sensor for this camera. Its motion sensor and HomeKit Secure Video support will remain in HomeKit until " +
+          "HBUP restarts.");
 
         return;
       }
@@ -1621,9 +1634,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.configureCameraDetails();
   }
 
-  /* Compose HomeKit Secure Video support onto this camera when it becomes eligible while the plugin runs - a reconcileCapabilities leaf, so a third-party camera
-   * paired with an AI Port, or a camera released from UniFi Access, gains HKSV without a restart. It runs first in the chokepoint, ahead of the tamper leaf, because
-   * the tamper leaf and the controller each read the motion sensor it creates: the tamper leaf dresses that sensor with StatusTampered in the same pass, and the
+  /* Compose HomeKit Secure Video support onto this camera when it becomes eligible while the plugin runs - a reconcileCapabilities leaf, so a camera Protect starts
+   * exposing a motion sensor for, as its controller reports it, gains HKSV without a restart. It runs first in the chokepoint, ahead of the tamper leaf, because the
+   * tamper leaf and the controller each read the motion sensor it creates: the tamper leaf dresses that sensor with StatusTampered in the same pass, and the
    * controller-identity reconcile further down rebuilds the controller, which captures the sensor as its HKSV motion link at construction.
    *
    * The motion sensor's existence is the latch: a camera that already stands one has nothing to gain, so the leaf is safe to run on every wake. It is the additive
@@ -1642,8 +1655,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.configureHksvRecordingSwitch();
     this.configureHksv();
 
-    this.log.info(this.ufp.isThirdPartyCamera ? "This camera is paired with an AI Port and can now support HomeKit Secure Video." :
-      "This camera is no longer managed by UniFi Access and can now support HomeKit Secure Video.");
+    this.log.info("Protect now exposes a motion sensor for this camera, making HomeKit Secure Video support available.");
 
     return true;
   }
@@ -2165,8 +2177,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return this.fromRecord((config) => config.videoCodec.replace("h265", "hevc"), "").toUpperCase();
   }
 
-  // Whether this camera can back HomeKit Secure Video, through the shared eligibility predicate. Read non-throwing through the record (fromRecord), so a camera whose
-  // record has vanished in the removal grace reports false rather than throwing, exactly as usesTimeshiftLivestream does below.
+  // Whether this camera can back HomeKit Secure Video: the controller's motion report, read through the record by the shared eligibility predicate. Read non-throwing
+  // (fromRecord), so a camera whose record has vanished in the removal grace reports false rather than throwing, exactly as usesTimeshiftLivestream does below.
   public get isHksvCapable(): boolean {
 
     return this.fromRecord(canBackHksv, false);

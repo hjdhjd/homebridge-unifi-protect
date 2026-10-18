@@ -7,8 +7,9 @@
  * featureFlags.hasTamperDetection plus the smartDetectSettings.enableTamperDetection controller setting), two-way audio (gated on featureFlags.hasSpeaker, which
  * rebuilds the streaming controller in place rather than toggling a HomeKit service), the smart-detect contact sensors (gated on featureFlags.hasSmartDetect plus the
  * Motion.SmartDetect and Motion.SmartDetect.ObjectSensors user toggles, with the controller-reported per-type set reconciling in both directions beneath them), and
- * HomeKit Secure Video eligibility (gated on the record's AI Port pairing and UniFi Access adoption, a gain composing the motion sensor and the recording arm in place
- * and a withdrawal narrated once), with the package camera's controller following its parent's through the same pass.
+ * HomeKit Secure Video eligibility (gated on featureFlags.hasMotionDetection, the controller's motion report, a gain composing the motion sensor and the recording arm
+ * in place, a withdrawal narrated once, and the controller's all-false drain frame narrated not at all), with the package camera's controller following its parent's
+ * through the same pass.
  *
  * The suite drives a REAL constructed ProtectCamera against the camera-construction harness doubles (the faithful store, the read-through Camera projection, the stub
  * streaming-delegate factory) and exercises the capability observers and the reconcileCapabilities chokepoint they drive. Each scenario is behavior-FIRST - a
@@ -1382,14 +1383,15 @@ describe("the camera capability reconcile - two-way audio", () => {
     }
   });
 
-  test("a wholesale all-false featureFlags drain then the real values drives zero controller churn (the empirical reconnect contract, fails on a symmetric " +
-    "predicate)", async () => {
+  test("a wholesale all-false featureFlags drain then the real values drives zero controller churn and no warning (the deep re-adopt contract, fails on a " +
+    "symmetric predicate)", async () => {
 
-    // A doorbell-with-speaker: the controller is built for a doorbell with two-way audio. Every offline-to-online re-adopt delivers a wholesale all-false featureFlags
-    // drain before the real values land, so the reconcile must not rebuild on the transient false.
+    // A doorbell-with-speaker: the controller is built for a doorbell with two-way audio, and the camera carries its motion sensor. A deep re-adopt delivers the whole
+    // featureFlags block with every flag false before the real values land, so the reconcile must not rebuild on the transient false, and no narrator may read it as a
+    // withdrawal.
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSpeaker: true, isDoorbell: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { nvr } = buildTestNvr({ store });
+    const { logEntries, nvr } = buildTestNvr({ store });
     const accessory = makeTestAccessory("Test Camera", "uuid:two-way-audio-3");
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
@@ -1399,22 +1401,30 @@ describe("the camera capability reconcile - two-way audio", () => {
 
       assert.equal(camera.stream?.builtFor.isDoorbell, true, "the controller is built for a doorbell");
       assert.equal(camera.stream.builtFor.twoWayAudio, true, "the controller is built for two-way audio");
+      assert.ok(motionSensor(accessory), "the camera carries its motion sensor");
 
       const churnBaseline = accessory.controllerEvents.length;
+      const warnBaseline = logEntries.filter((entry) => entry.level === "warn").length;
 
-      // The reconnect drain: a frame reporting the capabilities false, then the recovery frame restoring the real values.
-      store.pushCameraFeatureFlags(cameraConfig.id, { hasSpeaker: false, isDoorbell: false });
+      // The drain: a frame reporting every flag false, then the recovery frame restoring the real values.
+      store.pushCameraFeatureFlagsDrain(cameraConfig.id);
 
       await settle();
 
-      store.pushCameraFeatureFlags(cameraConfig.id, { hasSpeaker: true, isDoorbell: true });
+      assert.equal(camera.isHksvCapable, false, "the vacuity guard: the drain frame reads the motion report false");
+
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true, hasSpeaker: true, isDoorbell: true });
 
       await settle();
 
       // Zero controller churn across the drain. A symmetric "the identities differ" predicate would rebuild on the all-false frame (current isDoorbell false differs
-      // from built true) AND again on recovery (now built false differs from the restored true) -> four events -> RED. (The isDoorbell-false push also wakes the
-      // settled-demotion warn; we assert only controller churn here.)
-      assert.equal(accessory.controllerEvents.length, churnBaseline, "the all-false reconnect drain and recovery drove zero controller churn");
+      // from built true) AND again on recovery (now built false differs from the restored true) -> four events -> RED.
+      assert.equal(accessory.controllerEvents.length, churnBaseline, "the all-false drain and recovery drove zero controller churn");
+
+      // Zero warnings across the drain: the doorbell and the motion sensor each read the all-false frame as no reading, and each remains.
+      assert.equal(logEntries.filter((entry) => entry.level === "warn").length, warnBaseline, "the all-false drain and recovery warned nothing");
+      assert.ok(camera.doorbell, "the doorbell capability remains");
+      assert.ok(motionSensor(accessory), "the motion sensor remains");
     } finally {
 
       camera.cleanup();
@@ -1568,18 +1578,18 @@ describe("the camera capability reconcile - two-way audio", () => {
     });
 });
 
-/* HomeKit Secure Video eligibility observed live. A camera's eligibility moves with fields at the top of its record - a third-party camera's AI Port pairing, a
- * first-party camera's UniFi Access adoption - and the camera follows it through the eligibility observer and the chokepoint's leaf: a gain stands the motion sensor up
- * first and then rebuilds the controller once, carrying the recording arm, the motion link, and livestream reach; a withdrawal warns once with its cause and removes
- * nothing; a reading taken while the camera is not connected waits for the connect; and the package camera follows its parent through the parent's pass.
+/* HomeKit Secure Video eligibility observed live. A camera's eligibility is the controller's motion report, featureFlags.hasMotionDetection, for a first-party and a
+ * third-party camera alike, and the camera follows it through the eligibility observer and the chokepoint's leaf: a gain stands the motion sensor up first and then
+ * rebuilds the controller once, carrying the recording arm and the motion link; a withdrawal warns once and removes nothing, while the controller's all-false drain
+ * frame warns nothing; a reading taken while the camera is not connected waits for the connect; and the package camera follows its parent through the parent's pass.
+ * Every withdrawal row's camera carries a microphone, so its withdrawal block keeps a true flag and reads as a withdrawal rather than as the drain frame.
  */
 describe("the camera capability reconcile - HomeKit Secure Video eligibility", () => {
 
-  // The gain and withdrawal lines, one per cause: a third-party camera names the AI Port, any other camera names UniFi Access.
-  const AI_PORT_GAIN = "This camera is paired with an AI Port and can now support HomeKit Secure Video.";
-  const ACCESS_GAIN = "This camera is no longer managed by UniFi Access and can now support HomeKit Secure Video.";
-  const AI_PORT_LOSS = "This camera is no longer paired with an AI Port and can no longer support HomeKit Secure Video.";
-  const ACCESS_LOSS = "This camera is now managed by UniFi Access and can no longer support HomeKit Secure Video.";
+  // The gain and withdrawal lines, each naming the controller's motion report, which every camera's eligibility follows alike.
+  const GAIN = "Protect now exposes a motion sensor for this camera, making HomeKit Secure Video support available.";
+  const LOSS = "Protect no longer exposes a motion sensor for this camera. Its motion sensor and HomeKit Secure Video support will remain in HomeKit until " +
+    "HBUP restarts.";
 
   // The smart-motion overlap advisory an eligible camera with smart detection enabled logs.
   const OVERLAP = "Smart motion detection and HomeKit Secure Video provide overlapping functionality.";
@@ -1624,13 +1634,13 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
   // The camera's HKSV recording switch, looked up by its reserved subtype exactly as production acquires it.
   const recordingSwitch = (accessory: TestAccessory): TestService | undefined => accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_HKSV_RECORDING);
 
-  test("a third-party camera paired with an AI Port while running gains its motion sensor, then one rebuild carrying recording and the motion link " +
+  test("a third-party camera Protect starts exposing a motion sensor for gains its motion sensor, then one rebuild carrying recording and the motion link " +
     "(fails without the leaf, fails with the leaf after the tamper leaf)", async () => {
 
-    // A third-party camera with no AI Port, reporting tamper detection with the setting on. It cannot back HKSV, so it constructs with no motion sensor and a
-    // controller built without eligibility.
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasTamperDetection: true }, isThirdPartyCamera: true,
-      smartDetectSettings: { enableTamperDetection: true } });
+    // A third-party camera Protect exposes no motion sensor for, carrying a microphone and reporting tamper detection with the setting on. It cannot back HKSV, so it
+    // constructs with no motion sensor and a controller built without eligibility.
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMic: true, hasMotionDetection: false, hasTamperDetection: true },
+      isThirdPartyCamera: true, smartDetectSettings: { enableTamperDetection: true } });
     const { accessory, camera, harness, store } = await build({ cameraConfig, mqtt: true });
 
     try {
@@ -1643,7 +1653,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       const createBaseline = harness.factory.createCalls.length;
       const logBaseline = harness.logEntries.length;
 
-      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
@@ -1667,45 +1677,44 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       assert.equal(harness.factory.createCalls.length - createBaseline, 1, "exactly one controller was built for the gain");
       assert.equal(harness.factory.createCalls.at(-1)?.motionSensorPresent, true, "the motion sensor stood when the rebuilt controller was built");
       assert.equal(camera.stream.builtFor.hksvCapable, true, "the rebuilt controller is built for HKSV eligibility");
-      assert.equal(countLines(harness.logEntries, "info", AI_PORT_GAIN, logBaseline), 1, "exactly one info line names the AI Port gain");
+      assert.equal(countLines(harness.logEntries, "info", GAIN, logBaseline), 1, "exactly one info line narrates the gain");
     } finally {
 
       camera.cleanup();
     }
   });
 
-  test("a first-party camera released from UniFi Access gains its motion sensor and one rebuild, naming Access", async () => {
+  test("a first-party camera Protect starts exposing a motion sensor for gains its motion sensor and one rebuild, with one gain line", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isAdoptedByAccessApp: true });
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMic: true, hasMotionDetection: false } });
     const { accessory, camera, harness, store } = await build({ cameraConfig });
 
     try {
 
-      assert.equal(motionSensor(accessory), undefined, "an Access-adopted camera constructs with no motion sensor");
+      assert.equal(motionSensor(accessory), undefined, "a camera Protect exposes no motion sensor for constructs with no motion sensor");
       assert.equal(camera.stream?.builtFor.hksvCapable, false, "the construction-built controller is built without HKSV eligibility");
 
       const churnBaseline = accessory.controllerEvents.length;
       const logBaseline = harness.logEntries.length;
 
-      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
-      assert.ok(motionSensor(accessory), "the release created the motion sensor");
-      assert.deepEqual(churnSince(accessory, churnBaseline), [ "remove", "configure" ], "the release rebuilt the controller exactly once, remove then configure");
+      assert.ok(motionSensor(accessory), "the motion report created the motion sensor");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [ "remove", "configure" ], "the motion report rebuilt the controller exactly once, remove then configure");
       assert.equal(camera.stream.builtFor.hksvCapable, true, "the rebuilt controller is built for HKSV eligibility");
-      assert.equal(countLines(harness.logEntries, "info", ACCESS_GAIN, logBaseline), 1, "exactly one info line names the Access release");
-      assert.equal(countLines(harness.logEntries, "info", AI_PORT_GAIN, logBaseline), 0, "no line names an AI Port");
+      assert.equal(countLines(harness.logEntries, "info", GAIN, logBaseline), 1, "exactly one info line narrates the gain");
     } finally {
 
       camera.cleanup();
     }
   });
 
-  test("a release taken while the camera is disconnected creates nothing and rebuilds nothing until the camera connects (fails without the connected gate, " +
+  test("a motion report taken while the camera is disconnected creates nothing and rebuilds nothing until the camera connects (fails without the connected gate, " +
     "fails without the connect re-run)", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isAdoptedByAccessApp: true });
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMic: true, hasMotionDetection: false } });
     const { accessory, camera, harness, store } = await build({ cameraConfig });
 
     try {
@@ -1717,13 +1726,13 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       const churnBaseline = accessory.controllerEvents.length;
       const logBaseline = harness.logEntries.length;
 
-      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
-      assert.equal(motionSensor(accessory), undefined, "the release read while disconnected created no motion sensor");
-      assert.deepEqual(churnSince(accessory, churnBaseline), [], "the release read while disconnected rebuilt nothing");
-      assert.equal(countLines(harness.logEntries, "info", ACCESS_GAIN, logBaseline), 0, "no gain is narrated while the camera is away");
+      assert.equal(motionSensor(accessory), undefined, "the motion report read while disconnected created no motion sensor");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [], "the motion report read while disconnected rebuilt nothing");
+      assert.equal(countLines(harness.logEntries, "info", GAIN, logBaseline), 0, "no gain is narrated while the camera is away");
 
       store.pushCameraPatch(cameraConfig.id, { state: "CONNECTED" });
 
@@ -1732,7 +1741,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       assert.ok(motionSensor(accessory), "the connect landed the gain's motion sensor");
       assert.deepEqual(churnSince(accessory, churnBaseline), [ "remove", "configure" ], "the connect landed exactly one rebuild");
       assert.equal(camera.stream?.builtFor.hksvCapable, true, "the rebuilt controller is built for HKSV eligibility");
-      assert.equal(countLines(harness.logEntries, "info", ACCESS_GAIN, logBaseline), 1, "the gain is narrated once, on connect");
+      assert.equal(countLines(harness.logEntries, "info", GAIN, logBaseline), 1, "the gain is narrated once, on connect");
     } finally {
 
       camera.cleanup();
@@ -1741,7 +1750,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
 
   test("an eligibility that comes and goes while the camera is disconnected creates nothing, rebuilds nothing, and warns nothing", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isAdoptedByAccessApp: true });
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMic: true, hasMotionDetection: false } });
     const { accessory, camera, harness, store } = await build({ cameraConfig });
 
     try {
@@ -1753,11 +1762,11 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       const churnBaseline = accessory.controllerEvents.length;
       const logBaseline = harness.logEntries.length;
 
-      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
-      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: true });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: false });
 
       await settle();
 
@@ -1775,60 +1784,106 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
     }
   });
 
-  test("a withdrawal warns once with its cause, removes nothing, and an unrelated chokepoint wake adds no second warning (fails with the warning in the leaf)",
-    async () => {
+  test("a withdrawal warns once, removes nothing, and an unrelated chokepoint wake adds no second warning (fails with the warning in the leaf)", async () => {
 
-      const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isPairedWithAiPort: true, isThirdPartyCamera: true });
-      const { accessory, camera, harness, store } = await build({ cameraConfig });
-
-      try {
-
-        const sensor = motionSensor(accessory);
-
-        assert.ok(sensor, "an eligible camera constructs with its motion sensor");
-        assert.equal(camera.stream?.builtFor.hksvCapable, true, "the construction-built controller is built for HKSV eligibility");
-
-        const churnBaseline = accessory.controllerEvents.length;
-        const logBaseline = harness.logEntries.length;
-
-        store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: false });
-
-        await settle();
-
-        assert.equal(countLines(harness.logEntries, "warn", AI_PORT_LOSS, logBaseline), 1, "exactly one warning names the AI Port withdrawal");
-        assert.deepEqual(churnSince(accessory, churnBaseline), [], "the withdrawal fired zero controller events");
-        assert.equal(motionSensor(accessory), sensor, "the motion sensor remains");
-        assert.equal(camera.stream.builtFor.hksvCapable, true, "the standing controller keeps its HKSV eligibility term");
-
-        // An unrelated setting change re-runs the chokepoint with no rising edge. The leaf narrates nothing, so the warning stays single; narrating the withdrawal in
-        // the leaf repeats it here -> RED.
-        store.pushCameraPatch(cameraConfig.id, cameraPatch({ smartDetectSettings: { enableTamperDetection: true } }));
-
-        await settle();
-
-        assert.equal(countLines(harness.logEntries, "warn", AI_PORT_LOSS, logBaseline), 1, "the unrelated wake added no second warning");
-        assert.deepEqual(churnSince(accessory, churnBaseline), [], "the unrelated wake fired zero controller events");
-      } finally {
-
-        camera.cleanup();
-      }
-    });
-
-  test("a withdrawn camera made eligible again logs nothing and rebuilds nothing", async () => {
-
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isPairedWithAiPort: true, isThirdPartyCamera: true });
+    // A third-party camera carrying a microphone, so the withdrawal's block keeps a true flag and is a reading rather than the controller's drain frame.
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMic: true }, isThirdPartyCamera: true });
     const { accessory, camera, harness, store } = await build({ cameraConfig });
 
     try {
 
-      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: false });
+      const sensor = motionSensor(accessory);
+
+      assert.ok(sensor, "an eligible camera constructs with its motion sensor");
+      assert.equal(camera.stream?.builtFor.hksvCapable, true, "the construction-built controller is built for HKSV eligibility");
+
+      const churnBaseline = accessory.controllerEvents.length;
+      const logBaseline = harness.logEntries.length;
+
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: false });
+
+      await settle();
+
+      assert.equal(countLines(harness.logEntries, "warn", LOSS, logBaseline), 1, "exactly one warning narrates the withdrawal");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [], "the withdrawal fired zero controller events");
+      assert.equal(motionSensor(accessory), sensor, "the motion sensor remains");
+      assert.equal(camera.stream.builtFor.hksvCapable, true, "the standing controller keeps its HKSV eligibility term");
+
+      // An unrelated setting change re-runs the chokepoint with no rising edge. The leaf narrates nothing, so the warning stays single; narrating the withdrawal in the
+      // leaf repeats it here -> RED.
+      store.pushCameraPatch(cameraConfig.id, cameraPatch({ smartDetectSettings: { enableTamperDetection: true } }));
+
+      await settle();
+
+      assert.equal(countLines(harness.logEntries, "warn", LOSS, logBaseline), 1, "the unrelated wake added no second warning");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [], "the unrelated wake fired zero controller events");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  /* The controller's drain frame against a real withdrawal. A deep re-adopt delivers the whole featureFlags block with every flag false before the real values follow,
+   * and that block reads the motion report false too, so the narrator has to read it as no reading: nothing is logged, removed, or rebuilt. Once the real values land,
+   * a genuine withdrawal - the report false beside a microphone the block still reports - warns exactly once. Removing the guard warns on the drain -> RED; a guard that
+   * skips every false withdrawal stays silent on the real one -> RED.
+   */
+  test("the drain frame logs nothing, removes nothing and churns nothing, while a withdrawal beside a true flag warns once", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMic: true } });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      const sensor = motionSensor(accessory);
+
+      assert.ok(sensor, "an eligible camera constructs with its motion sensor");
+
+      const churnBaseline = accessory.controllerEvents.length;
+      const logBaseline = harness.logEntries.length;
+
+      store.pushCameraFeatureFlagsDrain(cameraConfig.id);
+
+      await settle();
+
+      assert.equal(camera.isHksvCapable, false, "the vacuity guard: the drain frame reads the motion report false");
+      assert.equal(harness.logEntries.length, logBaseline, "the drain frame logged nothing");
+      assert.equal(motionSensor(accessory), sensor, "the motion sensor remains across the drain frame");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [], "the drain frame fired zero controller events");
+
+      // The real values land, then the controller genuinely stops reporting the motion sensor while the microphone stays reported.
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMic: true, hasMotionDetection: true });
+
+      await settle();
+
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: false });
+
+      await settle();
+
+      assert.equal(countLines(harness.logEntries, "warn", LOSS, logBaseline), 1, "the genuine withdrawal warned exactly once");
+      assert.equal(motionSensor(accessory), sensor, "the motion sensor remains after the withdrawal");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [], "neither the drain nor the withdrawal fired a controller event");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("a withdrawn camera made eligible again logs nothing and rebuilds nothing", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMic: true }, isThirdPartyCamera: true });
+    const { accessory, camera, harness, store } = await build({ cameraConfig });
+
+    try {
+
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: false });
 
       await settle();
 
       const churnBaseline = accessory.controllerEvents.length;
       const logBaseline = harness.logEntries.length;
 
-      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
@@ -1842,12 +1897,12 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
 
   test("a repeated eligible reading after a gain, and an unrelated wake after it, rebuild nothing and narrate nothing (the sensor is the latch)", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isThirdPartyCamera: true });
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMotionDetection: false }, isThirdPartyCamera: true });
     const { accessory, camera, harness, store } = await build({ cameraConfig });
 
     try {
 
-      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
@@ -1857,7 +1912,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       const logBaseline = harness.logEntries.length;
 
       // The same reading again, then an unrelated capability that wakes the chokepoint: the standing sensor answers the leaf, so neither does anything.
-      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
@@ -1866,7 +1921,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       await settle();
 
       assert.deepEqual(churnSince(accessory, churnBaseline), [], "nothing rebuilt the controller again");
-      assert.equal(countLines(harness.logEntries, "info", AI_PORT_GAIN, logBaseline), 0, "the gain was not narrated again");
+      assert.equal(countLines(harness.logEntries, "info", GAIN, logBaseline), 0, "the gain was not narrated again");
       assert.equal(accessory.services.filter((service) => service.type === Service.MotionSensor).length, 1, "exactly one motion sensor stands");
     } finally {
 
@@ -1877,7 +1932,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
   test("a camera with no channel gains eligibility, then its channels arrive, and its first controller is built with the sensor in place", async () => {
 
     // No channel exists yet, so the derivation returns nothing and no delegate stands while the gain composes the sensor.
-    const cameraConfig = makeCameraConfig({ channels: [], isThirdPartyCamera: true });
+    const cameraConfig = makeCameraConfig({ channels: [], featureFlags: { hasMotionDetection: false } });
     const { accessory, camera, harness, store } = await build({ cameraConfig });
 
     try {
@@ -1885,7 +1940,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       assert.equal(camera.stream, undefined, "no delegate stands for a camera with no channel");
       assert.deepEqual(churnSince(accessory, 0), [], "no controller was ever registered");
 
-      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
@@ -1910,9 +1965,9 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
     }
   });
 
-  test("a doorbell promotion and an Access release in one patch compose the doorbell capability and fire exactly two controller events", async () => {
+  test("a doorbell promotion and a motion report in one featureFlags patch compose the doorbell capability and fire exactly two controller events", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isAdoptedByAccessApp: true });
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMotionDetection: false } });
     const { accessory, camera, store } = await build({ cameraConfig });
 
     try {
@@ -1921,13 +1976,13 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
 
       const churnBaseline = accessory.controllerEvents.length;
 
-      store.pushCameraPatch(cameraConfig.id, cameraPatch({ featureFlags: { isDoorbell: true }, isAdoptedByAccessApp: false }));
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true, isDoorbell: true });
 
       await settle();
 
       assert.ok(camera.doorbell, "the doorbell capability composed onto the camera");
-      assert.ok(motionSensor(accessory), "the release created the motion sensor");
-      assert.deepEqual(churnSince(accessory, churnBaseline), [ "remove", "configure" ], "the doorbell promotion and the release landed in exactly one rebuild");
+      assert.ok(motionSensor(accessory), "the motion report created the motion sensor");
+      assert.deepEqual(churnSince(accessory, churnBaseline), [ "remove", "configure" ], "the doorbell promotion and the motion report landed in exactly one rebuild");
       assert.equal(camera.stream?.builtFor.isDoorbell, true, "the rebuilt controller is built for a doorbell");
       assert.equal(camera.stream.builtFor.hksvCapable, true, "the rebuilt controller is built for HKSV eligibility");
     } finally {
@@ -1936,9 +1991,9 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
     }
   });
 
-  test("a doorbell released from Access rebuilds the parent and its package camera once each, and the package says nothing", async () => {
+  test("a doorbell Protect starts exposing a motion sensor for rebuilds the parent and its package camera once each, and the package says nothing", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, isAdoptedByAccessApp: true });
+    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasMotionDetection: false, hasPackageCamera: true, isDoorbell: true } });
     const { accessory, camera, harness, store } = await build({ cameraConfig });
 
     try {
@@ -1952,7 +2007,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       const packageBaseline = packageAccessory.controllerEvents.length;
       const logBaseline = harness.logEntries.length;
 
-      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
@@ -1969,7 +2024,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
 
   test("a camera that cannot back HKSV constructs with no recording switch, even with the switch option on", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isThirdPartyCamera: true });
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMotionDetection: false } });
     const { accessory, camera } = await build({ cameraConfig, userOptions: ["Enable.Video.HKSV.Recording.Switch"] });
 
     try {
@@ -1983,12 +2038,12 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
 
   test("the gain creates the recording switch the option asks for", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isThirdPartyCamera: true });
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMotionDetection: false } });
     const { accessory, camera, store } = await build({ cameraConfig, userOptions: ["Enable.Video.HKSV.Recording.Switch"] });
 
     try {
 
-      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: true });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
@@ -2002,10 +2057,10 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
     }
   });
 
-  test("a doorbell released from Access while disconnected rebuilds neither view until it connects, then each once (fails without the parent's connect " +
-    "re-run reaching the package)", async () => {
+  test("a doorbell whose motion report arrives while it is disconnected rebuilds neither view until it connects, then each once (fails without the parent's " +
+    "connect re-run reaching the package)", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, isAdoptedByAccessApp: true });
+    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasMotionDetection: false, hasPackageCamera: true, isDoorbell: true } });
     const { accessory, camera, store } = await build({ cameraConfig });
 
     try {
@@ -2021,7 +2076,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       const parentBaseline = accessory.controllerEvents.length;
       const packageBaseline = packageAccessory.controllerEvents.length;
 
-      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
@@ -2042,8 +2097,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
 
   test("the gain on a camera with smart detection enabled logs the overlap advisory exactly once more", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: ["person"] },
-      isAdoptedByAccessApp: true });
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMotionDetection: false, hasSmartDetect: true, smartDetectTypes: ["person"] } });
     const { camera, harness, store } = await build({ cameraConfig, userOptions: ["Enable.Motion.SmartDetect"] });
 
     try {
@@ -2052,7 +2106,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
 
       assert.equal(countLines(harness.logEntries, "warn", OVERLAP), 0, "a camera that cannot back HKSV logs no overlap advisory at construction");
 
-      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
@@ -2063,9 +2117,9 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
     }
   });
 
-  test("a first-party camera Access adopts while running warns once, naming Access", async () => {
+  test("a first-party camera Protect stops exposing a motion sensor for warns once with the loss line", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMic: true } });
     const { accessory, camera, harness, store } = await build({ cameraConfig });
 
     try {
@@ -2073,12 +2127,12 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       const churnBaseline = accessory.controllerEvents.length;
       const logBaseline = harness.logEntries.length;
 
-      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: true });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: false });
 
       await settle();
 
-      assert.equal(countLines(harness.logEntries, "warn", ACCESS_LOSS, logBaseline), 1, "exactly one warning names the Access adoption");
-      assert.equal(countLines(harness.logEntries, "warn", AI_PORT_LOSS, logBaseline), 0, "no warning names an AI Port");
+      assert.equal(countLines(harness.logEntries, "warn", LOSS, logBaseline), 1, "exactly one warning narrates the withdrawal");
+      assert.equal(harness.logEntries.slice(logBaseline).filter((entry) => entry.level === "warn").length, 1, "the loss line is the withdrawal's only warning");
       assert.deepEqual(churnSince(accessory, churnBaseline), [], "the withdrawal fired zero controller events");
       assert.ok(motionSensor(accessory), "the motion sensor remains");
     } finally {
@@ -2089,7 +2143,7 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
 
   test("an eligibility flap within one drain logs nothing and churns nothing (fails when the handler trusts the yielded value)", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMic: true } });
     const { accessory, camera, harness, store } = await build({ cameraConfig });
 
     try {
@@ -2097,9 +2151,10 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
       const churnBaseline = accessory.controllerEvents.length;
       const logBaseline = harness.logEntries.length;
 
-      // Adopted and released before any consumer drains: the observer yields the false and then the true, and each wake reads the live, recovered state.
-      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: true });
-      store.pushCameraPatch(cameraConfig.id, { isAdoptedByAccessApp: false });
+      // Withdrawn and restored before any consumer drains: the observer yields the false and then the true, and each wake reads the live, recovered state. The
+      // microphone keeps the withdrawal's block a reading rather than the drain frame, so only the live read keeps it silent.
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: false });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: true });
 
       await settle();
 
@@ -2142,12 +2197,12 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
 
   test("after a withdrawal, a late speaker rebuilds once from current truth, building no recording arm, with no further warning", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, isPairedWithAiPort: true, isThirdPartyCamera: true });
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMic: true }, isThirdPartyCamera: true });
     const { accessory, camera, harness, store } = await build({ cameraConfig });
 
     try {
 
-      store.pushCameraPatch(cameraConfig.id, { isPairedWithAiPort: false });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasMotionDetection: false });
 
       await settle();
 

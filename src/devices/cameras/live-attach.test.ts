@@ -179,7 +179,8 @@ describe("live-attach reclassification (suite C)", () => {
 
   test("a settled demotion raises exactly one withdrawal warning and removes nothing", async () => {
 
-    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { isDoorbell: true }, name: "Front Door" });
+    // The doorbell carries a microphone, so the demotion's block keeps a true flag and is a reading rather than the controller's drain frame.
+    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasMic: true, isDoorbell: true }, name: "Front Door" });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { controller, logEntries, nvr } = makeTestNvr({ store });
     const accessory = makeTestAccessory("Front Door", "uuid:74ACB9000005");
@@ -198,6 +199,48 @@ describe("live-attach reclassification (suite C)", () => {
     assert.ok(camera.doorbell, "the capability remains attached - the withdrawal removes nothing (promotion-only)");
     assert.ok(accessory.getService(Service.Doorbell), "the Doorbell service remains after the demotion warning");
 
+    controller.abort();
+  });
+
+  /* The controller's drain frame against a real demotion. A deep re-adopt delivers the whole featureFlags block with every flag false before the real values follow,
+   * so the doorbell reads false alongside every other flag and the narrator has to read the block as no reading: no withdrawal is warned and the doorbell's services
+   * stay. Once the real values land, a genuine demotion - isDoorbell false beside a microphone the block still reports - warns exactly once.
+   */
+  test("the drain frame raises no doorbell withdrawal and keeps the services, while a demotion beside a true flag warns once", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasMic: true, isDoorbell: true }, name: "Front Door" });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller, logEntries, nvr } = makeTestNvr({ store });
+    const accessory = makeTestAccessory("Front Door", "uuid:74ACB9000006");
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+    const withdrawal = "no longer reports this camera as a doorbell";
+
+    await settle();
+
+    assert.ok(camera.doorbell, "the doorbell capability attached at construction");
+
+    store.pushCameraFeatureFlagsDrain(cameraConfig.id);
+
+    await settle();
+
+    assert.equal(camera.ufp.featureFlags.isDoorbell, false, "the vacuity guard: the drain frame reads the doorbell false");
+    assert.equal(countLogs(logEntries, "warn", withdrawal), 0, "the drain frame raised no doorbell withdrawal");
+    assert.ok(camera.doorbell, "the capability remains attached across the drain frame");
+    assert.ok(accessory.getService(Service.Doorbell), "the Doorbell service remains across the drain frame");
+
+    // The real values land, then the controller genuinely stops reporting the doorbell while the microphone stays reported.
+    store.pushCameraFeatureFlags(cameraConfig.id, { hasMic: true, hasMotionDetection: true, isDoorbell: true });
+
+    await settle();
+
+    store.pushCameraFeatureFlags(cameraConfig.id, { isDoorbell: false });
+
+    await settle();
+
+    assert.equal(countLogs(logEntries, "warn", withdrawal), 1, "the genuine demotion raised exactly one doorbell withdrawal");
+    assert.ok(accessory.getService(Service.Doorbell), "the Doorbell service remains after the demotion warning");
+
+    camera.cleanup();
     controller.abort();
   });
 });

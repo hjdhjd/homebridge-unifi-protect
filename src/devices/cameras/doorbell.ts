@@ -15,6 +15,7 @@ import type { ProtectCameraPackage } from "./camera-package.ts";
 import { ProtectDeviceCapability } from "../device-capability.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { deviceSelectors } from "unifi-protect";
+import { isFeatureFlagsDrain } from "./capability-reconcile-policy.ts";
 import { mqttTopics } from "../../mqtt.ts";
 
 // A doorbell message entry.
@@ -358,6 +359,13 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
       this.nvr.removals.cancelFor(uuid);
       this.configurePackageCamera();
+
+      return;
+    }
+
+    // The controller's drain frame reads the package camera absent alongside every other flag, so an all-false block is no reading and schedules nothing. The real
+    // values follow it, and the attach arm above already cancels a grace a genuine withdrawal had pending when they report the package camera again.
+    if(isFeatureFlagsDrain(this.ufp.featureFlags)) {
 
       return;
     }

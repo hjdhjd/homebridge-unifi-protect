@@ -58,11 +58,12 @@ interface FamilyHarness {
   store: TestStateStore;
 }
 
-// Assemble a real doorbell family against a fresh store and NVR double, settled and ready to drive.
-async function makeFamily(options: { hasPackageCamera?: boolean; userOptions?: string[] } = {}): Promise<FamilyHarness> {
+// Assemble a real doorbell family against a fresh store and NVR double, settled and ready to drive. hasMic gives the doorbell a microphone, a true flag a withdrawal
+// block keeps, which is what tells it apart from the controller's all-false drain frame.
+async function makeFamily(options: { hasMic?: boolean; hasPackageCamera?: boolean; userOptions?: string[] } = {}): Promise<FamilyHarness> {
 
-  const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: options.hasPackageCamera ?? true, isDoorbell: true },
-    name: "Front Door" });
+  const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS,
+    featureFlags: { hasMic: options.hasMic ?? false, hasPackageCamera: options.hasPackageCamera ?? true, isDoorbell: true }, name: "Front Door" });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
   const { apiCalls, clock, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: options.userOptions });
   const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "uuid:" + PARENT_MAC) as unknown as ProtectAccessory,
@@ -149,6 +150,45 @@ describe("package camera remove-on-false (BC2)", () => {
 
       diagnosticsChannel.unsubscribe("hbup:observer:wake", onWake);
     }
+
+    doorbell.cleanup();
+    harness.controller.abort();
+  });
+
+  /* The controller's drain frame against a real withdrawal. A deep re-adopt delivers the whole featureFlags block with every flag false before the real values follow,
+   * so the package camera reads absent alongside every other flag and the reconcile has to read the block as no reading: nothing is scheduled, so with the grace
+   * disabled the package camera is still live afterward. Once the real values land, a genuine withdrawal - hasPackageCamera false beside a microphone the block still
+   * reports - detaches it as it always has.
+   */
+  test("the drain frame schedules no removal, while a withdrawal beside a true flag detaches the package camera as before", async () => {
+
+    const harness = await makeFamily({ hasMic: true, userOptions: ["Disable.Nvr.DelayDeviceRemoval"] });
+    const { doorbell, logEntries, store } = harness;
+    const reason = "no longer reports a package camera";
+
+    assert.ok(doorbell.packageCamera, "the package camera starts live");
+
+    store.pushCameraFeatureFlagsDrain(harness.cameraId);
+
+    await settle();
+
+    assert.equal(doorbell.ufp.featureFlags.hasPackageCamera, false, "the vacuity guard: the drain frame reads the package camera absent");
+    assert.ok(doorbell.packageCamera, "the drain frame left the package camera live");
+    assert.equal(logEntries.filter((entry) => formatLogEntry(entry).includes(reason)).length, 0, "the drain frame scheduled and narrated no removal");
+
+    // The real values land, then the controller genuinely stops reporting the package camera while the microphone stays reported.
+    store.pushCameraFeatureFlags(harness.cameraId, { hasMic: true, hasMotionDetection: true, hasPackageCamera: true, isDoorbell: true });
+
+    await settle();
+
+    assert.ok(doorbell.packageCamera, "the package camera is still live once the real values land");
+
+    pushPackageFlag(harness, false);
+
+    await settle();
+
+    assert.equal(doorbell.packageCamera, null, "the genuine withdrawal detached the package camera");
+    assert.equal(logEntries.filter((entry) => formatLogEntry(entry).includes(reason)).length, 1, "the removal decision is narrated exactly once");
 
     doorbell.cleanup();
     harness.controller.abort();

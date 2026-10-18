@@ -45,7 +45,6 @@ export interface ProtectNvrOptions {
 // hasProperty:         Properties that must exist on the device object for this option to be exposed.
 // hasSensorProperty:   Properties that must exist on the device object for a sensor device for this option to be exposed.
 // hasSmartObjectType:  Smart object detection capability that must exist for this option to be exposed.
-// isNotProperty:       Properties that must specifically not exist on the device object for this option to be exposed.
 // modelKey:            Device categories that the option applies to, or "all" for any device type.
 export interface ProtectOptionMeta {
 
@@ -58,7 +57,6 @@ export interface ProtectOptionMeta {
   hasProperty?: string[];
   hasSensorProperty?: string[];
   hasSmartObjectType?: string[];
-  isNotProperty?: string[];
   modelKey?: string[];
 }
 
@@ -66,12 +64,10 @@ export interface ProtectOptionMeta {
 //
 // featureByModel:  Per device-model featureFlags that must be enabled for the category to be exposed on that model. For example { sensor: ["motion"] } gates the
 //                  category on a sensor's "motion" feature flag.
-// isNotProperty:   Properties that must specifically not exist on the device object for this category to be exposed.
 // modelKey:        Device categories that the category applies to, or "all" for any device type.
 interface ProtectCategoryMeta {
 
   featureByModel?: Record<string, string[]>;
-  isNotProperty?: string[];
   modelKey?: string[];
 }
 
@@ -172,7 +168,7 @@ export const featureOptionCategories: FeatureCategoryEntry<ProtectCategoryMeta>[
   { description: "Doorbell & Chime", meta: { modelKey: ["camera"] }, name: "Doorbell" },
   { description: "Fob", meta: { modelKey: ["fob"] }, name: "Fob" },
   { description: "Logging", meta: { modelKey: [ "camera", "light", "sensor" ] }, name: "Log" },
-  { description: "Motion & Occupancy", meta: { featureByModel: { sensor: ["motion"] }, isNotProperty: [ "isAdoptedByAccessApp", "isThirdPartyCamera" ], modelKey: [ "camera", "light", "sensor" ] }, name: "Motion" },
+  { description: "Motion & Occupancy", meta: { featureByModel: { camera: ["hasMotionDetection"], sensor: ["motion"] }, modelKey: [ "camera", "light", "sensor" ] }, name: "Motion" },
   // The generated group carries no meta at all, so the cast widens nothing our own entries declare - it only bridges the generator's unannotated entry type into our
   // meta-typed array.
   mqtt.category as FeatureCategoryEntry<ProtectCategoryMeta>,
@@ -182,8 +178,8 @@ export const featureOptionCategories: FeatureCategoryEntry<ProtectCategoryMeta>[
   { description: "Sensor", meta: { modelKey: ["sensor"] }, name: "Sensor" },
   { description: "UniFi Access", meta: { modelKey: ["camera"] }, name: "UniFi.Access" },
   { description: "Video & Streaming", meta: { modelKey: ["camera"] }, name: "Video" },
-  { description: "HomeKit Secure Video", meta: { isNotProperty: ["isThirdPartyCamera"], modelKey: ["camera"] }, name: "Video.HKSV" },
-  { description: "Timeshift Buffer", meta: { isNotProperty: ["isThirdPartyCamera"], modelKey: ["camera"] }, name: "Video.Timeshift" }
+  { description: "HomeKit Secure Video", meta: { featureByModel: { camera: ["hasMotionDetection"] }, modelKey: ["camera"] }, name: "Video.HKSV" },
+  { description: "Timeshift Buffer", meta: { modelKey: ["camera"] }, name: "Video.Timeshift" }
 ];
 
 export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta>[]> = {
@@ -239,8 +235,8 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   "Log": [
 
     { default: true, description: "Log doorbell ring events in Homebridge.", meta: { modelKey: ["camera"] }, name: "Doorbell" },
-    { default: false, description: "Log HomeKit Secure Video recording events in Homebridge.", meta: { isNotProperty: ["isThirdPartyCamera"], modelKey: ["camera"] }, name: "HKSV" },
-    { default: false, description: "Log motion events in Homebridge.", meta: { hasProperty: [ "isMotionDetected", "isPirMotionDetected" ], isNotProperty: ["isThirdPartyCamera"] }, name: "Motion" },
+    { default: false, description: "Log HomeKit Secure Video recording events in Homebridge.", meta: { hasCameraFeature: ["hasMotionDetection"], modelKey: ["camera"] }, name: "HKSV" },
+    { default: false, description: "Log motion events in Homebridge.", meta: { hasCameraFeature: ["hasMotionDetection"], hasProperty: [ "isMotionDetected", "isPirMotionDetected" ] }, name: "Motion" },
     { default: false, description: "Log verbose FFmpeg output in Homebridge. Expect a significant amount of additional logging whenever FFmpeg is active.", meta: { modelKey: ["camera"] }, name: "FFmpeg" }
   ],
 
@@ -359,6 +355,7 @@ const capabilityMap: Record<string, string> = {
   "hasLedStatus": "Protect devices with a status LED",
   "hasLuxCheck": "Protect cameras that have an ambient light sensor",
   "hasMic": "Protect cameras that have a microphone",
+  "hasMotionDetection": "Protect cameras that have a motion sensor",
   "hasMotionZones": "Protect cameras that have a motion sensor",
   "hasPackageCamera": "Protect doorbells that have a package camera",
   "hasSmartDetect": "Protect devices that support smart motion detection (e.g. G4-series cameras and better)",
@@ -396,8 +393,10 @@ export const describeCategoryScope = (category: FeatureCategoryEntry<ProtectCate
 
 /**
  * Documentation hook: returns the "Supported on ..." suffix appended to an option's description cell, naming the capability or device model the option is gated on, or
- * `undefined` when the option declares no scope. The capability flags fall through in priority order, with the device model as the catch-all when none is set. We use
- * graceful map fallback (`?? cap` / `?? model`) so an unmapped key surfaces verbatim rather than the literal "undefined".
+ * `undefined` when the option declares no scope. The capability flags fall through in priority order, with the device model as the catch-all when none is set. The
+ * property gate, which applies to every device model, reads ahead of the per-model gates, so an option scoped across device models that also gates cameras on a camera
+ * feature names its cross-model scope rather than the narrower camera phrase. We use graceful map fallback (`?? cap` / `?? model`) so an unmapped key surfaces
+ * verbatim rather than the literal "undefined".
  *
  * @param option - The option entry whose `meta` scope to describe.
  *
@@ -406,7 +405,7 @@ export const describeCategoryScope = (category: FeatureCategoryEntry<ProtectCate
 export const describeOptionScope = (option: FeatureOptionEntry<ProtectOptionMeta>): string | undefined => {
 
   const m = option.meta;
-  const cap = m?.hasFeature?.[0] ?? m?.hasCameraFeature?.[0] ?? m?.hasLightProperty?.[0] ?? m?.hasSensorProperty?.[0] ?? m?.hasProperty?.[0] ??
+  const cap = m?.hasFeature?.[0] ?? m?.hasProperty?.[0] ?? m?.hasCameraFeature?.[0] ?? m?.hasLightProperty?.[0] ?? m?.hasSensorProperty?.[0] ??
     m?.hasSmartObjectType?.[0] ?? m?.hasAccessFeature?.[0];
 
   if(cap) {

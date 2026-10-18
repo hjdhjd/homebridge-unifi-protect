@@ -1,7 +1,7 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * options.test.ts: Coverage of the catalog surface - the standing-buffer options, the direct-RTSP pins, the absence of the superseded streaming and HKSV-record option
- * names, and the landing of every setting that migrated from the configuration schema onto a feature option.
+ * names, the landing of every setting that migrated from the configuration schema onto a feature option, and the motion surface's scoping on the camera's motion report.
  *
  * The catalog is plain data (featureOptionCategories plus the featureOptions map), so these are pure structure assertions. The end-to-end resolution of the new names
  * through the engine is proven where it steers behavior (the doorbell-construction pixel-ceiling test pins a real timeshift channel pin, and the ring-delay and
@@ -11,7 +11,7 @@
  * catalog does not know, the same mechanism the undocumented Debug.* namespace rides, and declaring it would surface it in the webUI and the generated documentation.
  */
 import { PROTECT_DOORBELL_RING_DELAY, PROTECT_MQTT_TOPIC } from "./settings.ts";
-import { SMART_DETECT_TYPES, featureOptionCategories, featureOptions, smartDetectLabel } from "./options.ts";
+import { SMART_DETECT_TYPES, describeOptionScope, featureOptionCategories, featureOptions, smartDetectLabel } from "./options.ts";
 import { describe, test } from "node:test";
 import { ALL_CHOICES } from "homebridge-plugin-utils";
 import type { FeatureOptionEntry } from "homebridge-plugin-utils";
@@ -51,15 +51,13 @@ describe("feature-option retirement wave", () => {
     assert.ok("Video.Timeshift" in featureOptions, "the Video.Timeshift options-map key is present, so the catalog does not silently drop the category");
   });
 
-  // The category carries exactly the Video.HKSV parity gate - hidden for third-party cameras, scoped to cameras - and deliberately no isAdoptedByAccessApp hide, since
-  // Access-adopted cameras join the streaming arm and the toggle does real work for them.
-  test("the Video.Timeshift category carries the third-party-camera parity gate and no Access hide", () => {
+  // The livestream API serves every adopted camera, so the timeshift buffer's options apply to every camera: the category scopes to cameras and gates on nothing else.
+  test("the Video.Timeshift category scopes to every camera and gates on nothing else", () => {
 
     const category = featureOptionCategories.find((entry) => entry.name === "Video.Timeshift");
 
     assert.ok(category, "the category exists");
-    assert.deepEqual(category.meta?.isNotProperty, ["isThirdPartyCamera"], "the category hides for third-party cameras and nothing else");
-    assert.deepEqual(category.meta.modelKey, ["camera"], "the category scopes to cameras");
+    assert.deepEqual(category.meta, { modelKey: ["camera"] }, "the category scopes to cameras and carries no other gate");
   });
 
   // The standing-buffer options: the default-on livestreaming toggle plus the single channel pin the user picks a quality on.
@@ -391,5 +389,38 @@ describe("the settings-consolidation option surface", () => {
 
     assert.ok(!catalogKeys().includes("log.debug"), "the debug option stays undeclared, resolving through the engine's unrestricted walk");
     assert.ok(!featureOptionCategories.some((category) => category.name.toLowerCase() === "log.debug"), "and it is not a category either");
+  });
+});
+
+describe("the settings page scoping of the motion surface", () => {
+
+  /* HomeKit Secure Video and the motion surface follow whether Protect exposes a motion sensor for a camera, so the settings page scopes them on the camera's own
+   * report through the existing grammar: a category gates on the camera's feature flag per model, and an option gates on it as a camera feature. Each entry's meta is
+   * held whole, so a gate a later edit adds or drops shows here rather than in the webUI alone.
+   */
+  test("the Motion and HKSV categories and the HKSV and Motion log options gate on the camera's motion report", () => {
+
+    const category = (name: string): unknown => featureOptionCategories.find((entry) => entry.name === name)?.meta;
+
+    assert.deepEqual(category("Motion"), { featureByModel: { camera: ["hasMotionDetection"], sensor: ["motion"] }, modelKey: [ "camera", "light", "sensor" ] },
+      "the Motion category shows for a camera Protect exposes a motion sensor for, and for lights and motion sensors as before");
+    assert.deepEqual(category("Video.HKSV"), { featureByModel: { camera: ["hasMotionDetection"] }, modelKey: ["camera"] },
+      "the HKSV category shows for a camera Protect exposes a motion sensor for");
+    assert.deepEqual(optionEntry("Log", "HKSV")?.meta, { hasCameraFeature: ["hasMotionDetection"], modelKey: ["camera"] },
+      "the HKSV log option shows for a camera Protect exposes a motion sensor for");
+    assert.deepEqual(optionEntry("Log", "Motion")?.meta, { hasCameraFeature: ["hasMotionDetection"], hasProperty: [ "isMotionDetected", "isPirMotionDetected" ] },
+      "the motion log option keeps its cross-model property gate and gates cameras on the motion report");
+  });
+
+  // The generated documentation's scope prose for the gated log options: the motion log keeps its cross-model phrase, since the property gate reads ahead of the
+  // camera gate, and the HKSV log names the cameras it applies to through the motion report's own phrase.
+  test("the scope prose names the motion report's phrase for the HKSV log and keeps the cross-model phrase for the motion log", () => {
+
+    const motion = optionEntry("Log", "Motion");
+    const hksv = optionEntry("Log", "HKSV");
+
+    assert.ok(motion && hksv, "the motion and HKSV log options exist");
+    assert.equal(describeOptionScope(motion), " <BR>*Supported on Protect devices that have a motion sensor.*", "the motion log keeps its cross-model scope");
+    assert.equal(describeOptionScope(hksv), " <BR>*Supported on Protect cameras that have a motion sensor.*", "the HKSV log renders the motion report's phrase");
   });
 });

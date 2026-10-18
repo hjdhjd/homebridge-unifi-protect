@@ -33,6 +33,8 @@ export interface TestCameraFeatureFlags {
   hasLcdScreen: boolean;
   hasLedStatus: boolean;
   hasLuxCheck: boolean;
+  hasMic: boolean;
+  hasMotionDetection: boolean;
   hasPackageCamera: boolean;
   hasSmartDetect: boolean;
   hasSpeaker: boolean;
@@ -44,28 +46,26 @@ export interface TestCameraFeatureFlags {
 
 /**
  * Build a minimal-but-real camera config record for construction tests: every field the ProtectCamera construction path actually reads is populated with the
- * quiet-default shape (every feature flag false, recording mode "always", a CONNECTED state, and the fixture host so channel URLs match the golden-master
- * corpus), and the record is then cast once to the full wire type. This is the ONE confined cast boundary for the camera record: the ProtectCameraConfig wire type
- * carries many fields the construction path never touches, so we populate the verified read set and document the cast here rather than scattering casts through
- * tests - the same spirit as camera.fixtures.ts' makeChannel, carried as far as is practical for a much wider record. Every override merges BEFORE the single
- * cast, so an overridden record is exactly as type-honest as the default one.
+ * quiet-default shape (every feature flag false except the controller's motion report, recording mode "always", a CONNECTED state, and the fixture host so channel
+ * URLs match the golden-master corpus), and the record is then cast once to the full wire type. This is the ONE confined cast boundary for the camera record: the
+ * ProtectCameraConfig wire type carries many fields the construction path never touches, so we populate the verified read set and document the cast here rather than
+ * scattering casts through tests - the same spirit as camera.fixtures.ts' makeChannel, carried as far as is practical for a much wider record. Every override merges
+ * BEFORE the single cast, so an overridden record is exactly as type-honest as the default one.
  *
  * @param options - accessDeviceMetadata: seeds the paired Access reader's supportUnlock capability flag for the camera's UniFi Access lock construction tests;
- *                  channels: the typed channel array (reuse the camera.fixtures.ts corpus); featureFlags: per-flag overrides merged over the all-false
- *                  defaults (a doorbell test sets isDoorbell, a package test adds hasPackageCamera); chimeDuration / enableNfc / isDark / lcdMessage: the
- *                  doorbell-adjacent fields its configure paths read; id / mac / name: optional identity overrides; isAdoptedByAccessApp: whether UniFi Access
- *                  has adopted the camera, the term that with the AI Port fields below decides HomeKit Secure Video eligibility (default false); isPairedWithAiPort /
- *                  isThirdPartyCamera: the AI Port pair, overridable so a test can model a third-party camera with no AI Port (both default
- *                  to the first-party camera every other suite assumes); smartDetectSettings: the controller-side smart-detection settings, whose
- *                  enabled-type lists default to mirroring the advertised capability (see below); videoCodec: the codec string (default "h264"), overridable
- *                  to "av1" so the playlist filter's codec exclusion can be exercised.
+ *                  channels: the typed channel array (reuse the camera.fixtures.ts corpus); featureFlags: per-flag overrides merged over the quiet defaults, where
+ *                  every flag reads false except hasMotionDetection, which reads true so a default camera is one Protect exposes a motion sensor for (a doorbell test
+ *                  sets isDoorbell, a package test adds hasPackageCamera, an eligibility test sets hasMotionDetection false); chimeDuration / enableNfc / isDark /
+ *                  lcdMessage: the doorbell-adjacent fields its configure paths read; id / mac / name: optional identity overrides; isThirdPartyCamera: whether the
+ *                  camera is a third-party camera (default false, the first-party camera every other suite assumes); smartDetectSettings: the controller-side
+ *                  smart-detection settings, whose enabled-type lists default to mirroring the advertised capability (see below); videoCodec: the codec string
+ *                  (default "h264"), overridable to "av1" so the playlist filter's codec exclusion can be exercised.
  *
  * @returns a camera config record the construction path reads as real.
  */
 export function makeCameraConfig(options: { accessDeviceMetadata?: { featureFlags: { supportUnlock: boolean } }; channels: ProtectCameraChannelConfig[];
-  chimeDuration?: number; enableNfc?: boolean; featureFlags?: Partial<TestCameraFeatureFlags>; id?: string; isAdoptedByAccessApp?: boolean; isDark?: boolean;
-  isPairedWithAiPort?: boolean; isThirdPartyCamera?: boolean; lcdMessage?: { duration?: number; resetAt?: Nullable<number>; text?: string; type?: string }; mac?: string;
-  name?: string;
+  chimeDuration?: number; enableNfc?: boolean; featureFlags?: Partial<TestCameraFeatureFlags>; id?: string; isDark?: boolean; isThirdPartyCamera?: boolean;
+  lcdMessage?: { duration?: number; resetAt?: Nullable<number>; text?: string; type?: string }; mac?: string; name?: string;
   smartDetectSettings?: { audioTypes?: string[]; enableTamperDetection?: boolean; objectTypes?: string[] }; videoCodec?: string; }): ProtectCameraConfig {
 
   const name = options.name ?? "Test Camera";
@@ -86,6 +86,11 @@ export function makeCameraConfig(options: { accessDeviceMetadata?: { featureFlag
       hasLcdScreen: false,
       hasLedStatus: false,
       hasLuxCheck: false,
+      hasMic: false,
+
+      // The controller's motion report defaults true: a default camera is one Protect exposes a motion sensor for, so it carries its motion sensor and can back
+      // HomeKit Secure Video, while smart detection, like the other capabilities, stays off until a test reports it.
+      hasMotionDetection: true,
       hasPackageCamera: false,
       hasSmartDetect: false,
       hasSpeaker: false,
@@ -97,15 +102,11 @@ export function makeCameraConfig(options: { accessDeviceMetadata?: { featureFlag
     },
     firmwareVersion: "5.0.0",
     id: options.id ?? "test-camera-1",
-
-    // Whether UniFi Access has adopted the camera, overridable so a test can model a first-party camera that cannot back HomeKit Secure Video until Access releases it.
-    // It defaults to the unadopted camera every other suite assumes, and with the AI Port pair below it decides the camera's HKSV eligibility.
-    isAdoptedByAccessApp: options.isAdoptedByAccessApp ?? false,
+    isAdoptedByAccessApp: false,
     isDark: options.isDark ?? false,
+    isPairedWithAiPort: false,
 
-    // The AI Port pair, overridable so a test can model a third-party camera with or without an AI Port, which with the Access term above decides the camera's HKSV
-    // eligibility. Both default to the first-party camera every other suite assumes.
-    isPairedWithAiPort: options.isPairedWithAiPort ?? false,
+    // Whether the camera is a third-party camera, overridable so a test can model one. It defaults to the first-party camera every other suite assumes.
     isThirdPartyCamera: options.isThirdPartyCamera ?? false,
     ispSettings: { icrCustomValue: 0, irLedMode: "off" },
     ledSettings: { isEnabled: false },

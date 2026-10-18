@@ -131,13 +131,14 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
     assert.equal(logEntries.filter((entry) => entry.level === "warn").length, 0, "construction warned about nothing");
   });
 
-  // The supervisor stands for every camera, a third-party camera with no AI Port included, while the recording delegate stays the HKSV-capable camera's alone.
-  test("ProtectStreamingDelegate against a third-party host without an AI Port builds the timeshift supervisor and no recording delegate", () => {
+  // The supervisor stands for every camera, a third-party camera that cannot back HKSV included, while the recording delegate stays the HKSV-capable camera's alone.
+  // The host's record agrees with its eligibility: Protect exposes no motion sensor for this camera.
+  test("ProtectStreamingDelegate against a third-party host that cannot back HKSV builds the timeshift supervisor and no recording delegate", () => {
 
     const { controller, host } = makeTestCameraHost();
 
     controllers.push(controller);
-    host.ufp = makeCameraConfig({ channels: G2_PRO_CHANNELS, isThirdPartyCamera: true });
+    host.ufp = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasMotionDetection: false }, isThirdPartyCamera: true });
 
     const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]);
 

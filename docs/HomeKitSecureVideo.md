@@ -36,9 +36,11 @@ HomeKit Secure Video has been a feature in HomeKit since the launch of iOS 13. I
   * It's important to note: **HomeKit decides how long each event will be, by default**. In practice, I've seen events as long 5 or 10 minutes in high-traffic areas. HomeKit continues to record an event for as long as it thinks there's some motion of interest to the user.
   * If you place a camera in a very high traffic area, say a kitchen or a family room, and enable HKSV, you're likely going to get long motion events captured in HomeKit. It's not a bug, it's the way HomeKit Secure Video is designed. 😄
 
-#### Third-Party Cameras and AI Port
+#### Third-Party Cameras and UniFi Access
 
-Third-party cameras connected to Protect via ONVIF do not have native motion detection exposed through the Protect API, which means HKSV is not available for them by default. However, if you pair a third-party camera with a UniFi AI Port, the AI Port provides the necessary motion detection and smart detection capabilities, enabling full HKSV support for that camera. Pairing a camera with an AI Port while HBUP is running enables HKSV support without a restart. If a camera is later unpaired from its AI Port, HBUP logs a warning and its HKSV support is removed the next time HBUP restarts.
+Third-party cameras connected to Protect via ONVIF get HKSV the same way every other camera does: HKSV follows whether Protect exposes a motion sensor for a camera, since HomeKit Secure Video records on that camera's motion events. Recent Protect releases expose one for third-party cameras whose ONVIF profile exposes motion detection, so those cameras get a motion sensor and full HKSV support, no AI Port required. Pairing a third-party camera with a UniFi AI Port adds smart motion detection on top of that. If Protect starts exposing a motion sensor for a camera while HBUP is running, the camera gains HKSV support without a restart. If Protect stops exposing it, HBUP logs a warning and the camera keeps its motion sensor and HKSV support until HBUP restarts.
+
+Protect does not currently expose a motion sensor for cameras managed by UniFi Access, so those cameras have no HKSV support until it does.
 
 #### Interactions With UniFi Protect Smart Motion Detection
 UniFi Protect has its own smart motion detection capabilities that [can be used](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md#motion-sensors-motion-switches-and-push-notifications) with `homebridge-unifi-protect`. When you have smart motion detection enabled and you have HomeKit Secure Video enabled **and** configured in the Home app to record events, `homebridge-unifi-protect` is faced with a dilemma: when do I notify a user of a motion detection event?

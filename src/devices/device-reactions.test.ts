@@ -4,13 +4,13 @@
  *
  * The device leaves themselves are not directly importable in a unit test - the camera leaf transitively drags the streaming stack, and the others stand up a HAP
  * accessory at construction - so the reaction decisions that warrant a regression assertion are extracted as pure functions and exercised here in isolation. The
- * camera family's capability reconcile decision lives in cameras/capability-reconcile-policy.ts (a poison-free leaf reachable from a test); the sensor tamper-state
- * mapping lives in sensor.ts (which imports cleanly). Both are the single source of truth their observers and read-through getters consult, so asserting them here
- * holds the behavior the live observers deliver.
+ * camera family's capability reconcile decisions, the reconcile action and the drain test its withdrawal narrators read, live in cameras/capability-reconcile-policy.ts
+ * (a poison-free leaf reachable from a test); the sensor tamper-state mapping lives in sensor.ts (which imports cleanly). Each is the single source of truth its
+ * observers and read-through getters consult, so asserting them here holds the behavior the live observers deliver.
  */
+import { capabilityReconcileAction, isFeatureFlagsDrain } from "./cameras/capability-reconcile-policy.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { capabilityReconcileAction } from "./cameras/capability-reconcile-policy.ts";
 import { sensorTamperState } from "./sensor.ts";
 
 describe("capability reconcile decision (capabilityReconcileAction)", () => {
@@ -32,6 +32,30 @@ describe("capability reconcile decision (capabilityReconcileAction)", () => {
     for(const { attached, expected, reported } of cases) {
 
       assert.equal(capabilityReconcileAction({ attached, reported }), expected, "attached=" + String(attached) + " reported=" + String(reported));
+    }
+  });
+});
+
+describe("featureFlags drain decision (isFeatureFlagsDrain)", () => {
+
+  test("a block is a drain exactly when it carries a top-level boolean and every top-level boolean reads false, reading nothing nested", () => {
+
+    // The controller's deep re-adopt delivers the whole block with every capability false. A single true flag makes the block a reading; a block with no boolean
+    // member at all carries nothing to judge, so it is a reading too; and the lists and nested objects are never read, so a true boolean nested under all-false
+    // top-level members leaves the block a drain.
+    const cases: { expected: boolean; featureFlags: Record<string, unknown>; label: string }[] = [
+
+      { expected: true, featureFlags: { hasMic: false, hasMotionDetection: false, isDoorbell: false, smartDetectTypes: ["person"] }, label: "every boolean false" },
+      { expected: false, featureFlags: { hasMic: true, hasMotionDetection: false, isDoorbell: false }, label: "one boolean true" },
+      { expected: false, featureFlags: { audioCodecs: ["aac"], smartDetectTypes: [] }, label: "no boolean member" },
+      { expected: false, featureFlags: {}, label: "an empty block" },
+      { expected: true, featureFlags: { hasMotionDetection: false, isDoorbell: false, privacyMaskCapability: { rectangleOnly: true } },
+        label: "a nested true boolean under all-false top-level members" }
+    ];
+
+    for(const { expected, featureFlags, label } of cases) {
+
+      assert.equal(isFeatureFlagsDrain(featureFlags), expected, label);
     }
   });
 });
