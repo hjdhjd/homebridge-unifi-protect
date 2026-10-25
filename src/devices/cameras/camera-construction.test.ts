@@ -19,13 +19,12 @@
 import { CAMERA_FIXTURES, FIXTURE_HOST, FIXTURE_RTSPS_PORT, G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import type { CameraFixture, EntryProjection } from "../../camera.fixtures.ts";
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
-import type { TestAccessory, TestStreamingDelegate, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, controllerEvents, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { TestLivestreamProcessFactory, settle } from "homebridge-plugin-utils/testing";
+import type { TestProtectAccessory, TestStreamingDelegate, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
 import { after, before, describe, test } from "node:test";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
@@ -64,7 +63,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
   const onWake = (message: unknown): void => { wakeLog.push(message as ObserverWakePayload); };
 
   // The suite-scoped harness handles, assembled once in before() so every phase asserts against the SAME constructed camera.
-  let accessory: TestAccessory;
+  let accessory: TestProtectAccessory;
   let camera: ProtectCamera;
   let cameraConfig: ProtectCameraConfig;
   let constructionWakes = 0;
@@ -84,11 +83,11 @@ describe("real ProtectCamera construction through the streaming-delegate factory
 
     projection = new TestCameraProjection(cameraConfig.id, store);
 
-    accessory = makeTestAccessory("Test Camera", "11111111-2222-3333-4444-555555555555");
+    accessory = makeTestAccessory("Test Camera", cameraConfig.mac);
 
     // The construction under test: a REAL ProtectCamera against the harness doubles. The casts are confined to this boundary; the instance itself is the production
     // class, and everything it runs - configureHints, configureDevice, the floating IIFE, spawnObservers - is the production code path.
-    camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+    camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
     // Settle the floating configure IIFE and the observe loops' lazy registration before any phase asserts.
     await settle();
@@ -116,13 +115,15 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(projection.updateCalls.length, 0, "a fully-RTSP-enabled channel set issues no enable write during construction");
   });
 
-  test("the accessory's controller registration received exactly the stub delegate's sentinel controller, exactly once", () => {
+  test("the accessory's controller registration received exactly the stub delegate's stand-in controller, exactly once", () => {
 
     const call = factory.createCalls[0];
 
+    const configured = controllerEvents(accessory).filter((event) => event.kind === "configure");
+
     assert.ok(call, "the factory recorded its create call");
-    assert.equal(accessory.configureControllerCalls.length, 1, "configureController was called exactly once");
-    assert.equal(accessory.configureControllerCalls[0], call.delegate.controller, "the registered controller is the stub delegate's sentinel, by identity");
+    assert.equal(configured.length, 1, "HAP configured a controller exactly once");
+    assert.equal(configured[0]?.controller, call.delegate.controller, "the configured controller is the stub delegate's stand-in, by identity");
   });
 
   test("construction wires but does not fire: zero observer wakes, with exactly fifteen observers registered", () => {
@@ -143,21 +144,6 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     // creates StatusTampered - the gate's prune branch has no prior characteristic to remove. The testCharacteristic predicate never lazily creates, so this is a pure
     // absence check.
     assert.equal(motionService.testCharacteristic(Characteristic.StatusTampered), false, "the tamper gate never created StatusTampered without the capability");
-  });
-
-  test("no service carries an undefined-keyed characteristic - the empty-UUID name-write pitfall stayed dead", () => {
-
-    // If the service doubles ever grew a UUID that compared equal to the degenerate empty-string name sets inside homebridge-plugin-utils' service helpers,
-    // setServiceName would write ConfiguredName / Name against undefined characteristic statics and silently pollute the double with undefined-keyed entries.
-    for(const service of accessory.services) {
-
-      assert.ok(service.characteristics.every((characteristic) => {
-
-        const kind: unknown = characteristic.type;
-
-        return kind !== undefined;
-      }), "every characteristic on " + service.displayName + " is keyed by a real kind");
-    }
   });
 
   test("a structural-sharing channels push wakes exactly one observer and re-derives the advertised profiles through the real reaction", async () => {
@@ -192,7 +178,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
 
     // The this.stream reuse gate: a re-run is safe to repeat - it republishes profiles and exits, with no second delegate and no second controller registration.
     assert.equal(factory.createCalls.length, 1, "the factory was not invoked again on the re-run");
-    assert.equal(accessory.configureControllerCalls.length, 1, "the controller was not registered again on the re-run");
+    assert.equal(controllerEvents(accessory).length, 1, "the controller was not configured again on the re-run");
     assert.equal(projection.updateCalls.length, 0, "the fully-RTSP-enabled push issues no enable write on the re-run either");
   });
 
@@ -204,8 +190,10 @@ describe("real ProtectCamera construction through the streaming-delegate factory
 
     camera.cleanup();
 
-    assert.equal(accessory.removeControllerCalls.length, 1, "removeController was called exactly once");
-    assert.equal(accessory.removeControllerCalls[0], call.delegate.controller, "the removed controller is the same sentinel that was registered");
+    const removed = controllerEvents(accessory).filter((event) => event.kind === "remove");
+
+    assert.equal(removed.length, 1, "HAP removed the controller exactly once");
+    assert.equal(removed[0]?.controller, call.delegate.controller, "the removed controller is the same stand-in that was configured");
 
     // The per-accessory abort propagates through the composed signal into every observe loop; the store's drain-then-close completes each iterator, whose finally
     // deregisters it. Settle the microtask unwinding, then prove the registration set is empty.
@@ -249,8 +237,8 @@ describe("camera HKSV self-heal observer", () => {
     healController = controller;
 
     const projection = new TestCameraProjection(cameraConfig.id, store);
-    const accessory = makeTestAccessory("HKSV Reconcile Camera", "22222222-3333-4444-5555-666666666666");
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+    const accessory = makeTestAccessory("HKSV Reconcile Camera", cameraConfig.mac);
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
     await settle();
 
@@ -301,8 +289,8 @@ describe("camera HKSV self-heal observer", () => {
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { controller, factory, nvr } = makeTestNvr({ store });
 
-    const accessory = makeTestAccessory("Activation Kick Camera", "33333333-4444-5555-6666-777777777777");
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory,
+    const accessory = makeTestAccessory("Activation Kick Camera", cameraConfig.mac);
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory,
       new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
 
     await settle();
@@ -349,8 +337,8 @@ describe("the streaming-delegate construction gate", () => {
       nvr.phase = phase;
     }
 
-    const gateAccessory = makeTestAccessory("Gate Camera", "88888888-9999-aaaa-bbbb-cccccccccccc");
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, gateAccessory as unknown as ProtectAccessory,
+    const gateAccessory = makeTestAccessory("Gate Camera", gateConfig.mac);
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, gateAccessory,
       new TestCameraProjection(gateConfig.id, gateStore) as unknown as Camera);
 
     await settle();
@@ -392,8 +380,8 @@ describe("the RTSP debug livestream", () => {
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const livestreamProcessFactory = new TestLivestreamProcessFactory();
     const { controller, nvr } = makeTestNvr({ livestreamProcessFactory, store, userOptions: ["Enable.Debug.Video.Timeshift.UseRtsp"] });
-    const accessory = makeTestAccessory("RTSP Debug Camera", "44444444-5555-6666-7777-888888888888");
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory,
+    const accessory = makeTestAccessory("RTSP Debug Camera", cameraConfig.mac);
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory,
       new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
 
     // The debug path needs the streaming delegate, which the floating configure pass stands up, so the pass settles before the livestream is requested.
@@ -439,8 +427,8 @@ describe("the construction-time HomeKit Secure Video surface", () => {
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { controller, nvr } = makeTestNvr({ store, userOptions: ["Enable.Video.HKSV.Recording.Switch"] });
-      const accessory = makeTestAccessory("HKSV Surface Camera", "55555555-6666-7777-8888-999999999999");
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory,
+      const accessory = makeTestAccessory("HKSV Surface Camera", cameraConfig.mac);
+      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory,
         new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
 
       await settle();

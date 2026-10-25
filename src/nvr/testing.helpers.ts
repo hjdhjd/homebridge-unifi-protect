@@ -4,31 +4,30 @@
  *
  * This file owns the controller half of the harness: TestProtectNvr, the NVR double every device test is constructed against, together with the platform double, the
  * recording MQTT client, the NVR config builder, and the family builder that assembles a whole accessory set. The NVR double mirrors the surfaces production reaches
- * for through its owner - the platform-accessory registration recorders, the removal tail, the managed-device registry - and embeds the controller's companions as the
+ * for through its owner - the Homebridge API and accessory persistence, the removal tail, the managed-device registry - and embeds the controller's companions as the
  * REAL production objects rather than stubs of them: the ProtectEventDispatch behind its events member, the DiagnosticsHealthBridge behind health, the
  * RemovalStabilityGate behind removals, and the RebootScheduler behind reboot. So a routed event, a removal decision, and a reboot attempt alike travel the production
- * path. makeTestNvr is the composition root of the harness: it wires a store, a platform, a dispatch, and the streaming-delegate
- * factory into a controller a real device class can be constructed against end to end, with no FFmpeg and no live HAP. A row that runs the real controller root
- * itself builds it over the same double's platform through makeRootPlatform, with a client double answering its connect port, makeConnectedClient's for a connected
- * controller, and TestConnection as its connection monitor.
+ * path. makeTestNvr is the composition root of the harness: it wires a store, a platform, a dispatch, and the streaming-delegate factory into a controller a real
+ * device class can be constructed against end to end, with no FFmpeg, over HBPU's Homebridge API double and the real HAP the root harness loads. A row that runs the
+ * real controller root itself builds it over the same double's platform through makeRootPlatform, with a client double answering its connect port,
+ * makeConnectedClient's for a connected controller, and TestConnection as its connection monitor.
  *
  * Fidelity to the cited contracts, not invention, is the line these doubles hold: the removal decision IS ProtectNvr's own gate class and the MQTT surface is
- * homebridge-plugin-utils'. The cross-cutting core - the HAP double, the state store, and the streaming-delegate stub - lives in the root harness this file imports
- * from.
+ * homebridge-plugin-utils', and the API double is HBPU's own, running Homebridge's bridge bookkeeping over the real accessories. The cross-cutting core - the
+ * Homebridge runtime, the state store, and the streaming-delegate stub - lives in the root harness this file imports from.
  */
-import type { API, HAP } from "homebridge";
 import { APIEvent, AccessoryPersistence, FeatureOptions } from "homebridge-plugin-utils";
 import type { Camera, Chime, ProtectCameraConfig, ProtectClient, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig,
   ProtectRingtoneConfig } from "unifi-protect";
-import { Characteristic, Service, TestAccessory, TestCameraController, TestStreamingDelegateFactory } from "../testing.helpers.ts";
 import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { NvrPhase, ProtectNvr } from "./nvr.ts";
 import { OVERRIDE_ADDRESS_ZONE_WARNING, countActiveRecordingViews, isDisruptionExpected, resolveOverrideAddress } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "../options.ts";
-import type { TestApiCall, TestStateStore } from "../testing.helpers.ts";
-import { TestClock, TestLivestreamProcessFactory, TestMqttClient, TestRecordingProcessFactory, capturingLog } from "homebridge-plugin-utils/testing";
+import { TestClock, TestHomebridgeApi, TestLivestreamProcessFactory, TestMqttClient, TestRecordingProcessFactory, capturingLog } from "homebridge-plugin-utils/testing";
+import type { TestProtectAccessory, TestStateStore } from "../testing.helpers.ts";
+import { TestStreamingDelegateFactory, makeTestAccessory, runtime } from "../testing.helpers.ts";
 import { featureOptionCategories, featureOptions } from "../options.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
@@ -48,27 +47,18 @@ import type { TestChimeProjection } from "../devices/testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
 
-// The platform double's honest structural type. The members mirror what ProtectBase and the camera-family construction paths read off nvr.platform: the HAP
-// namespaces plus the deterministic uuid generator, the injected test clock (typed as the library's TestClock, so the double and every suite advance it with no
-// cast), the platform-accessory class and the registration recorders (the doorbell's configurePackageCamera and the NVR removal tail drive them), the event
-// registration Homebridge's API offers, the platform's mutable accessories array, a concrete codecSupport (the real platform getter throws before the FFmpeg probe - a
+// The platform double's honest structural type. The members mirror what ProtectBase and the camera-family construction paths read off nvr.platform: HBPU's
+// Homebridge API double, which carries the real HAP namespace, Homebridge's own platform-accessory class, the accessory calls the doorbell's configurePackageCamera
+// and the NVR removal tail drive, and the lifecycle events Homebridge's API emits; the injected test clock (typed as the library's TestClock, so the double and every
+// suite advance it with no cast); the platform's mutable accessories array; a concrete codecSupport (the real platform getter throws before the FFmpeg probe - a
 // concrete object with a non-raspbian hostSystem keeps the recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions
 // engine, the log sinks, the REAL accessory persistence built over the API double and the test clock, the scoped debug gate every owner's logger asks before it
 // speaks, the livestream-process and recording-process factory interfaces (the RTSP debug adapter and the recording delegate construct their FFmpeg processes through
 // them), and the streaming-delegate factory interface.
 export interface TestProtectPlatform {
 
-  readonly accessories: TestAccessory[];
-  readonly api: {
-
-    hap: { CameraController: typeof TestCameraController; Characteristic: typeof Characteristic; Service: typeof Service; uuid: { generate: (seed: string) => string } };
-    on: (event: APIEvent, listener: () => void) => void;
-    platformAccessory: typeof TestAccessory;
-    publishExternalAccessories: (pluginName: string, accessories: TestAccessory[]) => void;
-    registerPlatformAccessories: (pluginName: string, platformName: string, accessories: TestAccessory[]) => void;
-    unregisterPlatformAccessories: (pluginName: string, platformName: string, accessories: TestAccessory[]) => void;
-    updatePlatformAccessories: (accessories: TestAccessory[]) => void;
-  };
+  readonly accessories: ProtectAccessory[];
+  readonly api: TestHomebridgeApi;
   readonly clock: TestClock;
   readonly codecSupport: { hostSystem: string };
   readonly config: ProtectOptions;
@@ -99,16 +89,6 @@ export const TEST_CLOCK_EPOCH = 1700000000000;
  * much to close the window its marks opened, so a window that grew would leave the row reading no save rather than passing on a stale number.
  */
 export const SAVE_WINDOW_MS = 1000;
-
-/* Present a harness accessory to an API typed on the production accessory - the removal gate's action surface and its schedule options both are. The double's graph
- * holds TestAccessory instances and the two types are assignable in neither direction, so the crossing is a structural cast, and it lives here in one owned spot
- * exactly as the file's other confined casts do rather than being re-spelled at each call site.
- *
- * @param accessory - The harness accessory to present.
- *
- * @returns the same instance, typed as the production accessory.
- */
-export const asProtectAccessory = (accessory: TestAccessory): ProtectAccessory => accessory as unknown as ProtectAccessory;
 
 /* The shared recording event-dispatch double: a REAL ProtectEventDispatch whose motion delivery is overridden to record into an array rather than touch HomeKit or arm a
  * reset timer. The override's arity and parameter types mirror production's motionEventHandler (event-dispatch.ts) exactly, so it type-checks as a true override; the two
@@ -148,8 +128,8 @@ interface TestRecordingView {
  * The removals member is the REAL RemovalStabilityGate, wired as ProtectNvr wires its own: the same DelayDeviceRemoval grace supplier read through the REAL
  * FeatureOptions engine, the double's recording log, the platform's test clock, and the controller lifetime signal its timers bind to. So a test drives the production
  * stability arithmetic and the production TimerRegistry graces, and a test that needs a grace to fire advances the platform's test clock rather than reaching for an
- * inspection surface. Facts go in through pushControllerStability / restabilizeController; what comes out is observable on the accessory graph, the registration
- * recorders, and the log. Its ergonomics are deliberate. A fresh double starts stable - the construction seed pushes a controller up longer than the stability window -
+ * inspection surface. Facts go in through pushControllerStability / restabilizeController; what comes out is observable on the accessory graph, the API double's
+ * calls, and the log. Its ergonomics are deliberate. A fresh double starts stable - the construction seed pushes a controller up longer than the stability window -
  * so a lifecycle test schedules without ceremony. And the sweep action is a bare counter: the seed arms a zero-delay sweep on the test clock, which fires on whichever
  * advance of the clock comes first, so it must touch nothing for that timing to be harmless.
  *
@@ -272,14 +252,13 @@ export class TestProtectNvr {
      * double's recording log, the platform's test clock, and the controller lifetime signal its TimerRegistry binds to. One divergence is deliberate: production's
      * removeDevice action is the root's richer removeHomeKitDevice cascade, while the double's is its own thin removal tail. The gate cares only that its decision runs
      * an action - executing a removal is the root's territory in the double exactly as it is in production - and the tail is the executor every consuming test already
-     * reads. The action surface is typed on the production accessory while the double's graph holds TestAccessory instances, so the crossing takes the file's
-     * structural cast.
+     * reads.
      */
     this.removals = new RemovalStabilityGate({
 
       actions: {
 
-        removeDevice: (accessory: ProtectAccessory): void => this.removeAccessoryFromHomeKit(accessory as unknown as TestAccessory),
+        removeDevice: (accessory: ProtectAccessory): void => this.removeAccessoryFromHomeKit(accessory),
         runSweep: (): void => { this.sweepRequests++; }
       },
       clock: init.platform.clock,
@@ -475,12 +454,11 @@ export class TestProtectNvr {
   }
 
   // The sweep-stale removal interface, mirroring production: route the camera's request to the REAL DoorbellCapability.removeServices SSOT, with the platform's HAP
-  // namespace and the double's log - so suite D exercises the actual removal logic, not a stand-in. The double's structural HAP shape is cast to the production parameter
-  // type through unknown, the same confined-cast discipline every other harness boundary uses; the log shape already satisfies HomebridgePluginLogging structurally.
-  // A sweep that removed something marks the accessory for the next save, as production's does.
+  // namespace and the double's log - so suite D exercises the actual removal logic, not a stand-in. The log shape already satisfies HomebridgePluginLogging
+  // structurally. A sweep that removed something marks the accessory for the next save, as production's does.
   public removeStaleDoorbellServices(accessory: ProtectAccessory): void {
 
-    if(DoorbellCapability.removeServices(accessory, this.platform.api.hap as unknown as HAP, this.log)) {
+    if(DoorbellCapability.removeServices(accessory, this.platform.api.hap, this.log)) {
 
       this.platform.persistence.persist(accessory);
     }
@@ -488,7 +466,7 @@ export class TestProtectNvr {
 
   // The production removal tail, mirrored: a presence guard so a stale double-fire is a no-op (never a splice(-1) corruption), the platform persistence's unregister,
   // which drops any pending save and unregisters only a bridged accessory, and the splice.
-  public removeAccessoryFromHomeKit(accessory: TestAccessory): void {
+  public removeAccessoryFromHomeKit(accessory: ProtectAccessory): void {
 
     const index = this.platform.accessories.indexOf(accessory);
 
@@ -497,7 +475,7 @@ export class TestProtectNvr {
       return;
     }
 
-    this.platform.persistence.unregister([asProtectAccessory(accessory)]);
+    this.platform.persistence.unregister([accessory]);
     this.platform.accessories.splice(index, 1);
   }
 }
@@ -567,31 +545,31 @@ export function makeNvrConfig(options: { doorbellSettings?: ProtectNvrConfig["do
  *                  through the test double); mqtt: pass true to install the recording MQTT double (the default null makes every MQTT wrapper
  *                  a no-op, matching an unconfigured broker); overrideAddress: the controller-level address override for rtspHost-chain tests; recordingProcessFactory:
  *                  an optional test recording-process factory installed on the platform double's recordingProcessFactory interface (omitted, a fresh default factory is
- *                  created so the recording delegate constructs its FFmpeg process through the test double); sharedPlatform: an optional { accessories, apiCalls } pair
- *                  captured from a previously built double, so a second controller reconciles over the SAME platform accessories array and registration recorder as the
- *                  first, mirroring production's one shared ProtectPlatform - the shared state a multi-controller test uses to prove one controller's reconcile leaves
- *                  the other's switches untouched (omitted, each call builds its own fresh accessories array and apiCalls recorder); store: the state-store double
+ *                  created so the recording delegate constructs its FFmpeg process through the test double); sharedPlatform: an optional { accessories, api } pair
+ *                  captured from a double built earlier, so a second controller reconciles over the SAME platform accessories array and Homebridge API double as
+ *                  the first, mirroring production's one shared ProtectPlatform - the shared state a multi-controller test uses to prove one controller's reconcile
+ *                  leaves the other's switches untouched (omitted, each call builds its own fresh accessories array and API double); store: the state-store double
  *                  backing client.state; userOptions: feature-option config strings (the production options array shape, e.g. "Enable.Device.SyncName" or
  *                  "Disable.Nvr.DelayDeviceRemoval") applied to the REAL FeatureOptions engine.
  *
- * @returns apiCalls: every homebridge accessory-registration call the platform double recorded; clock: the controllable TestClock installed on the platform double (the
- *          instance everything built against the double reads through platform.clock, so a test advances it to fire what is due); controller: the AbortController behind
- *          nvr.signal (abort it in suite teardown); factory: the stub streaming-delegate factory; logEntries: every line the construction path logged; mqtt: the
- *          recording MQTT double when requested, else null; nvr: the NVR double.
+ * @returns api: the platform's Homebridge API double, whose calls record every accessory call Homebridge accepted; clock: the controllable TestClock installed on the
+ *          platform double (the instance everything built against the double reads through platform.clock, so a test advances it to fire what is due); controller: the
+ *          AbortController behind nvr.signal (abort it in suite teardown); factory: the stub streaming-delegate factory; logEntries: every line the construction path
+ *          logged; mqtt: the recording MQTT double when requested, else null; nvr: the NVR double.
  */
 export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: TestClock; controllerName?: string; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
   doorbellSettings?: ProtectNvrConfig["doorbellSettings"];
   livestreamProcessFactory?: LivestreamProcessFactory;
   mqtt?: boolean; overrideAddress?: string;
   recordingProcessFactory?: RecordingProcessFactory;
-  sharedPlatform?: { accessories: TestAccessory[]; apiCalls: TestApiCall[] }; store: TestStateStore; userOptions?: string[]; }):
-{ apiCalls: TestApiCall[]; clock: TestClock; controller: AbortController; factory: TestStreamingDelegateFactory; logEntries: readonly TestLogEntry[];
+  sharedPlatform?: { accessories: ProtectAccessory[]; api: TestHomebridgeApi }; store: TestStateStore; userOptions?: string[]; }):
+{ api: TestHomebridgeApi; clock: TestClock; controller: AbortController; factory: TestStreamingDelegateFactory; logEntries: readonly TestLogEntry[];
   mqtt: Nullable<TestMqttClient>; nvr: TestProtectNvr; } {
 
-  // Reuse the caller-supplied accessories array and registration recorder when sharing a platform across controllers, so a second controller sees and reconciles over
-  // the first's switches; otherwise each call gets its own fresh pair, keeping every existing single-controller call unchanged.
+  // Reuse the caller-supplied accessories array and API double when sharing a platform across controllers, so a second controller sees and reconciles over the first's
+  // switches; otherwise each call gets its own fresh pair over the one runtime every suite shares.
   const accessories = options.sharedPlatform?.accessories ?? [];
-  const apiCalls = options.sharedPlatform?.apiCalls ?? [];
+  const api = options.sharedPlatform?.api ?? new TestHomebridgeApi(runtime);
 
   // The HELD chime projection doubles client.chimes returns: the SAME instances captured once here, never a per-access rebuild. The doorbell's setChimeVolume filters
   // client.chimes and calls update() on the matching projection, and a test asserts that projection's updateCalls / sets its updateRejection lever, so they must be
@@ -671,61 +649,11 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
     state: options.store
   };
 
-  // The shutdown listeners registered through the API double, kept as Homebridge keeps them. Nothing here raises them: the doubles never shut down the way Homebridge
-  // does, so a save the accessory persistence holds leaves only when its window comes due on the test clock.
-  const shutdownListeners: (() => void)[] = [];
-
-  // The homebridge API double: a deterministic, injective uuid generator (a pure function of the seed, so tests can pre-compute cached-accessory UUIDs), the event
-  // registration, the platform-accessory class, and the registration recorders. The publish, register and unregister recorders also maintain the bridged flag,
-  // mirroring how standalone publication leaves a real accessory unbridged, bridge registration marks it bridged, and a removal from the bridge clears it again.
-  const api = {
-
-    hap: { CameraController: TestCameraController, Characteristic: Characteristic, Service: Service,
-      uuid: { generate: (seed: string): string => "uuid:" + seed } },
-    on: (event: APIEvent, listener: () => void): void => {
-
-      if(event === APIEvent.SHUTDOWN) {
-
-        shutdownListeners.push(listener);
-      }
-    },
-    platformAccessory: TestAccessory,
-    publishExternalAccessories: (_pluginName: string, published: TestAccessory[]): void => {
-
-      for(const accessory of published) {
-
-        accessory._associatedHAPAccessory.bridged = false;
-      }
-
-      apiCalls.push({ accessories: published, kind: "publishExternal" });
-    },
-    registerPlatformAccessories: (_pluginName: string, _platformName: string, registered: TestAccessory[]): void => {
-
-      for(const accessory of registered) {
-
-        accessory._associatedHAPAccessory.bridged = true;
-      }
-
-      apiCalls.push({ accessories: registered, kind: "register" });
-    },
-    unregisterPlatformAccessories: (_pluginName: string, _platformName: string, unregistered: TestAccessory[]): void => {
-
-      for(const accessory of unregistered) {
-
-        accessory._associatedHAPAccessory.bridged = false;
-      }
-
-      apiCalls.push({ accessories: unregistered, kind: "unregister" });
-    },
-    updatePlatformAccessories: (updated: TestAccessory[]): void => {
-
-      apiCalls.push({ accessories: [...updated], kind: "update" });
-    }
-  };
-
   // The REAL accessory persistence, built over the API double and the test clock as the platform builds its own over Homebridge's API and the system clock, so every
-  // save production asks for lands in the update recorder once its window comes due. The API double is presented as Homebridge's through the file's confined cast.
-  const persistence = new AccessoryPersistence({ api: api as unknown as API, clock, platformName: PLATFORM_NAME, pluginIdentifier: PLUGIN_NAME });
+  // save production asks for lands among the API double's update calls once its window comes due. The persistence reaches only the API members HBPU names for it,
+  // which the API double carries, so it takes the double as it is. Nothing here emits Homebridge's shutdown, so a save the persistence holds leaves only when its window
+  // comes due on the test clock.
+  const persistence = new AccessoryPersistence({ api, clock, platformName: PLATFORM_NAME, pluginIdentifier: PLUGIN_NAME });
 
   const nvr = new TestProtectNvr({
 
@@ -761,15 +689,33 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
     signal: controller.signal
   });
 
-  return { apiCalls, clock, controller, factory, logEntries: log.entries, mqtt, nvr };
+  return { api, clock, controller, factory, logEntries: log.entries, mqtt, nvr };
 }
 
 /**
- * Build a pre-linked doorbell-plus-package accessory pair shaped like a bridged restart restore, pushed into the platform double's accessories array. Homebridge
- * restores BRIDGED cached accessories at startup; external (standalone) accessories are never restored, so a standalone package has no restart-shaped fixture -
- * mirroring the production exclusion. The identity values are deliberate fixture literals rather than derivations from the production constants: like the
- * golden-master corpus, they pin what persisted state in the field actually looks like, so a drift in the persistence-critical identity suffix breaks these
- * fixtures loudly instead of silently following along.
+ * Place cached accessories on the platform the way Homebridge does at startup: the API double restores each one, writing Homebridge's FirmwareRevision placeholder,
+ * handing it to the platform's configureAccessory, which keeps it in the accessories array, and only then bridging it. An accessory staged this way is bridged, as a
+ * cached accessory is in production, so the accessory persistence saves and unregisters it, while an accessory pushed without a restore stays off the bridge as a
+ * never-registered one does. The placeholder's write is the one change a restored accessory carries before production touches it.
+ *
+ * @param nvr         - The NVR double whose platform receives the accessories.
+ * @param accessories - The cached accessories to restore, in the order Homebridge hands them over.
+ */
+export function restoreAccessories(nvr: TestProtectNvr, accessories: ProtectAccessory[]): void {
+
+  // The platform double is no ProtectPlatform, so the restore hands its accessories to a stand-in carrying the one method Homebridge calls, which keeps each in the
+  // double's array as production's configureAccessory keeps it in the platform's.
+  const platform = { configureAccessory: (accessory: ProtectAccessory): void => void nvr.platform.accessories.push(accessory) };
+
+  nvr.platform.api.restorePlatformAccessories({ accessories, platform, platformName: PLATFORM_NAME, pluginIdentifier: PLUGIN_NAME });
+}
+
+/**
+ * Build a pre-linked doorbell-plus-package accessory pair shaped like a bridged restart restore, restored onto the platform double's bridge and into its accessories
+ * array. Homebridge restores BRIDGED cached accessories at startup; external (standalone) accessories are never restored, so a standalone package has no
+ * restart-shaped fixture - mirroring the production exclusion. The identity seeds are deliberate fixture literals rather than derivations from the production
+ * constants: like the golden-master corpus, they hold fixed what persisted state in the field actually looks like, so a drift in the persistence-critical identity
+ * suffix breaks these fixtures loudly instead of silently following along.
  *
  * @param options - mac: the parent doorbell's MAC (defaults to the camera builder's default); name: the parent's display name; nvr: the NVR double whose platform
  *                  accessories array receives the pair.
@@ -777,19 +723,19 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
  * @returns packageAccessory: the cached package camera accessory; parentAccessory: the cached parent doorbell accessory.
  */
 export function makeTestAccessoryFamily(options: { mac?: string; name?: string; nvr: TestProtectNvr }):
-{ packageAccessory: TestAccessory; parentAccessory: TestAccessory } {
+{ packageAccessory: TestProtectAccessory; parentAccessory: TestProtectAccessory } {
 
   const mac = options.mac ?? "74ACB9000001";
   const name = options.name ?? "Test Doorbell";
-  const parentAccessory = new TestAccessory(name, "uuid:" + mac);
+  const parentAccessory = makeTestAccessory(name, mac);
 
   parentAccessory.context = { mac: mac, nvr: options.nvr.ufp.mac };
 
-  const packageAccessory = new TestAccessory(name + " Package Camera", "uuid:" + mac + ".PackageCamera");
+  const packageAccessory = makeTestAccessory(name + " Package Camera", mac + ".PackageCamera");
 
   packageAccessory.context = { nvr: options.nvr.ufp.mac, packageCamera: mac };
 
-  options.nvr.platform.accessories.push(parentAccessory, packageAccessory);
+  restoreAccessories(options.nvr, [ parentAccessory, packageAccessory ]);
 
   return { packageAccessory, parentAccessory };
 }
@@ -872,34 +818,31 @@ export function makeConnectedClient(options: { nvrConfig: ProtectNvrConfig; stor
 }
 
 /**
- * Build the platform a real controller root is constructed over: the controller double's own, with the Homebridge API's event registration the root's constructor
- * adds to what a device reads. The root registers its shutdown there, and the platform keeps each listener, so a row ends the root's run the way Homebridge's exit
- * does and no process-global diagnostics subscription the root attached outlives the row.
+ * Build the platform a real controller root is constructed over: the controller double's own, whose Homebridge API double is the API the root registers its shutdown
+ * listener on. The double is handed over as the instance itself, because its accessory calls and its event methods live on its prototype. Shutdown is one shutdown
+ * event on that API, the way Homebridge's exit raises it, so the root's listener and the accessory persistence's run together and no process-global diagnostics
+ * subscription the root attached outlives the row.
  *
  * @param double - The controller double whose platform the root is built over.
  *
- * @returns platform: the platform to construct the root with; shutdown: runs every shutdown listener the root registered, each once, so a second call does nothing.
+ * @returns platform: the platform to construct the root with; shutdown: emits Homebridge's shutdown once, so a second call does nothing.
  */
 export function makeRootPlatform(double: TestProtectNvr): { platform: ProtectPlatform; shutdown: () => void } {
 
-  const listeners: (() => void)[] = [];
-  const platform = { ...double.platform, api: { ...double.platform.api, on: (event: APIEvent, listener: () => void): void => {
-
-    if(event === APIEvent.SHUTDOWN) {
-
-      listeners.push(listener);
-    }
-  } } };
+  let shutDown = false;
 
   return {
 
-    platform: platform as unknown as ProtectPlatform,
+    platform: double.platform as unknown as ProtectPlatform,
     shutdown: (): void => {
 
-      for(const listener of listeners.splice(0)) {
+      if(shutDown) {
 
-        listener();
+        return;
       }
+
+      shutDown = true;
+      double.platform.api.emit(APIEvent.SHUTDOWN);
     }
   };
 }

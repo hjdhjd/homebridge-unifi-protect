@@ -305,7 +305,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
     // Generate a UUID for the package camera, seeded by the package camera's identity - the parent's MAC address plus the persistence-critical identity suffix. We derive
     // the id through the shared leaf function rather than the package class, so the capability consumes the package's identity without value-importing its sibling class.
-    // The bare MAC comes from the raw record (present at configure time), not the narrowed live-state projection that no longer carries identity.
+    // The bare MAC comes from the raw record (present at configure time), not the narrowed live-state projection, which carries no identity.
     const uuid = this.hap.uuid.generate(packageCameraId(this.#device.config.mac));
 
     // Let's find it if we've already created it.
@@ -351,7 +351,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
    */
   public reconcilePackageCamera(): void {
 
-    // The bare MAC comes from the raw record, not the narrowed live-state projection that no longer carries identity.
+    // The bare MAC comes from the raw record, not the narrowed live-state projection, which carries no identity.
     const uuid = this.hap.uuid.generate(packageCameraId(this.#device.config.mac));
 
     // The capability is present: cancel any pending detach grace first (a flap back during the grace window must actually cancel the timer - configurePackageCamera's
@@ -948,9 +948,6 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
   }
 
   private async setChimeVolume(value: number): Promise<void> {
-
-    // Clamp to a non-negative volume.
-    value = Math.max(value, 0);
 
     // A chime can be assigned to multiple doorbells, so update the ring entry for THIS doorbell on every chime that serves it. The controller is the single,
     // immutable source of state, so each update is write-through only: we send the PATCH and let the reducer's stream reflect the change once it arrives. We send a

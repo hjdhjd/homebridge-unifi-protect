@@ -6,24 +6,22 @@
  * on failure. runDeviceCommand is the one place that converts that throw contract into the boolean every HomeKit onSet handler branches on, and the one place a
  * user-initiated command failure is reported - an authorization failure earns the actionable "full management role" guidance, any other is reported with its underlying
  * cause, rendered through the family-wide formatErrorMessage so the reported sentence carries exactly one terminal period. These tests pin that contract against the
- * real production method, then exercise the command paths that route through it - setStatusLed and the night-vision and access-unlock onSet reverts - through the HAP
- * test-double.
+ * real production method, then exercise the command paths that route through it - setStatusLed and the night-vision and access-unlock onSet reverts - through real
+ * HAP services.
  *
  * ProtectDevice is the smallest real surface that carries the helper: the abstract base declares no abstract members, so a near-empty concrete leaf is a faithful
  * instance whose runDeviceCommand, setStatusLed, and statusLedCommand are all the base's own (the same admission reachability.test.ts relies on). The camera/light/etc.
  * leaves are not unit-constructable - they stand up a HAP accessory and, for cameras, the streaming stack at construction - so the leaf onSet closures themselves are
  * modeled here in the exact shape they ship, while the shared command path they all route through is the real one.
  */
-import { Characteristic, Service, makeTestAccessory } from "../testing.helpers.ts";
+import { Characteristic, Service, hap, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { TEST_CLOCK_EPOCH } from "../nvr/testing.helpers.ts";
 import { TestClock } from "homebridge-plugin-utils/testing";
-import type { TestService } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import util from "node:util";
 
@@ -62,14 +60,13 @@ const makeDevice = (update: (payload: unknown) => Promise<unknown> = () => Promi
   // same bare descriptor logName produces.
   const config = {};
   const device = { config, isOnline: true, modelKey, name: "Test Device", peek: (): Record<string, unknown> => config, update };
-  const hap = { Characteristic: { StatusActive: Characteristic.StatusActive } };
   const nvr = {
 
     client: { connection: { isHealthy: true } },
     platform: { api: { hap }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
     signal: new AbortController().signal
   };
-  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, makeTestAccessory() as unknown as ProtectAccessory, device as unknown as Camera);
+  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, makeTestAccessory(), device as unknown as Camera);
 
   return { device, errors, instance };
 };
@@ -188,12 +185,12 @@ describe("setStatusLed (real migrated command path)", () => {
   });
 });
 
-describe("migrated onSet revert through the HAP test-double", () => {
+describe("the onSet revert through HAP", () => {
 
   // The night-vision onSet shape both camera reactions ship: push the command through the shared helper, and on failure revert the switch to its prior state. The leaf
-  // defers the revert through its deferred reflect in production; we apply it synchronously here so the HAP-double write is observable without a timer, and pre-set the
+  // defers the revert through its deferred reflect in production; we apply it synchronously here so the HAP write is observable without a timer, and pre-set the
   // characteristic to the requested value first to model HAP applying the set to its read cache before the handler runs.
-  const nightVisionOnSet = (harness: CommandHarness, service: TestService) => async (value: boolean): Promise<void> => {
+  const nightVisionOnSet = (harness: CommandHarness, service: Service) => async (value: boolean): Promise<void> => {
 
     if(!(await harness.instance.runCommand("set night vision to " + (value ? "auto" : "off"),
       () => harness.device.update({ ispSettings: { irLedMode: value ? "auto" : "off" } })))) {
@@ -235,7 +232,7 @@ describe("access unlock onSet (real runDeviceCommand)", () => {
   // defers the revert through its deferred reflect; we apply it synchronously so the writes are observable without a timer. On success, production reports the
   // momentary unlock by pushing the UNSECURED current state and schedules an auto re-lock on a live keyed timer we do not model here, so we assert the report and that
   // nothing logs.
-  const unlockOnSet = (harness: CommandHarness, service: TestService, unlock: () => Promise<unknown>) => async (): Promise<void> => {
+  const unlockOnSet = (harness: CommandHarness, service: Service, unlock: () => Promise<unknown>) => async (): Promise<void> => {
 
     if(!(await harness.instance.runCommand("unlock the Access device", unlock))) {
 

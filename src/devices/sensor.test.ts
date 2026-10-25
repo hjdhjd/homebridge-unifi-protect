@@ -39,19 +39,19 @@
  * The isolation model mirrors the light reference: a beforeEach builds a fresh sensor so the recording calls, the characteristic state, the observer baselines, and
  * store.observerCount are clean every test, the wake log is windowed per push via a captured baseline, and an afterEach unwinds the sensor's per-accessory abort.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
-import type { CharacteristicType, TestAccessory } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, writesTo } from "../testing.helpers.ts";
+import type { CharacteristicKind, TestProtectAccessory } from "../testing.helpers.ts";
 import { ProtectSensor, narratesTransition } from "./sensor.ts";
 import type { ProtectSensorAirQuality, Sensor } from "unifi-protect";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { TestSensorProjection, makeSensorConfig, makeSmokeStatus } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
-import { logCount, loggedAt, settle } from "homebridge-plugin-utils/testing";
+import { logCount, loggedAt, settle, triggerGet } from "homebridge-plugin-utils/testing";
+import type { CharacteristicValue } from "homebridge";
 import { NOT_CAPABLE_AIR_QUALITY } from "./air-quality-policy.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ObserverWakePayload } from "../diagnostics.ts";
-import type { ProtectAccessory } from "../types.ts";
 import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
@@ -61,6 +61,14 @@ import diagnosticsChannel from "node:diagnostics_channel";
 // The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
 // which is the tail rather than the child topic the registration lands on.
 const composedTail = (topic: string): string => topic.replace(/\/(get|set)$/, "");
+
+// The value HAP stores for a reading written to a characteristic of the given kind. HAP rounds a number to the characteristic's own step, a whole percent of humidity
+// or a tenth of a degree, so a row asserting that a reading landed compares against HAP's stored form of it, read from a fresh characteristic of the same kind, rather
+// than restating the rounding.
+function storedByHap(kind: CharacteristicKind, reading: number): Nullable<CharacteristicValue> {
+
+  return new kind().updateValue(reading).value;
+}
 
 // A full block of air-quality readings, quiet except the metrics a case names - the shape the controller always sends, where every metric is present whether or not the
 // hardware measures it. Air-quality patches carry the WHOLE block, matching how this suite pushes every other nested settings object.
@@ -84,8 +92,8 @@ const controllers: AbortController[] = [];
 // before construction. The injected recording dispatch is read off nvr.events after construction rather than captured from the factory closure - reading it back avoids
 // both the assignment-expression smell and a TS2454 definite-assignment error on a factory-captured binding.
 function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {},
-  harnessOptions: { accessory?: TestAccessory; disconnected?: boolean; userOptions?: string[] } = {}): {
-  accessory: TestAccessory; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; projection: TestSensorProjection; recording: TestRecordingDispatch;
+  harnessOptions: { accessory?: TestProtectAccessory; disconnected?: boolean; userOptions?: string[] } = {}): {
+  accessory: TestProtectAccessory; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; projection: TestSensorProjection; recording: TestRecordingDispatch;
   sensor: ProtectSensor; store: TestStateStore;
 } {
 
@@ -103,9 +111,9 @@ function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {},
   }
 
   const recording = nvr.events as TestRecordingDispatch;
-  const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Sensor", "uuid:test-sensor");
+  const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Sensor", sensorConfig.mac);
   const projection = new TestSensorProjection(sensorConfig.id, store);
-  const sensor = new ProtectSensor(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Sensor);
+  const sensor = new ProtectSensor(nvr as unknown as ProtectNvr, accessory, projection as unknown as Sensor);
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast (either of which the house lint preset forbids in opposite directions), and fails loudly if the opt-in ever stops installing the double.
@@ -125,7 +133,7 @@ describe("real ProtectSensor construction and family behavior", () => {
   const onWake = (message: unknown): void => { wakeLog.push(message as ObserverWakePayload); };
 
   // The per-test-fresh handles, rebuilt in beforeEach so every test starts from a clean sensor, clean captures, and clean wake baseline.
-  let accessory: TestAccessory;
+  let accessory: TestProtectAccessory;
   let constructionWakes = 0;
   let logEntries: readonly TestLogEntry[];
   let mqtt: TestMqttClient;
@@ -180,7 +188,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(battery, "configureBatteryService is unconditional, so an all-quiet sensor still carries the Battery service");
     assert.equal(battery.getCharacteristic(Characteristic.BatteryLevel).value, 100, "BatteryLevel initialized from batteryStatus.percentage");
-    assert.equal(battery.getCharacteristic(Characteristic.StatusLowBattery).value, false, "StatusLowBattery initialized from batteryStatus.isLow");
+    assert.equal(battery.getCharacteristic(Characteristic.StatusLowBattery).value, Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL,
+      "StatusLowBattery initialized from batteryStatus.isLow");
   });
 
   test("an all-quiet sensor carries no per-mode services and emits no enabled-diff log at construction", () => {
@@ -227,9 +236,9 @@ describe("real ProtectSensor construction and family behavior", () => {
     // Fold C27: the motion sensor and its Motion.Switch must both be enabled so configureMotionSwitch takes its service branch rather than its disabled branch, whose
     // force-reset would stamp detectMotion back to true and mask the fix. Pre-seed the accessory as if the user had turned motion detection off in a prior session; the
     // context reset must carry that choice across the restart rather than wiping it back to the default.
-    const seeded = makeTestAccessory("Test Sensor", "uuid:test-sensor");
+    const seeded = makeTestAccessory("Test Sensor", makeSensorConfig().mac);
 
-    seeded.context["detectMotion"] = false;
+    seeded.context.detectMotion = false;
 
     const built = buildSensor({ motionEnabled: true }, { accessory: seeded, userOptions: ["Enable.Motion.Switch"] });
 
@@ -237,7 +246,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     try {
 
-      assert.equal(built.accessory.context["detectMotion"], false, "a persisted detectMotion of false survives the context reset rather than being wiped back to true");
+      assert.equal(built.accessory.context.detectMotion, false, "a persisted detectMotion of false survives the context reset rather than being wiped back to true");
     } finally {
 
       built.sensor.cleanup();
@@ -290,10 +299,13 @@ describe("real ProtectSensor construction and family behavior", () => {
     const alarm = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
 
     assert.ok(alarm, "enabling alarm settings materializes the alarm-sound ContactSensor at its subtype");
-    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, true, "ContactSensorState initialized from a non-null alarmTriggeredAt");
-    assert.equal(await alarm.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), true, "the alarm onGet reads through alarmTriggeredAt !== null");
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "ContactSensorState initialized from a non-null alarmTriggeredAt");
+    assert.equal(await triggerGet(alarm.getCharacteristic(Characteristic.ContactSensorState)), Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the alarm onGet reads through alarmTriggeredAt !== null");
     assert.equal(alarm.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive carried from isReachable");
-    assert.equal(alarm.getCharacteristic(Characteristic.StatusTampered).value, false, "StatusTampered carried from sensorTamperState(null)");
+    assert.equal(alarm.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
+      "StatusTampered carried from sensorTamperState(null)");
     assert.ok(built.mqtt.published.some((entry) => (entry.topic === built.projection.config.mac + "/alarm") && (entry.payload === "true")),
       "the alarm state published on the device-scoped topic");
     assert.ok(loggedAt(built.logEntries, "info", "Enabled sensor: alarm sound."), "one enabled sensor logs the SINGULAR enabled-sensor line");
@@ -310,7 +322,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(light, "enabling light settings materializes the LightSensor");
     assert.equal(light.getCharacteristic(Characteristic.CurrentAmbientLightLevel).value, 0.0001, "an absent light stat floors the initialized value to 0.0001");
-    assert.equal(await light.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 0.0001, "the onGet floors -1 to the 0.0001 HomeKit minimum");
+    assert.equal(await triggerGet(light.getCharacteristic(Characteristic.CurrentAmbientLightLevel)), 0.0001, "the onGet floors -1 to the 0.0001 HomeKit minimum");
     assert.ok(built.mqtt.published.some((entry) => entry.topic === built.projection.config.mac + "/ambientlight"),
       "the ambient state published on the device-scoped topic");
 
@@ -324,7 +336,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     const light = built.accessory.getService(Service.LightSensor);
 
     assert.ok(light, "the LightSensor exists");
-    assert.equal(await light.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 250, "a present stat above the floor reads through unchanged");
+    assert.equal(await triggerGet(light.getCharacteristic(Characteristic.CurrentAmbientLightLevel)), 250, "a present stat above the floor reads through unchanged");
 
     built.sensor.cleanup();
   });
@@ -348,7 +360,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     const contact = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR);
 
     assert.ok(contact, "a door mountType materializes the mount-type ContactSensor at its subtype");
-    assert.equal(await contact.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), false, "the contact onGet reads through isOpened ?? false");
+    assert.equal(await triggerGet(contact.getCharacteristic(Characteristic.ContactSensorState)), Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the contact onGet reads through isOpened ?? false");
     assert.equal(contact.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive carried from isReachable");
     assert.ok(built.mqtt.published.some((entry) => entry.topic === built.projection.config.mac + "/contact"), "the contact state published on the device-scoped topic");
 
@@ -418,7 +431,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     const humidity = built.accessory.getService(Service.HumiditySensor);
 
     assert.ok(humidity, "enabling humidity settings materializes the HumiditySensor");
-    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).writes.length, 0,
+    assert.equal(writesTo(built.accessory, humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity)).length, 0,
       "no source reporting means no write at all - no sentinel, no floor");
     assert.equal(built.mqtt.published.some((entry) => entry.topic === (mac + "/humidity")), false, "nothing was published for a reading the sensor never gave");
 
@@ -426,8 +439,10 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, 47.5, "the arriving stats reading landed on the characteristic");
-    assert.equal(await humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).triggerGet(), 47.5, "the onGet reads through the live stat value");
+    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, storedByHap(Characteristic.CurrentRelativeHumidity, 47.5),
+      "the arriving stats reading landed on the characteristic");
+    assert.equal(await triggerGet(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity)), storedByHap(Characteristic.CurrentRelativeHumidity, 47.5),
+      "the onGet reads through the live stat value");
     assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/humidity")) && (entry.payload === "47.5")),
       "the humidity state published on the device-scoped topic");
 
@@ -441,7 +456,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     const humidity = built.accessory.getService(Service.HumiditySensor);
 
     assert.ok(humidity, "the HumiditySensor exists");
-    assert.equal(await humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).triggerGet(), 55, "a present non-negative stat reads through unchanged");
+    assert.equal(await triggerGet(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity)), storedByHap(Characteristic.CurrentRelativeHumidity, 55),
+      "a present non-negative stat reads through unchanged");
 
     built.sensor.cleanup();
   });
@@ -453,10 +469,13 @@ describe("real ProtectSensor construction and family behavior", () => {
     const temperature = built.accessory.getService(Service.TemperatureSensor);
 
     assert.ok(temperature, "enabling temperature settings materializes the TemperatureSensor");
-    assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).value, 21.5, "CurrentTemperature initialized from stats.temperature.value");
-    assert.equal(await temperature.getCharacteristic(Characteristic.CurrentTemperature).triggerGet(), 21.5, "the temperature onGet reads through the stat value");
+    assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).value, storedByHap(Characteristic.CurrentTemperature, 21.5),
+      "CurrentTemperature initialized from stats.temperature.value");
+    assert.equal(await triggerGet(temperature.getCharacteristic(Characteristic.CurrentTemperature)), storedByHap(Characteristic.CurrentTemperature, 21.5),
+      "the temperature onGet reads through the stat value");
     assert.equal(temperature.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive carried from isReachable");
-    assert.equal(temperature.getCharacteristic(Characteristic.StatusTampered).value, false, "StatusTampered carried from sensorTamperState(null)");
+    assert.equal(temperature.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
+      "StatusTampered carried from sensorTamperState(null)");
     assert.ok(built.mqtt.published.some((entry) => entry.topic === built.projection.config.mac + "/temperature"),
       "the temperature state published on the device-scoped topic");
     assert.ok(loggedAt(built.logEntries, "info", "Enabled sensor: temperature."), "one enabled sensor logs the SINGULAR enabled-sensor line");
@@ -476,14 +495,16 @@ describe("real ProtectSensor construction and family behavior", () => {
     const temperature = built.accessory.getService(Service.TemperatureSensor);
 
     assert.ok(temperature, "the toggle alone materializes the TemperatureSensor with no reading in sight");
-    assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).writes.length, 0, "the unwritten characteristic never took a sentinel value");
+    assert.equal(writesTo(built.accessory, temperature.getCharacteristic(Characteristic.CurrentTemperature)).length, 0,
+      "the unwritten characteristic never took a sentinel value");
     assert.equal(built.mqtt.published.some((entry) => entry.topic === (mac + "/temperature")), false, "no temperature was published for a reading nobody gave");
 
     built.store.pushSensorPatch("test-sensor-1", { stats: { temperature: { status: "", value: 18.25 } } });
 
     await settle();
 
-    assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).value, 18.25, "the first arriving reading landed on the characteristic");
+    assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).value, storedByHap(Characteristic.CurrentTemperature, 18.25),
+      "the first arriving reading landed on the characteristic");
     assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/temperature")) && (entry.payload === "18.25")), "the first reading published too");
 
     built.sensor.cleanup();
@@ -509,8 +530,9 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(internal, "the internal LeakSensor materializes at its subtype");
     assert.ok(external, "the external LeakSensor materializes at its subtype");
-    assert.equal(await internal.getCharacteristic(Characteristic.LeakDetected).triggerGet(), true, "the internal leak onGet reads through leakDetectedAt !== null");
-    assert.equal(await external.getCharacteristic(Characteristic.LeakDetected).triggerGet(), false,
+    assert.equal(await triggerGet(internal.getCharacteristic(Characteristic.LeakDetected)), Characteristic.LeakDetected.LEAK_DETECTED,
+      "the internal leak onGet reads through leakDetectedAt !== null");
+    assert.equal(await triggerGet(external.getCharacteristic(Characteristic.LeakDetected)), Characteristic.LeakDetected.LEAK_NOT_DETECTED,
       "the external leak onGet reads through a null externalLeakDetectedAt");
     assert.ok(built.mqtt.published.some((entry) => entry.topic === built.projection.config.mac + "/leak"),
       "the internal leak state published (isConnected gate is true)");
@@ -536,7 +558,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     // Pre-seed a LeakSensor at the internal subtype BEFORE constructing the moisture-mode sensor so the mode-flip cleanup (which removes the opposite-type service) is
     // exercised genuinely rather than vacuously - a fresh accessory carries no LeakSensor, so without the pre-seed the removal would be a no-op.
-    const seeded = makeTestAccessory("Moisture Sensor", "uuid:moisture-sensor");
+    const seeded = makeTestAccessory("Moisture Sensor", makeSensorConfig().mac);
 
     seeded.addService(new Service.LeakSensor("Legacy Leak", ProtectReservedNames.LEAKSENSOR_INTERNAL));
 
@@ -642,8 +664,10 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(humidity, "the HumiditySensor exists");
     assert.ok(temperature, "the TemperatureSensor exists");
-    assert.equal(humidity.getCharacteristic(Characteristic.StatusTampered).value, false, "StatusTampered starts clear on the humidity service");
-    assert.equal(temperature.getCharacteristic(Characteristic.StatusTampered).value, false, "StatusTampered starts clear on the temperature service");
+    assert.equal(humidity.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
+      "StatusTampered starts clear on the humidity service");
+    assert.equal(temperature.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
+      "StatusTampered starts clear on the temperature service");
 
     const baseline = wakeLog.length;
 
@@ -654,8 +678,9 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.deepEqual(wakeLog.slice(baseline),
       [ { accessoryId: built.accessory.UUID, key: "sensor.tamperingDetectedAt" }, { accessoryId: built.accessory.UUID, key: "sensor.config" } ],
       "the narrow tamperingDetectedAt observer AND the whole-record sensor.config observer woke, in registration order");
-    assert.equal(humidity.getCharacteristic(Characteristic.StatusTampered).value, true, "the fan-out wrote StatusTampered on the humidity service");
-    assert.equal(temperature.getCharacteristic(Characteristic.StatusTampered).value, true,
+    assert.equal(humidity.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.TAMPERED,
+      "the fan-out wrote StatusTampered on the humidity service");
+    assert.equal(temperature.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.TAMPERED,
       "the fan-out wrote StatusTampered on the temperature service - a second service");
 
     built.sensor.cleanup();
@@ -760,7 +785,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     // The restart case: Homebridge restores the leak sensor from its accessory cache, so the gate keeps the service rather than attaching it. Construction is the first
     // configure pass, so it registers the channel's GET whether the gate keeps the service or attaches it...a construction that ran as a later pass would register
     // nothing for a kept channel, and the restored sensor would answer no MQTT get.
-    const seeded = makeTestAccessory("Cached Leak Sensor", "uuid:cached-leak-sensor");
+    const seeded = makeTestAccessory("Cached Leak Sensor", makeSensorConfig().mac);
     const cached = new Service.LeakSensor("Cached Leak", ProtectReservedNames.LEAKSENSOR_INTERNAL);
 
     seeded.addService(cached);
@@ -893,13 +918,14 @@ describe("real ProtectSensor construction and family behavior", () => {
     const glass = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK);
 
     assert.ok(glass, "the glass-break ContactSensor exists");
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "the glass-break sensor starts clear (glassBreakTriggeredAt null)");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the glass-break sensor starts clear (glassBreakTriggeredAt null)");
 
     built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000000000 });
 
     await settle();
 
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true,
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
       "the non-null glassBreakTriggeredAt landed on the glass-break ContactSensorState");
     assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 1, "the detection logged the Glass-break transition exactly once");
 
@@ -907,7 +933,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "clearing glassBreakTriggeredAt cleared the glass-break ContactSensorState");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "clearing glassBreakTriggeredAt cleared the glass-break ContactSensorState");
     assert.equal(logCount(built.logEntries, "info", "Glass break no longer detected."), 1, "the clear logged the Glass-break transition exactly once");
 
     built.sensor.cleanup();
@@ -927,14 +954,16 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, true, "the non-null alarmTriggeredAt landed on the alarm-sound ContactSensorState");
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the non-null alarmTriggeredAt landed on the alarm-sound ContactSensorState");
     assert.equal(logCount(built.logEntries, "info", "Alarm detected."), 1, "the detection logged the Alarm transition exactly once with the alarm-sound label");
 
     built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: null });
 
     await settle();
 
-    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, false, "clearing alarmTriggeredAt cleared the alarm-sound ContactSensorState");
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "clearing alarmTriggeredAt cleared the alarm-sound ContactSensorState");
     assert.equal(logCount(built.logEntries, "info", "Alarm no longer detected."), 1, "the clear logged the Alarm transition exactly once");
 
     built.sensor.cleanup();
@@ -953,14 +982,17 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(glass, "the glass-break service exists");
     assert.ok(plain, "the plain mount-type contact sensor exists");
-    assert.equal(plain.getCharacteristic(Characteristic.ContactSensorState).value, false, "the plain contact sensor starts closed");
+    assert.equal(plain.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the plain contact sensor starts closed");
 
     built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000000000 });
 
     await settle();
 
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "the alarm push moved the glass-break ContactSensorState");
-    assert.equal(plain.getCharacteristic(Characteristic.ContactSensorState).value, false, "the alarm push left the plain contact sensor's ContactSensorState untouched");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the alarm push moved the glass-break ContactSensorState");
+    assert.equal(plain.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the alarm push left the plain contact sensor's ContactSensorState untouched");
 
     built.sensor.cleanup();
   });
@@ -985,13 +1017,15 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(glass, "the late capability created the glass-break ContactSensor");
     assert.equal(glass.getCharacteristic(Characteristic.StatusActive).value, true, "the created service seeded StatusActive from isReachable");
-    assert.equal(await glass.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), false, "the created service wired its onGet read-through (clear)");
+    assert.equal(await triggerGet(glass.getCharacteristic(Characteristic.ContactSensorState)), Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the created service wired its onGet read-through (clear)");
 
     built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000000000 });
 
     await settle();
 
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "a subsequent alarm value landed on the newly-created glass-break service");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "a subsequent alarm value landed on the newly-created glass-break service");
 
     built.sensor.cleanup();
   });
@@ -1001,7 +1035,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     // The restart case: Homebridge restores the contact from its accessory cache with no handlers and a detection the controller has since cleared, so the gate keeps
     // the service rather than attaching it. Construction is the first configure pass, so it binds the read-through and seeds the value whatever the gate answers...a
     // construction that ran as a later pass would bind nothing on a kept service, and the pull would answer the stale cached detection.
-    const seeded = makeTestAccessory("Cached Alarm Sensor", "uuid:cached-alarm-sensor");
+    const seeded = makeTestAccessory("Cached Alarm Sensor", makeSensorConfig().mac);
     const cached = new Service.ContactSensor("Cached Alarm Sound", ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
 
     seeded.addService(cached);
@@ -1013,12 +1047,13 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.equal(seeded.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND), cached,
       "the gate kept the restored contact rather than building a new one");
-    assert.equal(await cached.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), false, "a pull answers the live clear state, not the cached detection");
+    assert.equal(await triggerGet(cached.getCharacteristic(Characteristic.ContactSensorState)), Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "a pull answers the live clear state, not the cached detection");
 
     // Overwrite the cached value once more, so only a bound read-through, and not the seed write alone, can answer the live state.
     cached.getCharacteristic(Characteristic.ContactSensorState).updateValue(true);
 
-    assert.equal(await cached.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), false,
+    assert.equal(await triggerGet(cached.getCharacteristic(Characteristic.ContactSensorState)), Characteristic.ContactSensorState.CONTACT_DETECTED,
       "the read-through answers the live clear state over a re-planted cached detection");
 
     built.sensor.cleanup();
@@ -1045,7 +1080,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     const glass = latched.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK);
 
     assert.ok(glass, "the latched glass-break service exists");
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "the latched-at-configure sensor shows detected");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the latched-at-configure sensor shows detected");
     assert.equal(loggedAt(latched.logEntries, "info", "Glass break detected."), false, "the latched-at-configure sensor logs no startup transition line");
 
     latched.sensor.cleanup();
@@ -1065,19 +1101,20 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "first edge: detected");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED, "first edge: detected");
 
     built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: null });
 
     await settle();
 
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "second edge: cleared");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED, "second edge: cleared");
 
     built.store.pushSensorPatch("test-sensor-1", { glassBreakTriggeredAt: 1700000005000 });
 
     await settle();
 
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "third edge: re-detected on a distinct timestamp");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "third edge: re-detected on a distinct timestamp");
     assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 2, "each detection edge logged exactly once (two detections)");
     assert.equal(logCount(built.logEntries, "info", "Glass break no longer detected."), 1, "the single clear edge logged exactly once");
 
@@ -1100,7 +1137,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "a bare shared-field push left the glass-break ContactSensorState clear");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "a bare shared-field push left the glass-break ContactSensorState clear");
     assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 0, "a bare shared-field push narrated no glass-break detection");
     assert.equal(built.mqtt.published.filter((entry) => entry.topic === built.projection.config.mac + "/glassbreak").length, 1,
       "a bare shared-field push published nothing beyond the create-time seed on the glassbreak topic");
@@ -1109,7 +1147,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "the glass-break field tripped the glass-break ContactSensorState");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the glass-break field tripped the glass-break ContactSensorState");
     assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 1, "the glass-break detection logged exactly once");
     assert.ok(built.mqtt.published.some((entry) => (entry.topic === built.projection.config.mac + "/glassbreak") && (entry.payload === "true")),
       "the glass-break detection published true on its own topic");
@@ -1131,14 +1170,16 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, false, "a bare glass-break push left the alarm-sound ContactSensorState clear");
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "a bare glass-break push left the alarm-sound ContactSensorState clear");
     assert.equal(logCount(built.logEntries, "info", "Alarm detected."), 0, "a bare glass-break push narrated no alarm-sound detection");
 
     built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: 1700000000000 });
 
     await settle();
 
-    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, true, "the alarm-sound field tripped the alarm-sound ContactSensorState");
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the alarm-sound field tripped the alarm-sound ContactSensorState");
     assert.equal(logCount(built.logEntries, "info", "Alarm detected."), 1, "the alarm-sound detection logged exactly once");
 
     built.sensor.cleanup();
@@ -1162,8 +1203,10 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "the glass-break push tripped the glass-break contact");
-    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, false, "the glass-break push left the alarm-sound contact clear");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the glass-break push tripped the glass-break contact");
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the glass-break push left the alarm-sound contact clear");
     assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 1, "the glass-break detection logged exactly once");
     assert.equal(logCount(built.logEntries, "info", "Alarm detected."), 0, "the glass-break detection narrated nothing for the alarm-sound contact");
 
@@ -1171,7 +1214,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, true, "the alarm-sound push tripped the alarm-sound contact");
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the alarm-sound push tripped the alarm-sound contact");
     assert.equal(logCount(built.logEntries, "info", "Alarm detected."), 1, "the alarm-sound detection logged exactly once");
     assert.equal(logCount(built.logEntries, "info", "Glass break detected."), 1, "the alarm-sound detection left the glass-break count unchanged");
 
@@ -1193,15 +1237,19 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(alarm, "the alarm-sound service exists");
     assert.ok(glass, "the glass-break service exists");
-    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, true, "the alarm-sound contact starts tripped from its latched field");
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, true, "the glass-break contact starts tripped from its latched field");
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the alarm-sound contact starts tripped from its latched field");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the glass-break contact starts tripped from its latched field");
 
     built.store.pushSensorPatch("test-sensor-1", { alarmTriggeredAt: null, glassBreakTriggeredAt: null });
 
     await settle();
 
-    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, false, "the one clear frame retired the alarm-sound contact");
-    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, false, "the one clear frame retired the glass-break contact");
+    assert.equal(alarm.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the one clear frame retired the alarm-sound contact");
+    assert.equal(glass.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the one clear frame retired the glass-break contact");
     assert.equal(logCount(built.logEntries, "info", "Alarm no longer detected."), 1, "the alarm-sound clear logged exactly once");
     assert.equal(logCount(built.logEntries, "info", "Glass break no longer detected."), 1, "the glass-break clear logged exactly once");
 
@@ -1336,7 +1384,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.ok(service, "a reporting index materializes the AirQualitySensor service");
     assert.equal(service.getCharacteristic(Characteristic.AirQuality).value, 1, "AirQuality initialized to excellent from an index of 42");
     assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive carried from isReachable");
-    assert.equal(service.getCharacteristic(Characteristic.StatusTampered).value, false, "StatusTampered carried from the tamper read-through");
+    assert.equal(service.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
+      "StatusTampered carried from the tamper read-through");
     assert.equal(service.testCharacteristic(Characteristic.PM2_5Density), false, "an index-only sensor carries no PM2.5 density");
     assert.equal(service.testCharacteristic(Characteristic.PM10Density), false, "an index-only sensor carries no PM10 density");
     assert.equal(service.testCharacteristic(Characteristic.VOCDensity), false,
@@ -1350,7 +1399,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     // The per-metric matrix: a sensor reporting exactly one particulate carries exactly that density and not the other, and the value on it is its own metric's -
     // presence alone would pass even if every density read the same source.
-    const cases: { characteristic: CharacteristicType; label: string; metric: string; value: number }[] = [
+    const cases: { characteristic: CharacteristicKind; label: string; metric: string; value: number }[] = [
 
       { characteristic: Characteristic.PM2_5Density, label: "PM2.5", metric: "pm2p5", value: 3 },
       { characteristic: Characteristic.PM10Density, label: "PM10", metric: "pm10p0", value: 5 }
@@ -1395,7 +1444,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     // The cached-restore form: Homebridge restores a service from its accessory cache before the plugin runs, so a sensor whose hardware never measured any of this -
     // one whose accessory carries the services from an earlier configuration, or from hardware that has since been swapped - must have them REMOVED rather than merely
     // not created. Without the pre-seed this would pass vacuously. The device is reachable throughout, which is what makes the quiet readings believable.
-    const seeded = makeTestAccessory("Cached Sensor", "uuid:cached-sensor");
+    const seeded = makeTestAccessory("Cached Sensor", makeSensorConfig().mac);
 
     seeded.addService(new Service.AirQualitySensor("Cached Air Quality"));
     seeded.addService(new Service.CarbonDioxideSensor("Cached Carbon Dioxide"));
@@ -1458,7 +1507,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(service, "the service exists before the patch");
 
-    const writeBaseline = service.getCharacteristic(Characteristic.PM2_5Density).writes.length;
+    const writeBaseline = writesTo(built.accessory, service.getCharacteristic(Characteristic.PM2_5Density)).length;
 
     built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ pm2p5: { status: "neutral", value: null } }) });
 
@@ -1466,8 +1515,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.equal(service.testCharacteristic(Characteristic.PM2_5Density), true, "a live-but-null metric holds its characteristic rather than shedding it");
     assert.equal(service.getCharacteristic(Characteristic.PM2_5Density).value, 3, "the held characteristic still reports the last reading the sensor gave");
-    assert.equal(service.getCharacteristic(Characteristic.PM2_5Density).writes.length, writeBaseline, "the hold wrote nothing at all");
-    assert.equal(await service.getCharacteristic(Characteristic.PM2_5Density).triggerGet(), 3, "a pull during the hold answers with the held value, not a dead reading");
+    assert.equal(writesTo(built.accessory, service.getCharacteristic(Characteristic.PM2_5Density)).length, writeBaseline, "the hold wrote nothing at all");
+    assert.equal(await triggerGet(service.getCharacteristic(Characteristic.PM2_5Density)), 3, "a pull during the hold answers with the held value, not a dead reading");
     assert.equal(service.testCharacteristic(Characteristic.PM10Density), false, "the metric that left liveness entirely shed exactly its own characteristic");
 
     built.sensor.cleanup();
@@ -1516,7 +1565,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, false, "the device is genuinely unreachable for this pass");
     assert.equal(service.getCharacteristic(Characteristic.PM2_5Density).value, 7, "the reported density was written while the device was unreachable");
-    assert.equal(service.getCharacteristic(Characteristic.PM2_5Density).writes.at(-1), 7, "the write log's latest entry is the newly reported value");
+    assert.equal(writesTo(built.accessory, service.getCharacteristic(Characteristic.PM2_5Density)).at(-1), 7, "the write log's latest entry is the newly reported value");
 
     built.sensor.cleanup();
   });
@@ -1556,7 +1605,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     const service = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE);
 
     assert.ok(service, "the vape contact sensor exists");
-    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, false, "the all-clear status leaves the contact closed");
+    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the all-clear status leaves the contact closed");
     assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, true, "the vape sensor carries the shared state characteristics");
     assert.equal(logCount(built.logEntries, "info", "Vaping"), 0, "a quiet first reading is saved silently rather than narrated");
     assert.ok(loggedAt(built.logEntries, "info", "vape"), "the vape label reached the enabled-sensors log");
@@ -1578,7 +1628,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the detection opened the contact");
+    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the detection opened the contact");
     assert.equal(logCount(built.logEntries, "info", "Vaping detected."), 1, "the transition was narrated exactly once");
 
     // The negative control: a reconcile driven by an unrelated field change, with the vape state unmoved. The state must not be re-narrated on every patch, and this
@@ -1588,7 +1639,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     await settle();
 
     assert.equal(logCount(built.logEntries, "info", "Vaping detected."), 1, "a reconcile that changed nothing about vaping said nothing about it");
-    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the contact still reports the ongoing detection");
+    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the contact still reports the ongoing detection");
 
     built.sensor.cleanup();
   });
@@ -1627,8 +1679,9 @@ describe("real ProtectSensor construction and family behavior", () => {
     await settle();
 
     assert.equal(logCount(built.logEntries, "info", "Vaping no longer detected."), 0, "the dropout narrated no all-clear the sensor never reported");
-    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the contact held its last reported state through the dropout");
-    assert.equal(await service.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), true,
+    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the contact held its last reported state through the dropout");
+    assert.equal(await triggerGet(service.getCharacteristic(Characteristic.ContactSensorState)), Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
       "and a pull arriving mid-dropout answers that held state back rather than recomputing an all-clear");
 
     built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ vape: { status: "detected", value: null } }) });
@@ -1645,7 +1698,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     // The restart-during-a-dropout case, and the one that proves the value path is gated on a LIVE reading rather than merely reading through a held state: Homebridge
     // restores the contact from its accessory cache still reporting a detection, and this process has no held state of its own yet. Writing at all here would push an
     // all-clear the sensor never sent, to HomeKit and to any MQTT subscriber, purely because the metric happened to be quiet at startup.
-    const seeded = makeTestAccessory("Cached Vape Sensor", "uuid:cached-vape-sensor");
+    const seeded = makeTestAccessory("Cached Vape Sensor", makeSensorConfig().mac);
     const cached = new Service.ContactSensor("Cached Vape", ProtectReservedNames.CONTACT_SENSOR_VAPE);
 
     seeded.addService(cached);
@@ -1659,11 +1712,13 @@ describe("real ProtectSensor construction and family behavior", () => {
     const service = seeded.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE);
 
     assert.ok(service, "the cached vape sensor survives a quiet metric - only the toggles remove it");
-    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, true, "the restored detection stands; no all-clear was manufactured over it");
+    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "the restored detection stands; no all-clear was manufactured over it");
 
     // The read side of the same guarantee, and the assertion that tells the held-value read apart from an in-process fallback: this process has narrated nothing, so a
     // fallback over its own bookkeeping would answer false here and hand that false straight back into HomeKit's cache on the very first pull after the restart.
-    assert.equal(await service.getCharacteristic(Characteristic.ContactSensorState).triggerGet(), true, "a pull answers the value HomeKit restored, not an all-clear");
+    assert.equal(await triggerGet(service.getCharacteristic(Characteristic.ContactSensorState)), Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+      "a pull answers the value HomeKit restored, not an all-clear");
     assert.equal(logCount(built.logEntries, "info", "Vaping"), 0, "nothing was narrated about a metric that said nothing");
     assert.equal(built.mqtt.published.some((entry) => entry.topic === (built.projection.config.mac + "/vape")), false,
       "no vape state was published from a reading the sensor never gave");
@@ -1702,7 +1757,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     const service = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_VAPE);
 
     assert.ok(service, "re-enabling brought the sensor back");
-    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, false, "the returning sensor reports the quiet reading");
+    assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
+      "the returning sensor reports the quiet reading");
     assert.equal(logCount(built.logEntries, "info", "Vaping no longer detected."), 0,
       "the fresh service seeded silently - stale bookkeeping would have announced an all-clear here");
 
@@ -1720,7 +1776,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     const service = built.accessory.getService(Service.CarbonDioxideSensor);
 
     assert.ok(service, "a reporting carbon dioxide metric materializes the CarbonDioxideSensor service");
-    assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideDetected).value, false, "a reading below the configured threshold is not an alert");
+    assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideDetected).value, Characteristic.CarbonDioxideDetected.CO2_LEVELS_NORMAL,
+      "a reading below the configured threshold is not an alert");
     assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).value, 800, "the level carries the reading");
     assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, true, "the carbon dioxide service carries the shared state characteristics");
     assert.ok(loggedAt(built.logEntries, "info", "carbon dioxide"), "the carbon dioxide label reached the enabled-sensors log");
@@ -1729,7 +1786,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideDetected).value, true, "crossing the configured threshold raised the alert");
+    assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideDetected).value, Characteristic.CarbonDioxideDetected.CO2_LEVELS_ABNORMAL,
+      "crossing the configured threshold raised the alert");
     assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).value, 1200, "the level moved with the pushed reading");
 
     built.sensor.cleanup();
@@ -1746,7 +1804,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(service, "the service exists before the patch");
 
-    const writeBaseline = service.getCharacteristic(Characteristic.CarbonDioxideLevel).writes.length;
+    const writeBaseline = writesTo(built.accessory, service.getCharacteristic(Characteristic.CarbonDioxideLevel)).length;
 
     built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ co2: { status: "neutral", value: null } }) });
 
@@ -1754,8 +1812,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.equal(service.testCharacteristic(Characteristic.CarbonDioxideLevel), true, "a live-but-null metric holds the level rather than shedding it");
     assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).value, 800, "the held level still reports the last reading the sensor gave");
-    assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).writes.length, writeBaseline, "the hold wrote nothing at all");
-    assert.equal(await service.getCharacteristic(Characteristic.CarbonDioxideLevel).triggerGet(), 800, "a pull during the hold answers with the held level");
+    assert.equal(writesTo(built.accessory, service.getCharacteristic(Characteristic.CarbonDioxideLevel)).length, writeBaseline, "the hold wrote nothing at all");
+    assert.equal(await triggerGet(service.getCharacteristic(Characteristic.CarbonDioxideLevel)), 800, "a pull during the hold answers with the held level");
 
     built.sensor.cleanup();
   });
@@ -1943,10 +2001,14 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(humidity, "the air-quality humidity reading materialized the HumiditySensor with the top-level toggle off");
     assert.ok(temperature, "the air-quality temperature reading materialized the TemperatureSensor with the top-level toggle off");
-    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, 50.25, "CurrentRelativeHumidity carries the air-quality reading");
-    assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).value, 23.92, "CurrentTemperature carries the air-quality reading");
-    assert.equal(await humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).triggerGet(), 50.25, "the humidity onGet reads through the same source");
-    assert.equal(await temperature.getCharacteristic(Characteristic.CurrentTemperature).triggerGet(), 23.92, "the temperature onGet reads through the same source");
+    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, storedByHap(Characteristic.CurrentRelativeHumidity, 50.25),
+      "CurrentRelativeHumidity carries the air-quality reading");
+    assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).value, storedByHap(Characteristic.CurrentTemperature, 23.92),
+      "CurrentTemperature carries the air-quality reading");
+    assert.equal(await triggerGet(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity)), storedByHap(Characteristic.CurrentRelativeHumidity, 50.25),
+      "the humidity onGet reads through the same source");
+    assert.equal(await triggerGet(temperature.getCharacteristic(Characteristic.CurrentTemperature)), storedByHap(Characteristic.CurrentTemperature, 23.92),
+      "the temperature onGet reads through the same source");
     assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/humidity")) && (entry.payload === "50.25")), "the humidity reading published");
     assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/temperature")) && (entry.payload === "23.92")), "the temperature reading published");
 
@@ -1967,7 +2029,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(humidity, "the service exists before the dropout");
 
-    const writeBaseline = humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).writes.length;
+    const writeBaseline = writesTo(built.accessory, humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity)).length;
     const publishBaseline = built.mqtt.published.filter((entry) => entry.topic === (mac + "/humidity")).length;
 
     built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ humidity: { status: "neutral", value: null } }) });
@@ -1975,9 +2037,11 @@ describe("real ProtectSensor construction and family behavior", () => {
     await settle();
 
     assert.ok(built.accessory.getService(Service.HumiditySensor), "a live-but-null reading holds the service");
-    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, 50.25, "the characteristic still reports the last reading the sensor gave");
-    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).writes.length, writeBaseline, "the hold wrote nothing at all");
-    assert.equal(await humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).triggerGet(), 50.25, "a pull during the hold answers with the held reading");
+    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, storedByHap(Characteristic.CurrentRelativeHumidity, 50.25),
+      "the characteristic still reports the last reading the sensor gave");
+    assert.equal(writesTo(built.accessory, humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity)).length, writeBaseline, "the hold wrote nothing at all");
+    assert.equal(await triggerGet(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity)), storedByHap(Characteristic.CurrentRelativeHumidity, 50.25),
+      "a pull during the hold answers with the held reading");
     assert.equal(built.mqtt.published.filter((entry) => entry.topic === (mac + "/humidity")).length, publishBaseline, "nothing was published during the hold");
 
     built.sensor.cleanup();
@@ -2007,7 +2071,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     const humidity = built.accessory.getService(Service.HumiditySensor);
 
     assert.ok(humidity, "re-enabling the measurement brought the service back");
-    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, 58.65, "the returning service carries the fresh reading");
+    assert.equal(humidity.getCharacteristic(Characteristic.CurrentRelativeHumidity).value, storedByHap(Characteristic.CurrentRelativeHumidity, 58.65),
+      "the returning service carries the fresh reading");
 
     built.sensor.cleanup();
   });
@@ -2046,7 +2111,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.ok(temperature, "the temperature service exists");
     assert.equal(humidity.getCharacteristic(Characteristic.StatusActive).value, true, "the humidity service carries the shared state characteristics");
     assert.equal(temperature.getCharacteristic(Characteristic.StatusActive).value, true, "the temperature service carries the shared state characteristics");
-    assert.equal(humidity.getCharacteristic(Characteristic.StatusTampered).value, false, "the humidity service carries the tamper read-through too");
+    assert.equal(humidity.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
+      "the humidity service carries the tamper read-through too");
 
     built.sensor.cleanup();
   });
@@ -2063,13 +2129,14 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(smoke, "advertising smoke materializes the SmokeSensor");
     assert.ok(carbonMonoxide, "advertising carbon monoxide materializes the CarbonMonoxideSensor");
-    assert.equal(await smoke.getCharacteristic(Characteristic.SmokeDetected).triggerGet(), false, "the smoke onGet reads through the at-rest block");
-    assert.equal(await carbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected).triggerGet(), false,
+    assert.equal(await triggerGet(smoke.getCharacteristic(Characteristic.SmokeDetected)), Characteristic.SmokeDetected.SMOKE_NOT_DETECTED,
+      "the smoke onGet reads through the at-rest block");
+    assert.equal(await triggerGet(carbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected)), Characteristic.CarbonMonoxideDetected.CO_LEVELS_NORMAL,
       "the carbon monoxide onGet reads through the at-rest block");
     assert.equal(smoke.getCharacteristic(Characteristic.StatusActive).value, true, "the smoke service carries the shared state characteristics");
-    assert.equal(smoke.getCharacteristic(Characteristic.StatusTampered).value, false, "and the shared tamper read-through");
-    assert.equal(smoke.getCharacteristic(Characteristic.StatusFault).value, false, "an at-rest detector reports no smoke fault");
-    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, false, "and no carbon monoxide fault");
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED, "and the shared tamper read-through");
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusFault).value, Characteristic.StatusFault.NO_FAULT, "an at-rest detector reports no smoke fault");
+    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, Characteristic.StatusFault.NO_FAULT, "and no carbon monoxide fault");
 
     both.sensor.cleanup();
 
@@ -2142,15 +2209,18 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.ok(smoke, "the SmokeSensor materializes on the advertisement alone, with no block in sight");
     assert.ok(carbonMonoxide, "the CarbonMonoxideSensor materializes on the advertisement alone");
     assert.equal(smoke.getCharacteristic(Characteristic.StatusActive).value, true, "the state characteristics still run for a detector that has not reported");
-    assert.equal(smoke.getCharacteristic(Characteristic.SmokeDetected).writes.length, 0, "the detection characteristic never took a value");
-    assert.equal(smoke.getCharacteristic(Characteristic.StatusFault).writes.length, 0, "nor did its fault characteristic");
-    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected).writes.length, 0, "nor did the carbon monoxide detection");
-    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).writes.length, 0, "nor its fault");
-    assert.equal(await smoke.getCharacteristic(Characteristic.SmokeDetected).triggerGet(), false, "the read-through answers a never-written characteristic's held value");
-    assert.equal(await smoke.getCharacteristic(Characteristic.StatusFault).triggerGet(), false, "and the fault read-through answers the same");
-    assert.equal(await carbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected).triggerGet(), false,
+    assert.equal(writesTo(built.accessory, smoke.getCharacteristic(Characteristic.SmokeDetected)).length, 0, "the detection characteristic never took a value");
+    assert.equal(writesTo(built.accessory, smoke.getCharacteristic(Characteristic.StatusFault)).length, 0, "nor did its fault characteristic");
+    assert.equal(writesTo(built.accessory, carbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected)).length, 0, "nor did the carbon monoxide detection");
+    assert.equal(writesTo(built.accessory, carbonMonoxide.getCharacteristic(Characteristic.StatusFault)).length, 0, "nor its fault");
+    assert.equal(await triggerGet(smoke.getCharacteristic(Characteristic.SmokeDetected)), Characteristic.SmokeDetected.SMOKE_NOT_DETECTED,
+      "the read-through answers a never-written characteristic's held value");
+    assert.equal(await triggerGet(smoke.getCharacteristic(Characteristic.StatusFault)), Characteristic.StatusFault.NO_FAULT,
+      "and the fault read-through answers the same");
+    assert.equal(await triggerGet(carbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected)), Characteristic.CarbonMonoxideDetected.CO_LEVELS_NORMAL,
       "the carbon monoxide read-through answers its own never-written characteristic's held value");
-    assert.equal(await carbonMonoxide.getCharacteristic(Characteristic.StatusFault).triggerGet(), false, "and so does its fault read-through");
+    assert.equal(await triggerGet(carbonMonoxide.getCharacteristic(Characteristic.StatusFault)), Characteristic.StatusFault.NO_FAULT,
+      "and so does its fault read-through");
     assert.equal(logCount(built.logEntries, "info", "Smoke"), 0, "nothing was narrated about a detector that said nothing");
     assert.equal(logCount(built.logEntries, "info", "Carbon monoxide"), 0, "nor about its sibling");
     assert.equal(built.mqtt.published.some((entry) => SMOKE_TOPIC_TAILS.some((tail) => entry.topic === (mac + tail))), false,
@@ -2170,7 +2240,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     const smoke = built.accessory.getService(Service.SmokeSensor);
 
     assert.ok(smoke, "the SmokeSensor exists");
-    assert.equal(smoke.getCharacteristic(Characteristic.SmokeDetected).value, true, "an alarm already sounding at construction lands on the characteristic");
+    assert.equal(smoke.getCharacteristic(Characteristic.SmokeDetected).value, Characteristic.SmokeDetected.SMOKE_DETECTED,
+      "an alarm already sounding at construction lands on the characteristic");
     assert.equal(logCount(built.logEntries, "info", "Smoke detected."), 1, "an alarm already under way at construction is narrated exactly once");
     assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/smoke")) && (entry.payload === "true")), "the detection published");
 
@@ -2178,7 +2249,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(smoke.getCharacteristic(Characteristic.SmokeDetected).value, false, "the clearing block landed on the characteristic");
+    assert.equal(smoke.getCharacteristic(Characteristic.SmokeDetected).value, Characteristic.SmokeDetected.SMOKE_NOT_DETECTED,
+      "the clearing block landed on the characteristic");
     assert.equal(logCount(built.logEntries, "info", "Smoke no longer detected."), 1, "the clearing edge was narrated exactly once");
     assert.ok(built.mqtt.published.some((entry) => (entry.topic === (mac + "/smoke")) && (entry.payload === "false")), "the all-clear published");
 
@@ -2217,8 +2289,9 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(smoke, "the SmokeSensor exists");
     assert.ok(carbonMonoxide, "the CarbonMonoxideSensor exists");
-    assert.equal(smoke.getCharacteristic(Characteristic.StatusFault).value, true, "a chamber needing cleaning faults the smoke service");
-    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, false, "and leaves the carbon monoxide service clear");
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusFault).value, Characteristic.StatusFault.GENERAL_FAULT,
+      "a chamber needing cleaning faults the smoke service");
+    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, Characteristic.StatusFault.NO_FAULT, "and leaves the carbon monoxide service clear");
     assert.equal(logCount(built.logEntries, "warn", "The smoke sensor is reporting a fault: needs cleaning."), 1, "the fault was warned exactly once");
 
     built.store.pushSensorPatch("test-sensor-1", { smokeStatus: makeSmokeStatus({ cleanSmokeSensor: true, endOfLife: true }) });
@@ -2227,7 +2300,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.equal(logCount(built.logEntries, "warn", "The smoke sensor is reporting a fault: end of life, needs cleaning."), 1,
       "a second fault arriving while already faulted warns again, both reasons in table order");
-    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, true, "end of life faults the carbon monoxide service too");
+    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, Characteristic.StatusFault.GENERAL_FAULT,
+      "end of life faults the carbon monoxide service too");
     assert.equal(logCount(built.logEntries, "warn", "The carbon monoxide sensor is reporting a fault: end of life."), 1, "which warns under its own subject");
 
     built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, modelKey: "sensorBatteryStatus", percentage: 99 } });
@@ -2240,7 +2314,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(smoke.getCharacteristic(Characteristic.StatusFault).value, false, "clearing every flag cleared the smoke fault");
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusFault).value, Characteristic.StatusFault.NO_FAULT, "clearing every flag cleared the smoke fault");
     assert.equal(logCount(built.logEntries, "info", "The smoke sensor is no longer reporting a fault."), 1, "the all-clear was said once, at info rather than warn");
     assert.equal(logCount(built.logEntries, "info", "The carbon monoxide sensor is no longer reporting a fault."), 1, "and once for the carbon monoxide sensor");
 
@@ -2251,10 +2325,10 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(coFault.accessory.getService(Service.SmokeSensor)?.getCharacteristic(Characteristic.StatusFault).value, false,
+    assert.equal(coFault.accessory.getService(Service.SmokeSensor)?.getCharacteristic(Characteristic.StatusFault).value, Characteristic.StatusFault.NO_FAULT,
       "the carbon monoxide sensor's own fault leaves the smoke service clear");
-    assert.equal(coFault.accessory.getService(Service.CarbonMonoxideSensor)?.getCharacteristic(Characteristic.StatusFault).value, true,
-      "while faulting its own service");
+    assert.equal(coFault.accessory.getService(Service.CarbonMonoxideSensor)?.getCharacteristic(Characteristic.StatusFault).value,
+      Characteristic.StatusFault.GENERAL_FAULT, "while faulting its own service");
     assert.equal(logCount(coFault.logEntries, "warn", "The carbon monoxide sensor is reporting a fault: sensor fault."), 1, "under its own noun phrase");
 
     coFault.sensor.cleanup();
@@ -2280,14 +2354,16 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(smoke.getCharacteristic(Characteristic.SmokeDetected).value, true, "the detection held through the dropout");
-    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, true, "and so did the carbon monoxide fault");
+    assert.equal(smoke.getCharacteristic(Characteristic.SmokeDetected).value, Characteristic.SmokeDetected.SMOKE_DETECTED, "the detection held through the dropout");
+    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, Characteristic.StatusFault.GENERAL_FAULT, "and so did the carbon monoxide fault");
     assert.equal(logCount(built.logEntries, "info", "Smoke no longer detected."), 0, "the dropout narrated no all-clear the detector never sent");
     assert.equal(logCount(built.logEntries, "info", "The carbon monoxide sensor is no longer reporting a fault."), 0, "nor any fault all-clear");
     assert.equal(built.mqtt.published.filter((entry) => SMOKE_TOPIC_TAILS.some((tail) => entry.topic === (mac + tail))).length, publishBaseline,
       "and published nothing at all from a block nobody gave");
-    assert.equal(await smoke.getCharacteristic(Characteristic.SmokeDetected).triggerGet(), true, "a pull during the dropout answers the held detection");
-    assert.equal(await carbonMonoxide.getCharacteristic(Characteristic.StatusFault).triggerGet(), true, "and a pull answers the held fault");
+    assert.equal(await triggerGet(smoke.getCharacteristic(Characteristic.SmokeDetected)), Characteristic.SmokeDetected.SMOKE_DETECTED,
+      "a pull during the dropout answers the held detection");
+    assert.equal(await triggerGet(carbonMonoxide.getCharacteristic(Characteristic.StatusFault)), Characteristic.StatusFault.GENERAL_FAULT,
+      "and a pull answers the held fault");
     assert.equal(await built.mqtt.invokeGet(mac + "/smoke/get"), "true", "the smoke get answers the held detection");
     assert.equal(await built.mqtt.invokeGet(mac + "/carbonmonoxide/get"), "false", "the carbon monoxide get answers its own held state, which was never an alarm");
 
@@ -2297,7 +2373,7 @@ describe("real ProtectSensor construction and family behavior", () => {
      * cached value can answer these reads: Homebridge restores both services still reporting and the detector's block is null. A fallback over an in-process field would
      * answer false here - and hand that false straight back into the cache on the first pull after the restart.
      */
-    const seeded = makeTestAccessory("Cached Smoke Detector", "uuid:cached-smoke-detector");
+    const seeded = makeTestAccessory("Cached Smoke Detector", makeSensorConfig().mac);
     const cachedSmoke = new Service.SmokeSensor("Cached Smoke");
     const cachedCarbonMonoxide = new Service.CarbonMonoxideSensor("Cached Carbon Monoxide");
 
@@ -2312,13 +2388,17 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(cachedSmoke.getCharacteristic(Characteristic.SmokeDetected).value, true, "the restored smoke detection stands; no all-clear was written over it");
-    assert.equal(cachedCarbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected).value, true, "the restored carbon monoxide detection stands too");
-    assert.equal(cachedCarbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, true, "as does the restored fault");
-    assert.equal(await cachedSmoke.getCharacteristic(Characteristic.SmokeDetected).triggerGet(), true, "a pull answers the value HomeKit restored, not an all-clear");
-    assert.equal(await cachedCarbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected).triggerGet(), true,
-      "the carbon monoxide read-through answers the detection HomeKit restored");
-    assert.equal(await cachedCarbonMonoxide.getCharacteristic(Characteristic.StatusFault).triggerGet(), true, "and the fault read-through answers the cached value");
+    assert.equal(cachedSmoke.getCharacteristic(Characteristic.SmokeDetected).value, Characteristic.SmokeDetected.SMOKE_DETECTED,
+      "the restored smoke detection stands; no all-clear was written over it");
+    assert.equal(cachedCarbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected).value, Characteristic.CarbonMonoxideDetected.CO_LEVELS_ABNORMAL,
+      "the restored carbon monoxide detection stands too");
+    assert.equal(cachedCarbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, Characteristic.StatusFault.GENERAL_FAULT, "as does the restored fault");
+    assert.equal(await triggerGet(cachedSmoke.getCharacteristic(Characteristic.SmokeDetected)), Characteristic.SmokeDetected.SMOKE_DETECTED,
+      "a pull answers the value HomeKit restored, not an all-clear");
+    assert.equal(await triggerGet(cachedCarbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected)),
+      Characteristic.CarbonMonoxideDetected.CO_LEVELS_ABNORMAL, "the carbon monoxide read-through answers the detection HomeKit restored");
+    assert.equal(await triggerGet(cachedCarbonMonoxide.getCharacteristic(Characteristic.StatusFault)), Characteristic.StatusFault.GENERAL_FAULT,
+      "and the fault read-through answers the cached value");
     assert.equal(logCount(restored.logEntries, "info", "Smoke"), 0, "nothing was narrated about a detector that has said nothing to this process");
     assert.equal(restored.mqtt.published.some((entry) => SMOKE_TOPIC_TAILS.some((tail) => entry.topic === (restoredMac + tail))), false, "and nothing was published");
 

@@ -33,12 +33,11 @@
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
-import type { ProtectAccessory } from "../types.ts";
 import type { ProtectHints } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { Sensor } from "unifi-protect";
-import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
@@ -57,7 +56,8 @@ const SENSOR_MAC = "74ACB9000401";
 // userOptions thread into the REAL FeatureOptions engine, so the supplied Enable.* / Disable.* strings - and only those - move the hints off their defaults. There is no
 // projection recorder, no MQTT, and no observer wiring: configureHints reads only feature options (resolved against the carrier's MAC), so a plain TestSensorProjection
 // supplies the read-through identity and nothing more.
-function buildHintsDevice(harnessOptions: { userOptions?: string[] } = {}): { accessory: TestAccessory; device: TestBaseDevice; logEntries: readonly TestLogEntry[] } {
+function buildHintsDevice(harnessOptions: { userOptions?: string[] } = {}):
+{ accessory: TestProtectAccessory; device: TestBaseDevice; logEntries: readonly TestLogEntry[] } {
 
   const sensorConfig = makeSensorConfig();
   const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));
@@ -65,9 +65,9 @@ function buildHintsDevice(harnessOptions: { userOptions?: string[] } = {}): { ac
 
   controllers.push(controller);
 
-  const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
+  const accessory = makeTestAccessory("Test Sensor", sensorConfig.mac);
   const projection = new TestSensorProjection(sensorConfig.id, store);
-  const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Sensor);
+  const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection as unknown as Sensor);
 
   // Run the base hints derivation the way a family leaf does at construction: a single synchronous configureHintsFor. Whether each hint moves off its default is then
   // governed entirely by the userOptions threaded into the REAL FeatureOptions engine.

@@ -26,7 +26,6 @@ import { afterEach, describe, test } from "node:test";
 import { logCount, loggedAt, settle } from "homebridge-plugin-utils/testing";
 import type { CameraFixture } from "../../camera.fixtures.ts";
 import { PACKAGE_CHANNEL_NAME } from "../../media/resolution.ts";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
@@ -87,8 +86,8 @@ async function buildCamera(options: { channels: ProtectCameraConfig["channels"];
 
   projection.updateRejection = options.updateRejection ?? null;
 
-  const accessory = makeTestAccessory("RTSP Enable Camera", "44444444-5555-6666-7777-888888888888");
-  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+  const accessory = makeTestAccessory("RTSP Enable Camera", cameraConfig.mac);
+  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
   // Settle the floating configure IIFE and the observe loops' lazy registration before any assertion, so the enable write and any delegate construction complete.
   await settle();
@@ -477,7 +476,7 @@ describe("package camera: existence advertises, the RTSP flag gates only the dir
 
     controllers.push(controller);
 
-    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "uuid:74ACB9000003") as unknown as ProtectAccessory,
+    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000003"),
       new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
 
     await settle();

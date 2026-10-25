@@ -4,11 +4,12 @@
  *
  * This is the durable coverage of the resolution-selection surface, including the deep-low-resolution drift regime. The golden-master fixtures in camera.fixtures.ts
  * are the single source of expected behavior for the production buildAdvertisedProfiles / buildAdvertisedResolutions output; there is no live second implementation
- * in the tree to compare against. A checked-in selector grid separately pins the per-request mapping under both biases and the pixel-cap pre-filter.
+ * in the tree to compare against. A checked-in selector grid separately locks in the per-request mapping under both biases and the pixel-cap pre-filter.
  *
- * The harness is pure - resolution.ts is FFmpeg-free and this-free, so no HAP double, no controller, no device instance is needed. The device wrappers selectChannel /
- * selectSubstrateChannel inject this-state (rtspDefault, substrateDefault, the published list, the cap) and delegate to selectChannelProfile; we reproduce the exact
- * injection here in a local closure that mirrors the streaming capability line-for-line, so the selector grid proves the wrapper logic, not just the bare selector.
+ * The harness is pure - resolution.ts is FFmpeg-free and this-free, so no Homebridge runtime, no controller, no device instance is needed. The device wrappers
+ * selectChannel / selectSubstrateChannel inject this-state (rtspDefault, substrateDefault, the published list, the cap) and delegate to selectChannelProfile; we
+ * reproduce the exact injection here in a local closure that mirrors the streaming capability line-for-line, so the selector grid proves the wrapper logic, not just
+ * the bare selector.
  *
  * The golden-master fixtures are the single source of expected behavior: when a later change intentionally alters behavior, the diff lands as a reviewed change to a
  * checked-in fixture value and these tests flag exactly the rows that moved.
@@ -182,7 +183,7 @@ describe("resolution: selector per-request mapping through the selectChannel wra
     });
   }
 
-  // The explicit Pi+hwtranscode+Rtsp.Only.HIGH-above-cap witness: a constrained-hardware transcode request that pins rtspDefault to
+  // The explicit Pi+hwtranscode+Rtsp.Only.HIGH-above-cap witness: a constrained-hardware transcode request that sets rtspDefault to
   // "HIGH" AND caps at 1080p simultaneously. The HIGH channel (3840x2160, 8.3M px) exceeds the cap, so the pre-filter drops it BEFORE the name match runs - the name
   // branch finds no HIGH entry under the cap and returns null. This proves maxPixels filters the name branch too (it is a pre-filter, not a nearest-only request field).
   test("Pi witness: rtspDefault=HIGH + maxPixels=1080p + bias higher => null (HIGH exceeds the cap)", () => {
@@ -192,8 +193,8 @@ describe("resolution: selector per-request mapping through the selectChannel wra
     assert.equal(result, null);
   });
 
-  // A name-pin under no cap resolves to the named channel regardless of the target dimensions (the name branch ignores width/height).
-  test("name-pin HIGH (uncapped) resolves to the High channel", () => {
+  // A name request under no cap resolves to the named channel regardless of the target dimensions (the name branch ignores width/height).
+  test("a name request for HIGH (uncapped) resolves to the High channel", () => {
 
     const result = outcome(selectChannelViaWrapper(published, "HIGH", 640, 360));
 
@@ -212,7 +213,7 @@ describe("resolution: the deep-low-resolution drift (the regression locus, exerc
 
   // The 640x480 4:3 deep-low-resolution witness is the regression locus: the 1920 mandate inserts a 1920x1440 entry ABOVE the 640x480 native top, which re-sorts to the
   // front, so the per-candidate gate's drifting current-top becomes 1920 - which is precisely what then admits the 1280x960 and 1024x768 entries (all < 1920). A frozen
-  // native-top would have dropped them. The golden-master fixture above already pins the exact list; here we additionally assert the structural rules the regression
+  // native-top would have dropped them. The golden-master fixture above already locks in the exact list; here we additionally assert the structural rules the regression
   // violated, so the regression's signature is named explicitly in a test.
   test("the deep-low-resolution 4:3 camera admits the under-mandate resolutions (no under-mandate drop)", () => {
 
@@ -245,8 +246,8 @@ describe("resolution: the deep-low-resolution drift (the regression locus, exerc
 
 describe("resolution: the advertised list is streaming-preference-free", () => {
 
-  // The list build takes no streaming preference: every synthetic maps to its NEAREST channel (the AI Pro id sequence 0,1,1,1,2,2,2), not a name-pinned one.
-  // buildAdvertisedProfiles is preference-free by construction: the streaming preference (the Video.Rtsp.Only pin) is applied only at request time, in the
+  // The list build takes no streaming preference: every synthetic maps to its NEAREST channel (the AI Pro id sequence 0,1,1,1,2,2,2), not one a name request picks.
+  // buildAdvertisedProfiles is preference-free by construction: the streaming preference (the Video.Rtsp.Only setting) is applied only at request time, in the
   // selectChannel wrapper, never during list construction.
   test("buildAdvertisedProfiles maps to nearest channels; the streaming preference applies only at request time", () => {
 
@@ -254,7 +255,7 @@ describe("resolution: the advertised list is streaming-preference-free", () => {
 
     assert.deepEqual(list.map((e) => e.channel.id), [ 0, 1, 1, 1, 2, 2, 2 ]);
 
-    // The same published list, queried at request time with a HIGH preference, name-pins to the High channel (id 0) - the preference's only remaining home.
+    // The same published list, queried at request time with a HIGH preference, resolves by name to the High channel (id 0) - the preference's only remaining home.
     assert.equal(outcome(selectChannelViaWrapper(list, "HIGH", 640, 360))?.id, 0);
   });
 });

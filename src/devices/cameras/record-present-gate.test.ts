@@ -12,10 +12,9 @@ import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
-import type { TestAccessory } from "../../testing.helpers.ts";
+import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
@@ -37,9 +36,9 @@ class CountingCamera extends ProtectCamera {
 }
 
 // Construct a real CountingCamera, with the casts confined to this one boundary - the instance under test is the production class and its real observe loops.
-function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): CountingCamera {
+function construct(nvr: TestProtectNvr, accessory: TestProtectAccessory, projection: TestCameraProjection): CountingCamera {
 
-  return new CountingCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+  return new CountingCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 }
 
 describe("the observeState recordPresent gate during the removal grace", () => {
@@ -50,7 +49,7 @@ describe("the observeState recordPresent gate during the removal grace", () => {
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: false } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { controller, nvr } = makeTestNvr({ store });
-    const accessory = makeTestAccessory("Test Camera", "uuid:record-present-gate-1");
+    const accessory = makeTestAccessory("Test Camera", cameraConfig.mac);
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
     await settle();
@@ -102,7 +101,7 @@ describe("the observeState recordPresent gate during the removal grace", () => {
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { controller, nvr } = makeTestNvr({ store });
-    const accessory = makeTestAccessory("Test Camera", "uuid:record-present-gate-getters");
+    const accessory = makeTestAccessory("Test Camera", cameraConfig.mac);
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
     await settle();

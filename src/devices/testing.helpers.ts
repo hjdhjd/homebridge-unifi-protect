@@ -9,7 +9,8 @@
  * device under test sees. TestBaseDevice rides on the sensor carrier as the vehicle for the shared base-device concerns.
  *
  * Fidelity to the cited contracts, not invention, is the line these doubles hold: the projection surface is unifi-protect's, and the record shapes are the
- * controller's own. The cross-cutting core - the HAP double, the state store, the streaming and timeshift stubs - lives in the root harness this file imports from.
+ * controller's own. The cross-cutting core - the Homebridge runtime, the state store, the streaming and timeshift stubs - lives in the root harness this file imports
+ * from.
  */
 import { DISABLED_THRESHOLD_SETTINGS, DISABLED_VAPE_SENSITIVITY, NOT_CAPABLE_AIR_QUALITY } from "./air-quality-policy.ts";
 import type { LivestreamDescription, LivestreamInit, LivestreamOptions, LivestreamSubscriptionState, PlaySpeakerOptions, ProtectAirQualityThresholdSettings,

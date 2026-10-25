@@ -10,14 +10,13 @@
  * identical package-channel dimensions never wakes the observer at all - the computed-primitive selector's value dedup is the change detection.
  */
 import { G6_PRO_ENTRY_CHANNELS, PACKAGE_FIXTURES } from "../../camera.fixtures.ts";
-import { Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
-import type { TestAccessory, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
+import { Service, TestStateStore, controllerEvents, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
+import type { TestProtectAccessory, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
 import { after, before, describe, test } from "node:test";
 import { formatLogEntry, logCount, settle } from "homebridge-plugin-utils/testing";
 import type { Camera } from "unifi-protect";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
@@ -51,11 +50,11 @@ describe("package camera defer-create (BC1)", () => {
   }
 
   // The package camera's accessory, asserted live.
-  function packageAccessory(): TestAccessory {
+  function packageAccessory(): TestProtectAccessory {
 
     assert.ok(doorbell.packageCamera, "the package camera instance is live");
 
-    return doorbell.packageCamera.accessory as unknown as TestAccessory;
+    return doorbell.packageCamera.accessory as unknown as TestProtectAccessory;
   }
 
   before(async () => {
@@ -71,7 +70,7 @@ describe("package camera defer-create (BC1)", () => {
 
     ({ controller: harnessController, factory, logEntries, nvr } = makeTestNvr({ store }));
 
-    doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "uuid:74ACB9000001") as unknown as ProtectAccessory,
+    doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
       new TestCameraProjection(cameraId, store) as unknown as Camera);
 
     await settle();
@@ -91,7 +90,7 @@ describe("package camera defer-create (BC1)", () => {
     assert.equal(factory.createCalls.length, 1, "exactly one delegate exists - the parent's");
     assert.equal(factory.createCalls[0]?.camera, doorbell, "the one delegate belongs to the parent doorbell");
     assert.equal(doorbell.packageCamera?.stream, undefined, "the package camera holds no stream during the provisioning window");
-    assert.equal(accessory.controllerEvents.length, 0, "no HomeKit camera controller was registered on the package accessory");
+    assert.equal(controllerEvents(accessory).length, 0, "no HomeKit camera controller was registered on the package accessory");
 
     // The accessory itself is fully functional in the meantime.
     assert.ok(accessory.getService(Service.MotionSensor), "the package motion sensor is configured during the window");
@@ -130,7 +129,7 @@ describe("package camera defer-create (BC1)", () => {
     assert.ok(packageCreate, "the package create call was recorded");
     assert.equal(packageCreate.camera, doorbell.packageCamera, "the delegate was created for the package camera instance");
     assert.deepEqual(packageCreate.resolutions, packageFixture.expected, "the advertised list derives from the REAL channel - the golden-master package expectation");
-    assert.deepEqual(accessory.controllerEvents.map((event) => event.kind), ["configure"], "exactly one controller registration, after the deferral");
+    assert.deepEqual(controllerEvents(accessory).map((event) => event.kind), ["configure"], "exactly one controller registration, after the deferral");
     assert.equal(doorbell.packageCamera?.stream, packageCreate.delegate, "the package camera holds the delegate it built");
 
     // The success is silent: the construction-time narration remains the only deferral line.
@@ -156,7 +155,7 @@ describe("package camera defer-create (BC1)", () => {
     assert.ok(wakeLog.slice(pushBaseline).some((wake) => (wake.accessoryId === accessory.UUID) && (wake.key === "camera.packageChannel")),
       "the dimension change wakes the package-channel observer");
     assert.equal(factory.createCalls.length, 2, "no second delegate is ever created - the build-once gate returned");
-    assert.equal(accessory.controllerEvents.length, 1, "no second controller registration");
+    assert.equal(controllerEvents(accessory).length, 1, "no second controller registration");
   });
 
   test("a channel-list rebuild with identical package-channel dimensions never wakes the observer - the computed primitive dedups it", async () => {
@@ -190,7 +189,8 @@ describe("package camera defer-create (BC1)", () => {
     await settle();
 
     assert.equal(store.observerCount, 0, "every family observer deregistered");
-    assert.equal(accessory.removeControllerCalls.length, 1, "the package's late-registered controller was unregistered at cleanup");
+    assert.equal(controllerEvents(accessory).filter((event) => event.kind === "remove").length, 1,
+      "the package's late-registered controller was unregistered at cleanup");
   });
 });
 
@@ -225,7 +225,7 @@ describe("package camera create-at-adoption (the channel-present arm)", () => {
       nvr.phase = phase;
     }
 
-    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Side Door", "uuid:74ACB9000002") as unknown as ProtectAccessory,
+    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Side Door", "74ACB9000002"),
       new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
 
     return { doorbell, factory, logEntries };
@@ -241,10 +241,11 @@ describe("package camera create-at-adoption (the channel-present arm)", () => {
     const { doorbell, factory, logEntries } = constructFamily();
 
     // Read synchronously - no settle, no await - so this observes the state the constructor itself left behind.
-    const accessory = doorbell.packageCamera?.accessory as unknown as TestAccessory | undefined;
+    const accessory = doorbell.packageCamera?.accessory as unknown as TestProtectAccessory | undefined;
 
     assert.ok(accessory, "the package camera was composed during construction");
-    assert.equal(accessory.configureControllerCalls.length, 1, "the package registered its HomeKit camera controller inside the constructor's own call frame");
+    assert.equal(controllerEvents(accessory).filter((event) => event.kind === "configure").length, 1,
+      "the package registered its HomeKit camera controller inside the constructor's own call frame");
     assert.equal(logEntries.filter((entry) => formatLogEntry(entry).includes(DEFERRAL_FRAGMENT)).length, 0,
       "a package whose channel is already provisioned narrates no deferral");
 
@@ -300,7 +301,7 @@ describe("package camera create-at-adoption (the channel-present arm)", () => {
     assert.ok(packageCamera.deriveAdvertisedStreams(), "the package's derivation yields an advertised surface - the channel is present");
 
     assert.equal(factory.createCalls.length, 0, "no delegate was built for either camera on a shutting-down controller");
-    assert.equal((packageCamera.accessory as unknown as TestAccessory).controllerEvents.length, 0, "no controller was registered on the package accessory");
+    assert.equal(controllerEvents(packageCamera.accessory).length, 0, "no controller was registered on the package accessory");
     assert.equal(packageCamera.stream, undefined, "the package camera holds no delegate");
 
     doorbell.cleanup();
@@ -321,7 +322,7 @@ describe("package camera create-at-adoption (the channel-present arm)", () => {
 
     adoptionControllers.push(controller);
 
-    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Back Door", "uuid:74ACB9000003") as unknown as ProtectAccessory,
+    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Back Door", "74ACB9000003"),
       projection as unknown as Camera);
 
     await settle();

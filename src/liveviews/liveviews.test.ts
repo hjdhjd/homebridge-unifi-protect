@@ -12,7 +12,7 @@
  * The shape DIFFERS from the device families and this suite respects every departure (the controller-owner shape established by nvr-systeminfo.test.ts):
  *
  * - It extends ProtectBase, not ProtectDevice: the ctor is (nvr) only. It self-creates the security accessory and the switch accessories via api.platformAccessory +
- *   registerPlatformAccessories (recorded into the platform double's apiCalls + platform.accessories). Teardown is aborting the AbortController behind nvr.signal.
+ *   registerPlatformAccessories (recorded among the API double's calls and in platform.accessories). Teardown is aborting the AbortController behind nvr.signal.
  * - It has ONE observer (nvr.liveviews) and publishes NOTHING on the hbup:observer:wake diagnostics channel, so this suite nets that observer by its REACTION (a
  *   pushLiveviews reconciles a new switch) and the store.observerCount, never a wake count.
  * - nvr.ufp / nvr.client.liveviews read THROUGH the store (the harness's read-through getters), so the seeded liveviews and a later pushLiveviews are what the owner
@@ -25,51 +25,59 @@
  * (getSwitchState === target), making the later toggle a genuine false->true change - setSwitchState in liveviews.ts continue()s a member already at its target, so it
  * would no-op.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
-import { SAVE_WINDOW_MS, makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
-import type { TestAccessory, TestService } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import type { ProtectAccessory, ProtectDevices } from "../types.ts";
+import { SAVE_WINDOW_MS, makeNvrConfig, makeTestNvr, restoreAccessories } from "../nvr/testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
-import { logCount, loggedAt, settle } from "homebridge-plugin-utils/testing";
+import { logCount, loggedAt, settle, triggerSet } from "homebridge-plugin-utils/testing";
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL } from "../settings.ts";
-import type { ProtectDevices } from "../types.ts";
 import { ProtectLiveviews } from "./liveviews.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
 
-// The controller MAC the makeNvrConfig record carries; the MQTT topic scope and the self-created accessory UUIDs derive from it (the platform double's uuid generator is
-// (seed) => "uuid:" + seed). A literal so a drift in the fixture MAC breaks loudly.
+// The controller MAC the makeNvrConfig record carries; the MQTT topic scope and the self-created accessory UUIDs derive from it. A literal so a drift in the fixture
+// MAC breaks loudly.
 const CONTROLLER_MAC = "74ACB9FFFFFF";
 
-// The deterministic UUIDs the owner composes: hap.uuid.generate(mac + ".Security") for the security accessory and hap.uuid.generate(mac + ".Liveview." + NAME) for a
-// switch, run through the (seed) => "uuid:" + seed generator. A literal / composer rather than free-form derivations so a drift in the UUID composition breaks loudly.
-const SECURITY_UUID = "uuid:" + CONTROLLER_MAC + ".Security";
+// The identities the owner composes, each seeding its accessory's UUID through HAP's generator: mac + ".Security" for the security accessory and
+// mac + ".Liveview." + NAME for a switch. A literal / composer rather than free-form derivations so a drift in the identity composition breaks loudly, and a cached
+// accessory a row builds is seeded by the same identity so the owner finds it by its UUID as it finds a restored one.
+const SECURITY_SEED = CONTROLLER_MAC + ".Security";
+const SECURITY_UUID = accessoryUuid(SECURITY_SEED);
 
 // The removal delay a liveview-derived accessory waits out once the removal gate schedules it: the user's DelayDeviceRemoval interval at its default, in milliseconds
 // on the controller double's test clock.
 const REMOVAL_GRACE_MS = PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL * 1000;
 
-// The deterministic liveview-switch UUID for a given view name (the owner uppercases the name into the UUID seed). Reused across the switch-create / orphan / reserved
-// tests so the assertions read the same composition the owner does.
+// The deterministic liveview-switch identity for a given view name (the owner uppercases the name into the seed), and the UUID HAP derives from it. Reused across the
+// switch-create / orphan / reserved tests so the assertions read the same composition the owner does.
+function liveviewSeed(name: string): string {
+
+  return CONTROLLER_MAC + ".Liveview." + name.toUpperCase();
+}
+
 function liveviewUuid(name: string): string {
 
-  return "uuid:" + CONTROLLER_MAC + ".Liveview." + name.toUpperCase();
+  return accessoryUuid(liveviewSeed(name));
 }
 
 // Seed a member-camera double into the NVR's configuredDevices registry so the liveviews motion fanout resolves it via getDeviceById. The fanout targets the member's
 // SWITCH_MOTION_SENSOR-subtyped Switch and its accessory.context.detectMotion (and accessoryName for the log). The accessory carries that subtyped switch PLUS a plain,
 // unsubtyped decoy Switch sitting FIRST: a scene toggle must land on the subtyped switch alone, so the decoy's untouched state is what proves the subtyped lookup, not a
-// plain one. detectMotion starts FALSY by default. Returns the member accessory, its plain decoy switch, and its subtyped motion switch for assertion.
-function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: string; name: string; uuid: string }):
-{ accessory: TestAccessory; decoySwitch: TestService; motionSwitch: TestService } {
+// plain one. detectMotion starts FALSY by default. The accessory is seeded by the member's MAC, as production seeds a camera's. Returns the member accessory, its plain
+// decoy switch, and its subtyped motion switch for assertion.
+function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: string; mac: string; name: string }):
+{ accessory: TestProtectAccessory; decoySwitch: Service; motionSwitch: Service } {
 
-  const accessory = makeTestAccessory(options.name, options.uuid);
+  const accessory = makeTestAccessory(options.name, options.mac);
 
-  accessory.context["detectMotion"] = options.detectMotion ?? false;
+  accessory.context.detectMotion = options.detectMotion ?? false;
 
   // The plain, unsubtyped decoy Switch added FIRST - the service getService(Service.Switch) resolves to. A scene toggle must NEVER touch it; the subtyped lookup is what
   // keeps it untouched.
@@ -80,7 +88,7 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
   // The SWITCH_MOTION_SENSOR-subtyped Switch the liveviews fanout targets, seeded from the member's detectMotion.
   const motionSwitch = accessory.addService(new Service.Switch(options.name + " Motion", ProtectReservedNames.SWITCH_MOTION_SENSOR));
 
-  motionSwitch.updateCharacteristic(Characteristic.On, accessory.context["detectMotion"]);
+  motionSwitch.updateCharacteristic(Characteristic.On, accessory.context.detectMotion);
 
   // The managed-device double the fanout resolves through getDeviceById, which now matches on the non-throwing protectId: it reads accessory / accessoryName / context.
   // Cast through ProtectDevices at the construction boundary.
@@ -93,18 +101,18 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 
 // The reusable construction helper: build a REAL ProtectLiveviews against the harness doubles and drive the initial reconcile by calling configureLiveviews() on the
 // CONSTRUCTED instance (NOT nvr.liveviews - the double has no liveviews member). makeProtectState seeds the liveviews with DISTINCT ids per the makeLiveviewConfig
-// distinct-id discipline; the casts are confined to the construction boundary exactly as the family suites do. Optional cachedAccessories are pushed onto the array
-// BEFORE construction (orphan-removal / pre-seeded-switch-state fixtures), and an unstable controller leaves good state before the initial reconcile, the posture of a
-// controller that has only just come up. The returned controller is aborted in teardown: the fixture tears down through the controller it built, the scope that owns
-// every registration the test created.
-function buildLiveviews(harnessOptions: { cachedAccessories?: TestAccessory[]; disconnected?: boolean; liveviews?: ProtectNvrLiveviewConfig[]; mac?: string;
-  sharedPlatform?: { accessories: TestAccessory[]; apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"] }; unstable?: boolean; userOptions?: string[]; } = {}): {
-  apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"]; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr;
+// distinct-id discipline; the casts are confined to the construction boundary exactly as the family suites do. Optional cachedAccessories are restored onto the bridge
+// and into the platform array BEFORE construction (orphan-removal / pre-seeded-switch-state fixtures), as Homebridge restores a cached accessory, and an unstable
+// controller leaves good state before the initial reconcile, the posture of a controller that has only just come up. The returned controller is aborted in teardown:
+// the fixture tears down through the controller it built, the scope that owns every registration the test created.
+function buildLiveviews(harnessOptions: { cachedAccessories?: TestProtectAccessory[]; disconnected?: boolean; liveviews?: ProtectNvrLiveviewConfig[]; mac?: string;
+  sharedPlatform?: { accessories: ProtectAccessory[]; api: ReturnType<typeof makeTestNvr>["api"] }; unstable?: boolean; userOptions?: string[]; } = {}): {
+  api: ReturnType<typeof makeTestNvr>["api"]; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr;
   owner: ProtectLiveviews; store: TestStateStore;
 } {
 
   const store = new TestStateStore(makeProtectState({ liveviews: harnessOptions.liveviews ?? [], nvr: makeNvrConfig({ mac: harnessOptions.mac }) }));
-  const { apiCalls, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, sharedPlatform: harnessOptions.sharedPlatform, store,
+  const { api, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, sharedPlatform: harnessOptions.sharedPlatform, store,
     userOptions: harnessOptions.userOptions });
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
@@ -114,10 +122,7 @@ function buildLiveviews(harnessOptions: { cachedAccessories?: TestAccessory[]; d
     throw new Error("The MQTT recording double was not installed despite mqtt: true.");
   }
 
-  for(const cached of harnessOptions.cachedAccessories ?? []) {
-
-    nvr.platform.accessories.push(cached);
-  }
+  restoreAccessories(nvr, harnessOptions.cachedAccessories ?? []);
 
   // A disconnected double is the production startup shape: the liveviews owner is built before the broker acknowledges the first session.
   mqtt.connected = !(harnessOptions.disconnected ?? false);
@@ -132,7 +137,7 @@ function buildLiveviews(harnessOptions: { cachedAccessories?: TestAccessory[]; d
   // Drive the initial reconcile explicitly on the constructed instance (the NVR seeds this once at startup in production; the observer handles every later edit).
   owner.configureLiveviews();
 
-  return { apiCalls, controller, logEntries, mqtt, nvr, owner, store };
+  return { api, controller, logEntries, mqtt, nvr, owner, store };
 }
 
 describe("real ProtectLiveviews construction and controller-owner wiring", () => {
@@ -168,7 +173,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     const security = built.nvr.platform.accessories.find((accessory) => accessory.UUID === SECURITY_UUID);
 
     assert.ok(security, "the owner self-created the security accessory at the mac-derived .Security UUID and pushed it onto the platform accessories array");
-    assert.ok(built.apiCalls.some((call) => (call.kind === "register") && call.accessories.includes(security)), "the platform double recorded a register call for it");
+    assert.ok(built.api.calls.some((call) => (call.kind === "register") && call.accessories.includes(security)), "the platform double recorded a register call for it");
     assert.ok(loggedAt(built.logEntries, "info", "Enabling the security system accessory."), "the security-enable info line logged");
 
     // The sibling was constructed (its configureDevice ran), proven by the SecuritySystem service materializing on the security accessory.
@@ -176,7 +181,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
     // The wiring proof that updateDevice RAN: the sibling's TargetState setProps landed non-empty (its sole updateDevice effect). We assert only that it landed, NOT the
     // full validValues logic (security-system.test.ts owns that), keeping the two-layer boundary.
-    const validValues = security.getService(Service.SecuritySystem)?.getCharacteristic(Characteristic.SecuritySystemTargetState).props?.validValues;
+    const validValues = security.getService(Service.SecuritySystem)?.getCharacteristic(Characteristic.SecuritySystemTargetState).props.validValues;
 
     assert.ok(validValues && (validValues.length >= 2), "updateDevice ran on the sibling - the TargetState validValues narrowed to the available arm states");
   });
@@ -203,7 +208,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
     assert.equal(built.nvr.platform.accessories.some((accessory) => accessory.UUID === SECURITY_UUID), false,
       "the security accessory was spliced out when no Protect arm/off liveview remained");
-    assert.ok(built.apiCalls.some((call) => (call.kind === "unregister") && call.accessories.some((candidate) => candidate.UUID === SECURITY_UUID)),
+    assert.ok(built.api.calls.some((call) => (call.kind === "unregister") && call.accessories.some((candidate) => candidate.UUID === SECURITY_UUID)),
       "the platform double recorded an unregister call for the security accessory");
     assert.ok(loggedAt(built.logEntries, "info", "Disabling the security system accessory"), "the security-disable info line logged");
   });
@@ -264,7 +269,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     const switchAccessory = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"));
 
     assert.ok(switchAccessory, "the owner self-created the liveview switch accessory at the mac-derived Liveview UUID");
-    assert.ok(built.apiCalls.some((call) => (call.kind === "register") && call.accessories.includes(switchAccessory)),
+    assert.ok(built.api.calls.some((call) => (call.kind === "register") && call.accessories.includes(switchAccessory)),
       "the platform double recorded a register call for it");
     assert.ok(switchAccessory.getService(Service.Switch), "the switch accessory carries a Switch service");
     assert.ok(loggedAt(built.logEntries, "info", "Configuring plugin-specific liveview switch: Scene."), "the configure-switch info line logged the view name");
@@ -282,17 +287,17 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     const switchAccessory = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Home"));
 
     assert.equal(switchAccessory, undefined, "a reserved arm-state name creates no liveview switch accessory");
-    assert.equal(built.apiCalls.some((call) => (call.kind === "register") && call.accessories.some((candidate) => candidate.UUID === liveviewUuid("Home"))),
+    assert.equal(built.api.calls.some((call) => (call.kind === "register") && call.accessories.some((candidate) => candidate.UUID === liveviewUuid("Home"))),
       false, "no switch register call was recorded for the reserved name");
   });
 
   test("an orphan liveview switch (its liveview removed/renamed) is unregistered and logs the removal", async () => {
 
     // Pre-seed a cached switch accessory whose context.liveview ("Ghost") matches no current liveview, so the orphan-removal path removes one rather than no-opping.
-    const orphan = makeTestAccessory("Ghost Liveview", liveviewUuid("Ghost"));
+    const orphan = makeTestAccessory("Ghost Liveview", liveviewSeed("Ghost"));
 
-    orphan.context["liveview"] = "Ghost";
-    orphan.context["nvr"] = CONTROLLER_MAC;
+    orphan.context.liveview = "Ghost";
+    orphan.context.nvr = CONTROLLER_MAC;
     orphan.addService(new Service.Switch("Ghost"));
 
     const built = buildLiveviews({ cachedAccessories: [orphan], liveviews: [makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })] });
@@ -307,7 +312,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
 
     assert.equal(built.nvr.platform.accessories.includes(orphan), false, "the orphan switch accessory was spliced out of the platform array");
-    assert.ok(built.apiCalls.some((call) => (call.kind === "unregister") && call.accessories.includes(orphan)),
+    assert.ok(built.api.calls.some((call) => (call.kind === "unregister") && call.accessories.includes(orphan)),
       "the platform double recorded an unregister call for the orphan");
     assert.ok(loggedAt(built.logEntries, "info", "Removing plugin-specific liveview switch: Ghost."), "the orphan-removal info line logged the stale view name");
   });
@@ -316,11 +321,11 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
     // Pre-seed the scene switch accessory with liveviewState false so the construction-time setSwitchState(false) early-returns (getSwitchState === target), keeping the
     // later toggle a genuine false->true change. The member's detectMotion starts FALSY so the fanout's continue-when-already-at-target guard does not skip it.
-    const sceneAccessory = makeTestAccessory("Controller Scene", liveviewUuid("Scene"));
+    const sceneAccessory = makeTestAccessory("Controller Scene", liveviewSeed("Scene"));
 
-    sceneAccessory.context["liveview"] = "Scene";
-    sceneAccessory.context["liveviewState"] = false;
-    sceneAccessory.context["nvr"] = CONTROLLER_MAC;
+    sceneAccessory.context.liveview = "Scene";
+    sceneAccessory.context.liveviewState = false;
+    sceneAccessory.context.nvr = CONTROLLER_MAC;
     sceneAccessory.addService(new Service.Switch("Controller Scene"));
 
     const built = buildLiveviews({
@@ -331,13 +336,13 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
     activeController = built.controller;
 
-    const member = seedMember(built.nvr, { detectMotion: false, id: "camera-scene", name: "Scene Camera", uuid: "uuid:scene-camera" });
+    const member = seedMember(built.nvr, { detectMotion: false, id: "camera-scene", mac: "74ACB9000301", name: "Scene Camera" });
 
     await settle();
 
     // Precondition: the member starts off (both its subtyped motion switch and its plain decoy read off), and the scene switch (pre-seeded liveviewState false) reads
     // off, so the toggle is a genuine change.
-    assert.equal(member.accessory.context["detectMotion"], false, "the member camera starts with motion detection off");
+    assert.equal(member.accessory.context.detectMotion, false, "the member camera starts with motion detection off");
     assert.equal(member.motionSwitch.getCharacteristic(Characteristic.On).value, false, "the member's subtyped motion switch starts off");
     assert.equal(member.decoySwitch.getCharacteristic(Characteristic.On).value, false, "the member's plain decoy switch starts off");
 
@@ -348,13 +353,13 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     const publishedBefore = built.mqtt.published.length;
 
     // Toggle the scene switch on through its real onSet (HomeKit's set path).
-    await sceneSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(sceneSwitch.getCharacteristic(Characteristic.On), true);
 
     // The member FLIPPED on (the discriminating assertion: false -> true) and its context updated. The write landed on the SUBTYPED switch; the plain decoy stayed off -
     // the getServiceById(Switch, SWITCH_MOTION_SENSOR) lookup is what keeps the decoy untouched (a plain getService would have flipped the decoy instead).
     assert.equal(member.motionSwitch.getCharacteristic(Characteristic.On).value, true, "the member's subtyped motion switch flipped on for the scene");
     assert.equal(member.decoySwitch.getCharacteristic(Characteristic.On).value, false, "the member's plain decoy switch was left untouched");
-    assert.equal(member.accessory.context["detectMotion"], true, "the member's detectMotion context flipped to true");
+    assert.equal(member.accessory.context.detectMotion, true, "the member's detectMotion context flipped to true");
     assert.ok(loggedAt(built.logEntries, "info", "Scene -> Scene Camera: Motion detection enabled."),
       "the per-member motion-enabled line fired with the scene and member");
 
@@ -398,14 +403,14 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
     // A member camera seeded with detectMotion FALSE, divergent from the commanded ON state, so applying the scene is a genuine false->true change (setSwitchState is
     // change-gated and would otherwise no-op).
-    const member = seedMember(built.nvr, { detectMotion: false, id: "camera-scene", name: "Scene Camera", uuid: "uuid:scene-camera" });
+    const member = seedMember(built.nvr, { detectMotion: false, id: "camera-scene", mac: "74ACB9000301", name: "Scene Camera" });
 
     await settle();
 
     const subscription = built.mqtt.subscriptions.find((entry) => (entry.kind === "set") && (entry.topic === CONTROLLER_MAC + "/liveviews/set"));
 
     assert.ok(subscription, "the liveviews SET subscription composed the controller-MAC topic");
-    assert.equal(member.accessory.context["detectMotion"], false, "the member camera starts with motion detection off");
+    assert.equal(member.accessory.context.detectMotion, false, "the member camera starts with motion detection off");
 
     const publishedBefore = built.mqtt.published.length;
 
@@ -416,7 +421,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
     await settle();
 
-    assert.equal(member.accessory.context["detectMotion"], true, "the MQTT-commanded scene flipped the member's detectMotion on");
+    assert.equal(member.accessory.context.detectMotion, true, "the MQTT-commanded scene flipped the member's detectMotion on");
     assert.equal(member.motionSwitch.getCharacteristic(Characteristic.On).value, true, "the member's subtyped motion switch updated for the scene");
     assert.ok(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT: Scene."), "the MQTT-update info line logged");
     assert.ok(built.mqtt.published.slice(publishedBefore).some((published) => (published.topic === CONTROLLER_MAC + "/liveviews") && published.payload.includes("Scene")),
@@ -470,19 +475,19 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
   test("controller A's reconcile leaves controller B's liveview switch untouched, and each controller's MQTT addresses only its own switches", async () => {
 
-    // Controller B's distinct MAC and the deterministic UUID of its Other switch (the owner uppercases the view name into the seed the (seed) => "uuid:" + seed
-    // generator runs).
+    // Controller B's distinct MAC and the deterministic UUID of its Other switch (the owner uppercases the view name into the seed HAP's generator derives the UUID
+    // from).
     const MAC_B = "74ACB9AAAAAA";
-    const otherSwitchUuid = "uuid:" + MAC_B + ".Liveview.OTHER";
+    const otherSwitchUuid = accessoryUuid(MAC_B + ".Liveview.OTHER");
 
-    // Controller A owns a Protect-Scene liveview; controller B owns a Protect-Other liveview. They share ONE platform accessories array and registration recorder,
+    // Controller A owns a Protect-Scene liveview; controller B owns a Protect-Other liveview. They share ONE platform accessories array and Homebridge API double,
     // mirroring production's single ProtectPlatform, but carry DISTINCT controller MACs so each owner scopes its switches by the context MAC.
     const controllerA = buildLiveviews({ liveviews: [makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })] });
 
     activeController = controllerA.controller;
 
     const controllerB = buildLiveviews({ liveviews: [makeLiveviewConfig({ id: "lv-other", name: "Protect-Other" })], mac: MAC_B,
-      sharedPlatform: { accessories: controllerA.nvr.platform.accessories, apiCalls: controllerA.apiCalls } });
+      sharedPlatform: { accessories: controllerA.nvr.platform.accessories, api: controllerA.api } });
 
     extraControllers.push(controllerB.controller);
 
@@ -503,7 +508,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
 
     assert.ok(controllerA.nvr.platform.accessories.includes(otherSwitch), "controller B's Other switch survived controller A's reconcile");
     assert.ok(controllerA.nvr.platform.accessories.includes(sceneSwitch), "controller A's own Scene switch was preserved");
-    assert.equal(controllerA.apiCalls.some((call) => (call.kind === "unregister") && call.accessories.some((candidate) => candidate.UUID === otherSwitchUuid)), false,
+    assert.equal(controllerA.api.calls.some((call) => (call.kind === "unregister") && call.accessories.some((candidate) => candidate.UUID === otherSwitchUuid)), false,
       "no unregister call was recorded for controller B's switch");
 
     // Each controller's MQTT GET addresses only its own switches: A returns Scene and not Other, B returns Other and not Scene.
@@ -524,16 +529,16 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
   test("a single reconcile pass sweeps two ADJACENT orphan liveview switches - the snapshot iteration never skips the shifted neighbor", async () => {
 
     // Two cached orphan switches, ADJACENT in the platform array, both scoped to this controller and matching no current liveview.
-    const ghostOne = makeTestAccessory("Ghost One", liveviewUuid("GhostOne"));
+    const ghostOne = makeTestAccessory("Ghost One", liveviewSeed("GhostOne"));
 
-    ghostOne.context["liveview"] = "GhostOne";
-    ghostOne.context["nvr"] = CONTROLLER_MAC;
+    ghostOne.context.liveview = "GhostOne";
+    ghostOne.context.nvr = CONTROLLER_MAC;
     ghostOne.addService(new Service.Switch("Ghost One"));
 
-    const ghostTwo = makeTestAccessory("Ghost Two", liveviewUuid("GhostTwo"));
+    const ghostTwo = makeTestAccessory("Ghost Two", liveviewSeed("GhostTwo"));
 
-    ghostTwo.context["liveview"] = "GhostTwo";
-    ghostTwo.context["nvr"] = CONTROLLER_MAC;
+    ghostTwo.context.liveview = "GhostTwo";
+    ghostTwo.context.nvr = CONTROLLER_MAC;
     ghostTwo.addService(new Service.Switch("Ghost Two"));
 
     // One reconcile pass must schedule BOTH orphans, and one removal delay remove them. The filtered-snapshot iteration is what proves it: an in-place splice over the
@@ -755,10 +760,10 @@ describe("the liveviews reconcile through the membership delta and the removal g
   // and the reconcile the stability sweep re-runs schedules it at the first stability.
   test("a security system accessory left by liveviews deleted while Homebridge was down is removed at the first stability", async () => {
 
-    const ghost = makeTestAccessory("Security System", SECURITY_UUID);
+    const ghost = makeTestAccessory("Security System", SECURITY_SEED);
 
-    ghost.context["nvr"] = CONTROLLER_MAC;
-    ghost.context["securityState"] = Characteristic.SecuritySystemCurrentState.AWAY_ARM;
+    ghost.context.nvr = CONTROLLER_MAC;
+    ghost.context.securityState = Characteristic.SecuritySystemCurrentState.AWAY_ARM;
     ghost.addService(new Service.SecuritySystem("Security System"));
 
     const built = buildLiveviews({ cachedAccessories: [ghost], liveviews: [makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })], unstable: true });
@@ -780,7 +785,7 @@ describe("the liveviews reconcile through the membership delta and the removal g
     built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
 
     assert.equal(built.nvr.platform.accessories.includes(ghost), false, "the ghost left when the removal delay ended");
-    assert.ok(built.apiCalls.some((call) => (call.kind === "unregister") && call.accessories.includes(ghost)), "and it was unregistered from HomeKit");
+    assert.ok(built.api.calls.some((call) => (call.kind === "unregister") && call.accessories.includes(ghost)), "and it was unregistered from HomeKit");
   });
 
   // Each kind of accessory the liveviews owner derives carries the one marker the controller's device removal passes read, and each context write is saved once the
@@ -798,11 +803,11 @@ describe("the liveviews reconcile through the membership delta and the removal g
 
     const security = built.nvr.platform.accessories.find((accessory) => accessory.UUID === SECURITY_UUID);
     const sceneSwitch = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"));
-    const saved = (accessory: TestAccessory): boolean => built.apiCalls.some((call) => (call.kind === "update") && call.accessories.includes(accessory));
+    const saved = (accessory: ProtectAccessory): boolean => built.api.calls.some((call) => (call.kind === "update") && call.accessories.includes(accessory));
 
     assert.ok(security && sceneSwitch, "the security system and the Scene switch exist");
-    assert.equal(security.context["liveviewDerived"], true, "the security system carries the marker");
-    assert.equal(sceneSwitch.context["liveviewDerived"], true, "the switch carries the marker");
+    assert.equal(security.context.liveviewDerived, true, "the security system carries the marker");
+    assert.equal(sceneSwitch.context.liveviewDerived, true, "the switch carries the marker");
     assert.ok(saved(security), "the security system's context was saved");
     assert.ok(saved(sceneSwitch), "the switch's context was saved");
   });
@@ -894,11 +899,11 @@ describe("the liveviews owner's whole list restated per broker session", () => {
   test("a switch toggled while the session is down is restated in the whole list, with its new state, when the session returns", async () => {
 
     // Pre-seed the scene switch off, as the toggle row above does, so the construction-time sync leaves it off and the toggle is a genuine change.
-    const sceneAccessory = makeTestAccessory("Controller Scene", liveviewUuid("Scene"));
+    const sceneAccessory = makeTestAccessory("Controller Scene", liveviewSeed("Scene"));
 
-    sceneAccessory.context["liveview"] = "Scene";
-    sceneAccessory.context["liveviewState"] = false;
-    sceneAccessory.context["nvr"] = CONTROLLER_MAC;
+    sceneAccessory.context.liveview = "Scene";
+    sceneAccessory.context.liveviewState = false;
+    sceneAccessory.context.nvr = CONTROLLER_MAC;
     sceneAccessory.addService(new Service.Switch("Controller Scene"));
 
     const built = buildLiveviews({ cachedAccessories: [sceneAccessory],
@@ -916,7 +921,7 @@ describe("the liveviews owner's whole list restated per broker session", () => {
 
       built.mqtt.connected = false;
       await settle();
-      await sceneSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+      await triggerSet(sceneSwitch.getCharacteristic(Characteristic.On), true);
       await settle();
 
       assert.equal(built.mqtt.publishedTo("/liveviews").length, asBuilt, "the toggle made with no session held is refused");

@@ -30,14 +30,15 @@
  * cleanup() in an afterEach so its per-accessory abort never outlives the test.
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
-import type { CharacteristicType, TestAccessory, TestService, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, controllerEvents, makeProtectState, makeTestAccessory, writesTo } from "../../testing.helpers.ts";
+import type { CharacteristicKind, TestProtectAccessory, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import type { Controller, ControllerConstructor } from "homebridge";
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestRecordingDispatch, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
-import { logCount, settle } from "homebridge-plugin-utils/testing";
+import { logCount, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import { PROTECT_NVR_REBOOT_RECENCY_MS } from "../../settings.ts";
 import type { ProtectAccessory } from "../../types.ts";
@@ -62,7 +63,7 @@ function cameraPatch(patch: Record<string, unknown>): Partial<ProtectCameraConfi
 // production ProtectCamera, which is what every arm outside the reboot-return watch builds.
 interface BuiltCamera<C extends ProtectCamera = ProtectCamera> {
 
-  accessory: TestAccessory;
+  accessory: TestProtectAccessory;
   camera: C;
   cameraConfig: ProtectCameraConfig;
   clock: TestClock;
@@ -78,7 +79,7 @@ interface BuiltCamera<C extends ProtectCamera = ProtectCamera> {
 // true set.
 interface CameraDetail {
 
-  readonly characteristic: CharacteristicType;
+  readonly characteristic: CharacteristicKind;
   readonly featureFlags: Partial<ProtectCameraConfig["featureFlags"]>;
   readonly label: string;
   readonly payload: unknown;
@@ -94,7 +95,7 @@ interface CameraDetail {
 // build until a channels push arrives.
 async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { channels?: ProtectCameraConfig["channels"];
   construct?: (nvr: ProtectNvr, accessory: ProtectAccessory, device: Camera) => C; featureFlags?: Partial<ProtectCameraConfig["featureFlags"]>;
-  seedAccessory?: (accessory: TestAccessory) => void; seedLastMotion?: number; userOptions?: string[]; } = {}): Promise<BuiltCamera<C>> {
+  seedAccessory?: (accessory: TestProtectAccessory) => void; seedLastMotion?: number; userOptions?: string[]; } = {}): Promise<BuiltCamera<C>> {
 
   const cameraConfig = makeCameraConfig({ channels: options.channels ?? G2_PRO_CHANNELS, ...(options.featureFlags ? { featureFlags: options.featureFlags } : {}) });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
@@ -113,7 +114,7 @@ async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { c
     store,
     userOptions: options.userOptions });
   const recording = nvr.events as TestRecordingDispatch;
-  const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+  const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
 
   options.seedAccessory?.(accessory);
 
@@ -125,7 +126,7 @@ async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { c
     return new ProtectCamera(innerNvr, innerAccessory, innerDevice) as C;
   });
   const projection = new TestCameraProjection(cameraConfig.id, store);
-  const camera = construct(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+  const camera = construct(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
   // Settle the floating configure IIFE and the observe loops' lazy registration before any push so the camera is fully wired when the reaction is driven.
   await settle();
@@ -294,8 +295,10 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       assert.equal(motionService.testCharacteristic(Characteristic.StatusTampered), true, "enabling tamper detection materialized the StatusTampered characteristic");
 
-      // The bound read-through: the onGet reads this.isTampered (the latched router-delivered state), which is false at rest.
-      assert.equal(await motionService.getCharacteristic(Characteristic.StatusTampered).triggerGet(), false, "the StatusTampered onGet reads isTampered (false at rest)");
+      // The bound read-through: the onGet reads this.isTampered (the latched router-delivered state), which is false at rest, and HAP answers HomeKit with the
+      // characteristic's own not-tampered value for it.
+      assert.equal(await triggerGet(motionService.getCharacteristic(Characteristic.StatusTampered)), Characteristic.StatusTampered.NOT_TAMPERED,
+        "the StatusTampered onGet reads isTampered, not tampered at rest");
 
       // The inverse reaction: pushing enableTamperDetection false wakes the observer again, which drives reconcileCapabilities, so the tamper gate prunes StatusTampered
       // (the removal branch) and clears isTampered on the setting-off path.
@@ -341,7 +344,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
   describe("the camera details on a seeded CameraOperatingMode service", () => {
 
     // Seed the operating-mode service, and with it the characteristic at a stale cached true when the row restores one.
-    const seedOperatingMode = (characteristic: CharacteristicType, seeded: boolean): ((accessory: TestAccessory) => void) => (accessory: TestAccessory): void => {
+    const seedOperatingMode = (characteristic: CameraDetail["characteristic"], seeded: boolean): ((accessory: TestProtectAccessory) => void) => (accessory): void => {
 
       const operatingMode = accessory.addService(Service.CameraOperatingMode, "Test Camera");
 
@@ -368,14 +371,15 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
           const detail = operatingMode.getCharacteristic(characteristic);
 
-          assert.deepEqual(detail.writes, seeded ? [ true, false ] : [false], "the configure wrote the live " + label + " state as the initial value");
+          assert.deepEqual(writesTo(built.accessory, detail), seeded ? [ true, false ] : [false],
+            "the configure wrote the live " + label + " state as the initial value");
 
           // Plant the stale cached value again, so only a bound handler can answer the live state.
           detail.updateValue(true);
 
-          assert.equal(await detail.triggerGet(), false, "a pull answers the live " + label + " state rather than the stale cached value");
+          assert.equal(await triggerGet(detail), false, "a pull answers the live " + label + " state rather than the stale cached value");
 
-          await detail.triggerSet(true);
+          await triggerSet(detail, true);
 
           assert.deepEqual(built.projection.updateCalls, [{ payload }], "the " + label + " set handler issued the device command");
         });
@@ -395,8 +399,8 @@ describe("camera-family observer reactions and bound read handlers (camera-react
     }
   });
 
-  /* The camera details across controller registrations. The accessory double records a controller's registration and removal and touches no service, where hap-nodejs
-   * removes the CameraOperatingMode service with its controller and, when a controller with a recording arm registers on an accessory that carries none, builds a fresh
+  /* The camera details across controller registrations. The stub delegate's stand-in controller builds no services, where hap-nodejs removes the
+   * CameraOperatingMode service with a real camera controller and, when a controller with a recording arm registers on an accessory that carries none, builds a fresh
    * one with neither the status indicator nor night vision. Each row mirrors that on its own accessory before construction, so a registration hands the camera the
    * service a live one would. The mirror builds a fresh service on every registration, recording arm or not, which is exactly what the controls' gate needs to rule on:
    * a camera that cannot back HomeKit Secure Video gets the service with no camera-details control, and one that can gets each control its hardware reports.
@@ -410,12 +414,12 @@ describe("camera-family observer reactions and bound read handlers (camera-react
     const controlsOn = cameraPatch({ ispSettings: { icrCustomValue: 0, irLedMode: "auto" }, ledSettings: { isEnabled: true } });
 
     // Mirror hap-nodejs's handling of the operating-mode service onto this accessory's controller registrations and removals.
-    const mirrorOperatingMode = (accessory: TestAccessory): void => {
+    const mirrorOperatingMode = (accessory: TestProtectAccessory): void => {
 
       const configureController = accessory.configureController.bind(accessory);
       const removeController = accessory.removeController.bind(accessory);
 
-      accessory.configureController = (controller: unknown): void => {
+      accessory.configureController = (controller: Controller | ControllerConstructor): void => {
 
         configureController(controller);
 
@@ -425,7 +429,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
         }
       };
 
-      accessory.removeController = (controller: unknown): void => {
+      accessory.removeController = (controller: Controller): void => {
 
         removeController(controller);
 
@@ -440,7 +444,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
     // Assert that the service carries one camera detail with its handlers bound: a pull answers the live state over a stale cached value, and a set issues the device
     // command.
-    const assertDetailBound = async (current: BuiltCamera, operatingMode: TestService, { characteristic, label, payload }: CameraDetail): Promise<void> => {
+    const assertDetailBound = async (current: BuiltCamera, operatingMode: Service, { characteristic, label, payload }: CameraDetail): Promise<void> => {
 
       assert.equal(operatingMode.testCharacteristic(characteristic), true, "the " + label + " characteristic is present");
 
@@ -449,9 +453,9 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       // Plant a stale cached value, so only a bound handler can answer the live state.
       detail.updateValue(true);
 
-      assert.equal(await detail.triggerGet(), false, "a pull answers the live " + label + " state rather than the stale cached value");
+      assert.equal(await triggerGet(detail), false, "a pull answers the live " + label + " state rather than the stale cached value");
 
-      await detail.triggerSet(true);
+      await triggerSet(detail, true);
 
       assert.deepEqual(current.projection.updateCalls, [{ payload }], "the " + label + " set handler issued the device command");
     };
@@ -466,7 +470,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         assert.ok(initial, "the first registration gave the accessory its operating-mode service");
 
-        const churnBaseline = built.accessory.controllerEvents.length;
+        const churnBaseline = controllerEvents(built.accessory).length;
 
         // The controller reports a speaker it did not report at adoption, which rebuilds the controller in place: the removal takes the service with it, and the
         // registration builds a fresh one.
@@ -474,7 +478,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         await settle();
 
-        assert.deepEqual(built.accessory.controllerEvents.slice(churnBaseline).map((event) => event.kind), [ "remove", "configure" ],
+        assert.deepEqual(controllerEvents(built.accessory).slice(churnBaseline).map((event) => event.kind), [ "remove", "configure" ],
           "the late speaker rebuilt the controller once");
 
         const rebuilt = built.accessory.getService(Service.CameraOperatingMode);
@@ -495,7 +499,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
         assert.ok(initial, "the first registration gave the accessory its operating-mode service");
         assert.equal(initial.testCharacteristic(cameraDetail.characteristic), false, "the " + cameraDetail.label + " control is absent before the gain");
 
-        const churnBaseline = built.accessory.controllerEvents.length;
+        const churnBaseline = controllerEvents(built.accessory).length;
 
         // Protect starts exposing a motion sensor for the camera, which makes it eligible and rebuilds the controller in place: the removal takes the service with
         // it, and the registration builds a fresh one, which the camera-details gate rules on as eligible.
@@ -503,7 +507,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         await settle();
 
-        assert.deepEqual(built.accessory.controllerEvents.slice(churnBaseline).map((event) => event.kind), [ "remove", "configure" ],
+        assert.deepEqual(controllerEvents(built.accessory).slice(churnBaseline).map((event) => event.kind), [ "remove", "configure" ],
           "the gain rebuilt the controller once");
 
         const rebuilt = built.accessory.getService(Service.CameraOperatingMode);
@@ -519,7 +523,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
         // The controller has provisioned no channel yet, so the construction-time reconcile derives nothing and registers no controller.
         built = await buildCamera({ channels: [], featureFlags, seedAccessory: mirrorOperatingMode });
 
-        assert.equal(built.accessory.controllerEvents.length, 0, "the deferred build registered no controller at construction");
+        assert.equal(controllerEvents(built.accessory).length, 0, "the deferred build registered no controller at construction");
         assert.equal(built.accessory.getService(Service.CameraOperatingMode), undefined,
           "the accessory carries no operating-mode service before its first registration");
 
@@ -528,7 +532,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         await settle();
 
-        assert.deepEqual(built.accessory.controllerEvents.map((event) => event.kind), ["configure"], "the channels' arrival registered the first controller");
+        assert.deepEqual(controllerEvents(built.accessory).map((event) => event.kind), ["configure"], "the channels' arrival registered the first controller");
 
         const operatingMode = built.accessory.getService(Service.CameraOperatingMode);
 
@@ -557,7 +561,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       const operatingMode = built.accessory.getService(Service.CameraOperatingMode);
 
-      assert.equal(built.accessory.controllerEvents.length, 0, "the deferred build registered no controller");
+      assert.equal(controllerEvents(built.accessory).length, 0, "the deferred build registered no controller");
       assert.ok(operatingMode, "the restored operating-mode service stands with no controller");
 
       for(const { characteristic, label } of cameraDetails) {
@@ -594,7 +598,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       for(const { characteristic, label } of cameraDetails) {
 
-        assert.deepEqual(operatingMode.getCharacteristic(characteristic).writes, [ false, true ],
+        assert.deepEqual(writesTo(built.accessory, operatingMode.getCharacteristic(characteristic)), [ false, true ],
           "the registration wrote the " + label + " initial value once, and the push wrote the live state");
       }
     });
@@ -647,7 +651,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       assert.equal(dimmer.getCharacteristic(Characteristic.Brightness).value, 0, "irLedMode off mapped to a brightness of 0");
 
       // The bound read-through: the On onGet reads this.nightVision, now false after the off push.
-      assert.equal(await dimmer.getCharacteristic(Characteristic.On).triggerGet(), false, "the dimmer On onGet reads nightVision (false after the off push)");
+      assert.equal(await triggerGet(dimmer.getCharacteristic(Characteristic.On)), false, "the dimmer On onGet reads nightVision (false after the off push)");
     });
 
     test("without hasIcrSensitivity, the dimmer is absent and an ispSettings push writes nothing", async () => {
@@ -690,7 +694,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       assert.equal(statusLedSwitch.getCharacteristic(Characteristic.On).value, true, "ledSettings.isEnabled true drove the status-LED switch On true");
 
       // The bound read-through: the On onGet reads this.statusLed, now true.
-      assert.equal(await statusLedSwitch.getCharacteristic(Characteristic.On).triggerGet(), true, "the status-LED switch On onGet reads statusLed (true after the push)");
+      assert.equal(await triggerGet(statusLedSwitch.getCharacteristic(Characteristic.On)), true, "the status-LED switch On onGet reads statusLed (true after the push)");
 
       // The inverse: pushing isEnabled false wakes the observer again and drives On false.
       built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, cameraPatch({ ledSettings: { isEnabled: false } }));
@@ -775,19 +779,19 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       // The switch initializes On true (recording enabled = context flag unset/false), and the onGet reads !context.hksvRecordingDisabled.
       assert.equal(onChar.value, true, "the HKSV recording switch initialized On true (recording enabled)");
-      assert.equal(await onChar.triggerGet(), true, "the On onGet reads !context.hksvRecordingDisabled (true)");
+      assert.equal(await triggerGet(onChar), true, "the On onGet reads !context.hksvRecordingDisabled (true)");
 
       // onSet false: the handler writes context.hksvRecordingDisabled = !false = true and logs the disabled line. No controller write - this is a pure context toggle.
-      await onChar.triggerSet(false);
+      await triggerSet(onChar, false);
 
-      assert.equal(built.accessory.context["hksvRecordingDisabled"], true, "onSet false disabled HKSV recording by setting the context flag true");
-      assert.equal(await onChar.triggerGet(), false, "the onGet now reflects the disabled state (!true)");
+      assert.equal(built.accessory.context.hksvRecordingDisabled, true, "onSet false disabled HKSV recording by setting the context flag true");
+      assert.equal(await triggerGet(onChar), false, "the onGet now reflects the disabled state (!true)");
 
       // onSet true restores recording: context.hksvRecordingDisabled = !true = false.
-      await onChar.triggerSet(true);
+      await triggerSet(onChar, true);
 
-      assert.equal(built.accessory.context["hksvRecordingDisabled"], false, "onSet true re-enabled HKSV recording by clearing the context flag");
-      assert.equal(await onChar.triggerGet(), true, "the onGet reflects the re-enabled state");
+      assert.equal(built.accessory.context.hksvRecordingDisabled, false, "onSet true re-enabled HKSV recording by clearing the context flag");
+      assert.equal(await triggerGet(onChar), true, "the onGet reflects the re-enabled state");
     });
 
     test("the doorbell-mute switch onSet toggles accessory.context.doorbellMuted both ways and the onGet reflects it", async () => {
@@ -804,19 +808,19 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       // The switch initializes On false (not muted), and the onGet reads context.doorbellMuted ?? false.
       assert.equal(onChar.value, false, "the doorbell-mute switch initialized On false (not muted)");
-      assert.equal(await onChar.triggerGet(), false, "the On onGet reads context.doorbellMuted ?? false (false)");
+      assert.equal(await triggerGet(onChar), false, "the On onGet reads context.doorbellMuted ?? false (false)");
 
       // onSet true mutes: the handler writes context.doorbellMuted = !!true = true. No controller write.
-      await onChar.triggerSet(true);
+      await triggerSet(onChar, true);
 
-      assert.equal(built.accessory.context["doorbellMuted"], true, "onSet true muted the doorbell by setting the context flag");
-      assert.equal(await onChar.triggerGet(), true, "the onGet now reflects the muted state");
+      assert.equal(built.accessory.context.doorbellMuted, true, "onSet true muted the doorbell by setting the context flag");
+      assert.equal(await triggerGet(onChar), true, "the onGet now reflects the muted state");
 
       // onSet false un-mutes.
-      await onChar.triggerSet(false);
+      await triggerSet(onChar, false);
 
-      assert.equal(built.accessory.context["doorbellMuted"], false, "onSet false un-muted the doorbell by clearing the context flag");
-      assert.equal(await onChar.triggerGet(), false, "the onGet reflects the un-muted state");
+      assert.equal(built.accessory.context.doorbellMuted, false, "onSet false un-muted the doorbell by clearing the context flag");
+      assert.equal(await triggerGet(onChar), false, "the onGet reflects the un-muted state");
     });
   });
 
@@ -845,7 +849,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       built = await buildCamera({ seedAccessory: (accessory) => {
 
         accessory.addService(Service.Switch, "Test Camera Doorbell Mute", ProtectReservedNames.SWITCH_DOORBELL_MUTE);
-        accessory.context["doorbellMuted"] = true;
+        accessory.context.doorbellMuted = true;
       }, userOptions: ["Enable.Doorbell.Mute"] });
 
       assert.equal(built.accessory.getService(Service.Doorbell), undefined, "a plain camera without the trigger option carries no Doorbell service");
@@ -1054,7 +1058,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       // A package camera over the SAME physical device, built as the controller root builds it. Its parent's watch is deliberately never armed here, so any line the
       // advance produces could only have come from the package.
       const packageCamera = new InspectablePackageCamera(watch.nvr as unknown as ProtectNvr,
-        makeTestAccessory("Test Camera Package", "uuid:74ACB9000001:package") as unknown as ProtectAccessory,
+        makeTestAccessory("Test Camera Package", watch.cameraConfig.mac + ".PackageCamera"),
         new TestCameraProjection(watch.cameraConfig.id, watch.nvr.client.state) as unknown as Camera);
 
       await settle();

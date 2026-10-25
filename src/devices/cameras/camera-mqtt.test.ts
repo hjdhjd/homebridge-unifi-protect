@@ -26,11 +26,10 @@ import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { afterEach, describe, mock, test } from "node:test";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
-import type { TestAccessory } from "../../testing.helpers.ts";
+import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
@@ -60,7 +59,7 @@ class RecordingRingDispatch extends ProtectEventDispatch {
 // surface every body is found through; the build narrows the Nullable<TestMqttClient> before returning, so the non-null double is what every test invokes against.
 interface BuiltCamera {
 
-  accessory: TestAccessory;
+  accessory: TestProtectAccessory;
   camera: ProtectCamera;
   cameraConfig: ProtectCameraConfig;
   controller: AbortController;
@@ -82,9 +81,9 @@ async function buildCamera(options: { channels?: ProtectCameraConfig["channels"]
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
   const { controller, logEntries, mqtt, nvr } = makeTestNvr({ ...(options.dispatch ? { dispatch: options.dispatch } : {}), mqtt: true, store,
     userOptions: options.userOptions });
-  const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+  const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
   const projection = new TestCameraProjection(cameraConfig.id, store);
-  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
   // Settle the floating configure IIFE and the observe loops' lazy registration before any drive so the camera is fully wired (the stream is stood up, the subscriptions
   // are registered) when a handler is invoked.

@@ -24,17 +24,16 @@ import type { TestClock, TestMqttClient } from "homebridge-plugin-utils/testing"
 import { TestLightProjection, makeLightConfig } from "./testing.helpers.ts";
 import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
+import { settle, triggerGet } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../settings.ts";
-import type { ProtectAccessory } from "../types.ts";
 import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import { ProtectLight } from "./light.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
-import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
-import { settle } from "homebridge-plugin-utils/testing";
 
 // The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
 // which is the tail rather than the child topic the registration lands on.
@@ -50,8 +49,8 @@ const controllers: AbortController[] = [];
 // rather than captured from the factory closure - reading it back avoids both the assignment-expression smell and a TS2454 definite-assignment error on a
 // factory-captured binding.
 function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {},
-  harnessOptions: { accessory?: TestAccessory; disconnected?: boolean; userOptions?: string[] } = {}): {
-  accessory: TestAccessory; clock: TestClock; light: ProtectLight; lightConfig: ProtectLightConfig; lightProjection: TestLightProjection; mqtt: TestMqttClient;
+  harnessOptions: { accessory?: TestProtectAccessory; disconnected?: boolean; userOptions?: string[] } = {}): {
+  accessory: TestProtectAccessory; clock: TestClock; light: ProtectLight; lightConfig: ProtectLightConfig; lightProjection: TestLightProjection; mqtt: TestMqttClient;
   recording: TestRecordingDispatch; store: TestStateStore;
 } {
 
@@ -69,12 +68,12 @@ function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {},
   }
 
   const recording = nvr.events as TestRecordingDispatch;
-  const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Light", "uuid:test-light");
+  const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Light", lightConfig.mac);
 
   // The projection is named (not cast inline) so the MQTT SET-body tests read its updateCalls / set its updateRejection on the SAME instance the light's onSet
   // write-through reaches; the lone cast at construction is confined to the new ProtectLight(...) call.
   const projection = new TestLightProjection(lightConfig.id, store);
-  const light = new ProtectLight(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Light);
+  const light = new ProtectLight(nvr as unknown as ProtectNvr, accessory, projection as unknown as Light);
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast (either of which the house lint preset forbids in opposite directions), and fails loudly if the opt-in ever stops installing the double.
@@ -94,7 +93,7 @@ describe("real ProtectLight construction and observer behavior", () => {
   const onWake = (message: unknown): void => { wakeLog.push(message as ObserverWakePayload); };
 
   // The per-test-fresh handles, rebuilt in beforeEach so every test starts from a clean light, clean recording, and clean wake baseline.
-  let accessory: TestAccessory;
+  let accessory: TestProtectAccessory;
   let clock: TestClock;
   let constructionWakes = 0;
   let light: ProtectLight;
@@ -159,9 +158,9 @@ describe("real ProtectLight construction and observer behavior", () => {
     // The mirror of the sensor half: pre-seed the accessory as if the user had turned motion detection off, then build with Motion.Switch enabled so the switch takes its
     // service branch rather than its force-reset branch (the light's configureMotionSensor is default-on, so the switch is reached). The context reset must carry the
     // user's choice across the restart rather than wiping it back to the default.
-    const seeded = makeTestAccessory("Test Light", "uuid:test-light");
+    const seeded = makeTestAccessory("Test Light", makeLightConfig().mac);
 
-    seeded.context["detectMotion"] = false;
+    seeded.context.detectMotion = false;
 
     const built = buildLight({}, { accessory: seeded, userOptions: ["Enable.Motion.Switch"] });
 
@@ -169,7 +168,7 @@ describe("real ProtectLight construction and observer behavior", () => {
 
     try {
 
-      assert.equal(built.accessory.context["detectMotion"], false, "a persisted detectMotion of false survives the context reset rather than being wiped back to true");
+      assert.equal(built.accessory.context.detectMotion, false, "a persisted detectMotion of false survives the context reset rather than being wiped back to true");
     } finally {
 
       built.light.cleanup();
@@ -210,8 +209,8 @@ describe("real ProtectLight construction and observer behavior", () => {
     const service = accessory.getService(Service.Lightbulb);
 
     assert.ok(service, "the Lightbulb service exists");
-    assert.equal(await service.getCharacteristic(Characteristic.On).triggerGet(), true, "the On getter reads isLightOn");
-    assert.equal(await service.getCharacteristic(Characteristic.Brightness).triggerGet(), 60, "the Brightness getter maps ledLevel 4 to 60 percent");
+    assert.equal(await triggerGet(service.getCharacteristic(Characteristic.On)), true, "the On getter reads isLightOn");
+    assert.equal(await triggerGet(service.getCharacteristic(Characteristic.Brightness)), 60, "the Brightness getter maps ledLevel 4 to 60 percent");
   });
 
   test("an isLightOn push wakes exactly the isLightOn observer and updates the Lightbulb On characteristic", async () => {

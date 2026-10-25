@@ -16,19 +16,18 @@
  * strings the production table is (the button wire ids and gesture strings the production table carries), so they cannot catch a wire mismatch between the plugin and a
  * real controller - only HJD's live validation can. The INFO log on an unrecognized gesture is the field tell.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, eventsFrom, makeProtectState, makeTestAccessory, writesTo } from "../testing.helpers.ts";
 import type { Fob, ProtectFobConfig } from "unifi-protect";
 import { TestFobProjection, makeFobConfig } from "./testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
-import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
+import { formatLogEntry, settle, triggerGet } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../diagnostics.ts";
-import type { ProtectAccessory } from "../types.ts";
 import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import { ProtectFob } from "./fob.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
-import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
@@ -67,8 +66,8 @@ const controllers: AbortController[] = [];
 // The reusable construction helper: build a REAL ProtectFob against the harness doubles. The casts are confined to where the class is constructed, exactly as the relay
 // and light suites do; the instance under test runs its real configureHints / configureDevice / spawnObservers paths. Each call builds a fresh store, so an extra build
 // inside a test is fully isolated from the beforeEach fob. An optional accessory lets a test seed a restored-across-restart accessory (the grouped->lone reconfigure).
-function buildFob(configOptions: Parameters<typeof makeFobConfig>[0] = {}, harnessOptions: { accessory?: TestAccessory; userOptions?: string[] } = {}): {
-  accessory: TestAccessory; events: ProtectEventDispatch; fob: ProtectFob; fobConfig: ProtectFobConfig; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient;
+function buildFob(configOptions: Parameters<typeof makeFobConfig>[0] = {}, harnessOptions: { accessory?: TestProtectAccessory; userOptions?: string[] } = {}): {
+  accessory: TestProtectAccessory; events: ProtectEventDispatch; fob: ProtectFob; fobConfig: ProtectFobConfig; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient;
   store: TestStateStore;
 } {
 
@@ -78,12 +77,12 @@ function buildFob(configOptions: Parameters<typeof makeFobConfig>[0] = {}, harne
 
   controllers.push(controller);
 
-  const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Fob", "uuid:test-fob");
+  const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Fob", fobConfig.mac);
 
   // The projection is named (not cast inline) so its read-through config feeds the SAME store the pushFobPatch battery test moves; the lone cast at construction is
   // confined to the new ProtectFob(...) call, and the presses route through the REAL ProtectEventDispatch this NVR double carries as nvr.events.
   const projection = new TestFobProjection(fobConfig.id, store);
-  const fob = new ProtectFob(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Fob);
+  const fob = new ProtectFob(nvr as unknown as ProtectNvr, accessory, projection as unknown as Fob);
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast, and fails loudly if the opt-in ever stops installing the double.
@@ -102,7 +101,7 @@ describe("real ProtectFob construction and behavior", () => {
   const onWake = (message: unknown): void => { wakeLog.push(message as ObserverWakePayload); };
 
   // The per-test-fresh handles, rebuilt in beforeEach so every test starts from a clean fob, clean recording, and clean wake baseline.
-  let accessory: TestAccessory;
+  let accessory: TestProtectAccessory;
   let constructionWakes = 0;
   let events: ProtectEventDispatch;
   let fob: ProtectFob;
@@ -213,7 +212,7 @@ describe("real ProtectFob construction and behavior", () => {
     built.fob.cleanup();
   });
 
-  test("a routed press to a visible button fires exactly the mapped ProgrammableSwitchEvent and leaves the cached value untouched", () => {
+  test("a routed press to a visible button fires exactly the mapped ProgrammableSwitchEvent and a HomeKit read answers no value", async () => {
 
     // HARD-assert the switch exists FIRST: an absent service whose getCharacteristic lazily materializes would let the event assertion pass vacuously.
     const panic = accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("panic"));
@@ -224,8 +223,9 @@ describe("real ProtectFob construction and behavior", () => {
 
     const characteristic = panic.getCharacteristic(Characteristic.ProgrammableSwitchEvent);
 
-    assert.deepEqual(characteristic.events, [Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS], "the press fired exactly one SINGLE_PRESS event notification");
-    assert.equal(characteristic.value, null, "the cached characteristic value is untouched - a stateless programmable switch holds no persistent value");
+    assert.deepEqual(eventsFrom(accessory, characteristic), [Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS],
+      "the press fired exactly one SINGLE_PRESS event notification");
+    assert.equal(await triggerGet(characteristic), null, "a HomeKit read answers no value - a stateless programmable switch holds no persistent value");
   });
 
   test("each wire gesture maps to its HomeKit press value, including the falsy single press", () => {
@@ -240,7 +240,7 @@ describe("real ProtectFob construction and behavior", () => {
     events.buttonEventHandler(fob, "panic", "doublePress");
     events.buttonEventHandler(fob, "panic", "longPress");
 
-    assert.deepEqual(panic.getCharacteristic(Characteristic.ProgrammableSwitchEvent).events, [
+    assert.deepEqual(eventsFrom(accessory, panic.getCharacteristic(Characteristic.ProgrammableSwitchEvent)), [
 
       Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS,
       Characteristic.ProgrammableSwitchEvent.DOUBLE_PRESS,
@@ -263,7 +263,7 @@ describe("real ProtectFob construction and behavior", () => {
       const service = accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype(button.wireId));
 
       assert.ok(service, button.label + "'s switch exists");
-      assert.deepEqual(service.getCharacteristic(Characteristic.ProgrammableSwitchEvent).events, [Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS],
+      assert.deepEqual(eventsFrom(accessory, service.getCharacteristic(Characteristic.ProgrammableSwitchEvent)), [Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS],
         button.label + " fired exactly once from its own wire id");
     }
   });
@@ -282,7 +282,7 @@ describe("real ProtectFob construction and behavior", () => {
     const panic = built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("panic"));
 
     assert.ok(panic, "panic's switch exists");
-    assert.deepEqual(panic.getCharacteristic(Characteristic.ProgrammableSwitchEvent).events, [Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS],
+    assert.deepEqual(eventsFrom(built.accessory, panic.getCharacteristic(Characteristic.ProgrammableSwitchEvent)), [Characteristic.ProgrammableSwitchEvent.SINGLE_PRESS],
       "the sibling press fired while the hidden button's press fired nothing");
 
     // A hidden button's MQTT topic leaves with its switch, so only the visible sibling's press publishes on the device-family-agnostic button topic.
@@ -314,7 +314,7 @@ describe("real ProtectFob construction and behavior", () => {
     // The grouped->lone reconcile is only reachable across a restart+option-flip: a fresh accessory has no prior grouped state, so we seed a RESTORED accessory - a
     // ServiceLabel plus an arm switch carrying a stale ServiceLabelIndex, exactly as HomeKit restores a previously-grouped fob from its cache - then build the fob with
     // only arm visible. configureButtons must remove the now-orphaned ServiceLabel and drop the surviving switch's stale index.
-    const restored = makeTestAccessory("Test Fob", "uuid:test-fob-restored");
+    const restored = makeTestAccessory("Test Fob", makeFobConfig().mac);
 
     restored.addService(Service.ServiceLabel, "Test Fob");
 
@@ -344,7 +344,8 @@ describe("real ProtectFob construction and behavior", () => {
 
     assert.ok(battery, "the battery service exists");
     assert.equal(battery.getCharacteristic(Characteristic.BatteryLevel).value, 80, "the battery level seeds from the record");
-    assert.equal(battery.getCharacteristic(Characteristic.StatusLowBattery).value, false, "the low-battery flag seeds from the record");
+    assert.equal(battery.getCharacteristic(Characteristic.StatusLowBattery).value, Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL,
+      "the low-battery flag seeds from the record");
 
     const baseline = built.store.observerCount;
 
@@ -356,7 +357,8 @@ describe("real ProtectFob construction and behavior", () => {
     await settle();
 
     assert.equal(battery.getCharacteristic(Characteristic.BatteryLevel).value, 15, "the battery-level observer pushed the new percentage");
-    assert.equal(battery.getCharacteristic(Characteristic.StatusLowBattery).value, true, "the low-battery observer pushed the new flag");
+    assert.equal(battery.getCharacteristic(Characteristic.StatusLowBattery).value, Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW,
+      "the low-battery observer pushed the new flag");
 
     built.fob.cleanup();
   });
@@ -414,7 +416,7 @@ describe("real ProtectFob construction and behavior", () => {
     const panic = built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("panic"));
 
     assert.ok(panic, "panic's switch exists");
-    assert.deepEqual(panic.getCharacteristic(Characteristic.ProgrammableSwitchEvent).events, [],
+    assert.deepEqual(eventsFrom(built.accessory, panic.getCharacteristic(Characteristic.ProgrammableSwitchEvent)), [],
       "the unmapped gesture on a visible button fires no event - the gesture did not map to a press value");
 
     const publishes = built.mqtt.published.filter((entry) => entry.topic === built.fobConfig.mac + "/button");
@@ -537,8 +539,8 @@ describe("real ProtectFob construction and behavior", () => {
 
     assert.ok(right && left, "the Right and Left switches carry a ConfiguredName");
 
-    const rightWrites = right.writes.length;
-    const leftWrites = left.writes.length;
+    const rightWrites = writesTo(accessory, right).length;
+    const leftWrites = writesTo(accessory, left).length;
 
     // Flip the controller's labeling to the position-hint numbering and let the observer wake.
     store.pushFobPatch(fobConfig.id, { buttonLabels: "positionHint" });
@@ -554,8 +556,8 @@ describe("real ProtectFob construction and behavior", () => {
         button.label + "'s ConfiguredName followed the flip to its controller-numbered label");
     }
 
-    assert.equal(right.writes.length, rightWrites, "Right's ConfiguredName was not rewritten - its two labels coincide, so the steady-state skip applied");
-    assert.equal(left.writes.length, leftWrites, "Left's ConfiguredName was not rewritten - its two labels coincide, so the steady-state skip applied");
+    assert.equal(writesTo(accessory, right).length, rightWrites, "Right's ConfiguredName was not rewritten - its two labels coincide, so the steady-state skip applied");
+    assert.equal(writesTo(accessory, left).length, leftWrites, "Left's ConfiguredName was not rewritten - its two labels coincide, so the steady-state skip applied");
   });
 
   test("a user-renamed button survives a labeling flip while a plugin-managed sibling is renamed in the same pass", async () => {
@@ -581,7 +583,7 @@ describe("real ProtectFob construction and behavior", () => {
 
     // A restored accessory carrying every button at its security-action label, then arm alone overwritten to "1" - the position-hint default. A user who typed "1" by
     // hand is indistinguishable from plugin management, so the configure-time reconcile in security-action mode treats arm's "1" as plugin-owned and rewrites it.
-    const restored = makeTestAccessory("Test Fob", "uuid:test-fob-boundary");
+    const restored = makeTestAccessory("Test Fob", makeFobConfig().mac);
 
     restored.addService(Service.ServiceLabel, "Test Fob");
 
@@ -614,7 +616,7 @@ describe("real ProtectFob construction and behavior", () => {
     // Seed a restored accessory carrying every button at its security-action label - as HomeKit restores a fob last configured under that labeling - then reconfigure the
     // SAME accessory with the controller reporting the position-hint labeling. The reconcile below is asserted before any settle, proving the configure-time pass did
     // it: the store's observe never replays a flip that happened while Homebridge was down.
-    const restored = makeTestAccessory("Test Fob", "uuid:test-fob-offline");
+    const restored = makeTestAccessory("Test Fob", makeFobConfig().mac);
 
     restored.addService(Service.ServiceLabel, "Test Fob");
 
@@ -649,7 +651,7 @@ describe("real ProtectFob construction and behavior", () => {
       const service = accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype(button.wireId));
 
       assert.ok(service, button.label + "'s switch exists");
-      assert.equal(service.getCharacteristic(Characteristic.ConfiguredName).writes.length, 1,
+      assert.equal(writesTo(accessory, service.getCharacteristic(Characteristic.ConfiguredName)).length, 1,
         button.label + "'s ConfiguredName was written once at create and left untouched by the configure-time reconcile");
     }
 

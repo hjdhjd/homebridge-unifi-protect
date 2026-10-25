@@ -21,7 +21,6 @@ import { after, describe, test } from "node:test";
 import { isFfmpegVerbose, liveAudioFilterArgs, srtpDestination, talkbackDestination } from "./stream.ts";
 import type { Camera } from "unifi-protect";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import assert from "node:assert/strict";
@@ -117,7 +116,7 @@ describe("liveAudioFilterArgs - the live view's -filter:a at the requested rate"
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { controller, nvr } = makeTestNvr({ store, userOptions });
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Porch", "uuid:live-audio-filter") as unknown as ProtectAccessory,
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Porch", cameraConfig.mac),
       new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
 
     controllers.push(controller);

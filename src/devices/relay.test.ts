@@ -20,17 +20,16 @@ import type { ProtectRelayConfig, Relay } from "unifi-protect";
 import type { TestClock, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { TestRelayProjection, makeRelayConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
+import { settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../diagnostics.ts";
-import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectRelay } from "./relay.ts";
 import { ProtectReservedNames } from "../types.ts";
-import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
-import { settle } from "homebridge-plugin-utils/testing";
 
 // The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
 // which is the tail rather than the child topic the registration lands on.
@@ -48,7 +47,7 @@ const controllers: AbortController[] = [];
 // and camera suites do; the instance under test runs its real configureHints / configureDevice / spawnObservers paths. Each call builds a fresh store, so an extra build
 // inside a test (the feature-enabled variants) is fully isolated from the beforeEach relay.
 function buildRelay(configOptions: Parameters<typeof makeRelayConfig>[0] = {}, harnessOptions: { disconnected?: boolean; userOptions?: string[] } = {}): {
-  accessory: TestAccessory; clock: TestClock; mqtt: TestMqttClient; relay: ProtectRelay; relayConfig: ProtectRelayConfig; relayProjection: TestRelayProjection;
+  accessory: TestProtectAccessory; clock: TestClock; mqtt: TestMqttClient; relay: ProtectRelay; relayConfig: ProtectRelayConfig; relayProjection: TestRelayProjection;
   store: TestStateStore;
 } {
 
@@ -64,12 +63,12 @@ function buildRelay(configOptions: Parameters<typeof makeRelayConfig>[0] = {}, h
     mqtt.connected = false;
   }
 
-  const accessory = makeTestAccessory("Test Relay", "uuid:test-relay");
+  const accessory = makeTestAccessory("Test Relay", relayConfig.mac);
 
   // The projection is named (not cast inline) so the toggle / status-LED tests read its toggleCalls / updateCalls - and set its rejection levers - on the SAME instance
   // the relay's onSet write-through reaches; the lone cast at construction is confined to the new ProtectRelay(...) call.
   const projection = new TestRelayProjection(relayConfig.id, store);
-  const relay = new ProtectRelay(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Relay);
+  const relay = new ProtectRelay(nvr as unknown as ProtectNvr, accessory, projection as unknown as Relay);
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast, and fails loudly if the opt-in ever stops installing the double.
@@ -88,7 +87,7 @@ describe("real ProtectRelay construction and behavior", () => {
   const onWake = (message: unknown): void => { wakeLog.push(message as ObserverWakePayload); };
 
   // The per-test-fresh handles, rebuilt in beforeEach so every test starts from a clean relay, clean recording, and clean wake baseline.
-  let accessory: TestAccessory;
+  let accessory: TestProtectAccessory;
   let clock: TestClock;
   let constructionWakes = 0;
   let mqtt: TestMqttClient;
@@ -171,13 +170,13 @@ describe("real ProtectRelay construction and behavior", () => {
     const output0 = accessory.getServiceById(Service.Switch, outputSubtype(0));
 
     assert.ok(output0, "output 0's switch exists");
-    assert.equal(await output0.getCharacteristic(Characteristic.On).triggerGet(), false, "the getter reads the live off state");
+    assert.equal(await triggerGet(output0.getCharacteristic(Characteristic.On)), false, "the getter reads the live off state");
 
     store.pushRelayOutputs(relayConfig.id, [ { id: 0, state: "on" }, { id: 1, state: "off" } ]);
 
     await settle();
 
-    assert.equal(await output0.getCharacteristic(Characteristic.On).triggerGet(), true, "the getter reads on after the controller flips the output");
+    assert.equal(await triggerGet(output0.getCharacteristic(Characteristic.On)), true, "the getter reads on after the controller flips the output");
   });
 
   test("leaving one output out of the selection prunes exactly its switch, leaving the sibling switch and the accessory intact", () => {
@@ -261,17 +260,17 @@ describe("real ProtectRelay construction and behavior", () => {
     assert.ok(output0, "output 0's switch exists");
 
     // The output starts off, so turning it off again is a no-op - calling toggleOutput twice would flip it back, so re-issuing it here would flip it the wrong way.
-    await output0.getCharacteristic(Characteristic.On).triggerSet(false);
+    await triggerSet(output0.getCharacteristic(Characteristic.On), false);
 
     assert.deepEqual(relayProjection.toggleCalls, [], "an off-when-already-off set issued no toggle");
 
     // Turning it on flips it exactly once.
-    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(output0.getCharacteristic(Characteristic.On), true);
 
     assert.deepEqual(relayProjection.toggleCalls, [{ outputId: 0 }], "an on-when-off set toggled output 0 exactly once");
 
     // Turning it on again while the on-intent is still pending is a no-op - the guard compares against where the output is headed, not the lagging controller value.
-    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(output0.getCharacteristic(Characteristic.On), true);
 
     assert.deepEqual(relayProjection.toggleCalls, [{ outputId: 0 }], "a second on-when-heading-on set issued no further toggle");
   });
@@ -284,8 +283,8 @@ describe("real ProtectRelay construction and behavior", () => {
 
     // Tap on, then tap off before either broadcast lands. The guard compares the off tap against the pending on-intent - not the controller value, which still reads off
     // during the write-through window - so it issues a second toggle rather than suppressing.
-    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
-    await output0.getCharacteristic(Characteristic.On).triggerSet(false);
+    await triggerSet(output0.getCharacteristic(Characteristic.On), true);
+    await triggerSet(output0.getCharacteristic(Characteristic.On), false);
 
     assert.deepEqual(relayProjection.toggleCalls, [ { outputId: 0 }, { outputId: 0 } ], "the on tap and the off tap each issued a toggle");
     assert.equal(mqtt.publishedTo("/relay/1").length, 0, "the taps with no controller confirmation published nothing");
@@ -306,7 +305,7 @@ describe("real ProtectRelay construction and behavior", () => {
       "each confirming broadcast published the output's state once on the 1-based output topic");
 
     // The confirming broadcast cleared the intent: a fresh on tap toggles again rather than being suppressed against a stale pending value.
-    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(output0.getCharacteristic(Characteristic.On), true);
 
     assert.deepEqual(relayProjection.toggleCalls, [ { outputId: 0 }, { outputId: 0 }, { outputId: 0 } ],
       "the confirming broadcast cleared the intent, so a fresh on tap toggled again");
@@ -340,7 +339,7 @@ describe("real ProtectRelay construction and behavior", () => {
     assert.ok(output1, "output 1's switch exists");
 
     // Tap output 0 ON. Its broadcast has not landed, so #pendingDesired[0] stands and HAP holds tile 0 on.
-    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(output0.getCharacteristic(Characteristic.On), true);
 
     assert.equal(output0.getCharacteristic(Characteristic.On).value, true, "tile 0 is optimistically on with the tap in flight");
 
@@ -433,7 +432,7 @@ describe("real ProtectRelay construction and behavior", () => {
 
     relayProjection.toggleRejection = new Error("the controller refused the command.");
 
-    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(output0.getCharacteristic(Characteristic.On), true);
 
     assert.deepEqual(relayProjection.toggleCalls, [{ outputId: 0 }], "the command was attempted");
 
@@ -445,7 +444,7 @@ describe("real ProtectRelay construction and behavior", () => {
     // The intent was dropped on failure, so a fresh on tap (rejection cleared) toggles again rather than being suppressed against a stale pending value.
     relayProjection.toggleRejection = null;
 
-    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(output0.getCharacteristic(Characteristic.On), true);
 
     assert.deepEqual(relayProjection.toggleCalls, [ { outputId: 0 }, { outputId: 0 } ], "the failure dropped the intent, so a fresh tap toggled again");
   });
@@ -457,8 +456,8 @@ describe("real ProtectRelay construction and behavior", () => {
     assert.ok(output0, "output 0's switch exists");
 
     // Tap on: the intent is recorded, and a same-direction second tap is suppressed while it stands.
-    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
-    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(output0.getCharacteristic(Characteristic.On), true);
+    await triggerSet(output0.getCharacteristic(Characteristic.On), true);
 
     assert.deepEqual(relayProjection.toggleCalls, [{ outputId: 0 }], "the second same-direction tap was suppressed while the intent stood");
 
@@ -466,7 +465,7 @@ describe("real ProtectRelay construction and behavior", () => {
     clock.advance(PROTECT_RELAY_COMMAND_TIMEOUT);
 
     // A fresh on tap now toggles again: the controller value is still off and the stale intent is gone.
-    await output0.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(output0.getCharacteristic(Characteristic.On), true);
 
     assert.deepEqual(relayProjection.toggleCalls, [ { outputId: 0 }, { outputId: 0 } ], "after the safety timer dropped the intent, a fresh tap toggled again");
   });
@@ -492,7 +491,7 @@ describe("real ProtectRelay construction and behavior", () => {
     assert.ok(ledSwitch, "enabling the feature created the status-indicator switch");
     assert.equal(ledSwitch.getCharacteristic(Characteristic.On).value, false, "the switch seeded from the off indicator setting");
 
-    await ledSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(ledSwitch.getCharacteristic(Characteristic.On), true);
 
     assert.deepEqual(enabled.relayProjection.updateCalls, [{ payload: { ledSettings: { isEnabled: true } } }],
       "the LED onSet wrote ledSettings.isEnabled through device.update");

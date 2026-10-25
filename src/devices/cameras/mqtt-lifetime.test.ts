@@ -15,7 +15,6 @@ import { TestStateStore, makeProtectState, makeTestAccessory } from "../../testi
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import { G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestMqttSubscription } from "homebridge-plugin-utils/testing";
@@ -33,7 +32,7 @@ describe("MQTT subscription lifetime (owner-signal scoping)", () => {
 
     assert.ok(mqtt, "the recording MQTT double is installed");
 
-    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "uuid:74ACB9000001") as unknown as ProtectAccessory,
+    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
       new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
 
     await settle();

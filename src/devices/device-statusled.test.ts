@@ -31,14 +31,13 @@
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
-import { formatLogEntry, loggedAt } from "homebridge-plugin-utils/testing";
-import type { ProtectAccessory } from "../types.ts";
+import { formatLogEntry, loggedAt, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import { ProtectAuthorizationError } from "unifi-protect";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Sensor } from "unifi-protect";
-import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
@@ -60,7 +59,7 @@ const controllers: AbortController[] = [];
 // configureHints first (the base configurators read this.hints), then the status-LED switch with isEnabled true. The userOptions thread into the REAL FeatureOptions
 // engine, so the Enable.Device.StatusLed.Switch string - and only it - materializes the switch.
 function buildStatusLedDevice(configOptions: { ledEnabled?: boolean } = {}, harnessOptions: { userOptions?: string[] } = {}): {
-  accessory: TestAccessory; device: TestBaseDevice; logEntries: readonly TestLogEntry[]; projection: TestSensorProjection;
+  accessory: TestProtectAccessory; device: TestBaseDevice; logEntries: readonly TestLogEntry[]; projection: TestSensorProjection;
 } {
 
   const sensorConfig = makeSensorConfig(configOptions);
@@ -69,9 +68,9 @@ function buildStatusLedDevice(configOptions: { ledEnabled?: boolean } = {}, harn
 
   controllers.push(controller);
 
-  const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
+  const accessory = makeTestAccessory("Test Sensor", sensorConfig.mac);
   const projection = new TestSensorProjection(sensorConfig.id, store);
-  const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Sensor);
+  const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection as unknown as Sensor);
 
   // Wire the base capabilities the way a family leaf does: hints first, then the status-LED switch with enabled true. Whether the switch actually materializes is then
   // governed entirely by the Enable.Device.StatusLed.Switch userOptions.
@@ -118,7 +117,7 @@ describe("base ProtectDevice status-indicator switch capability (device-statusle
 
       // The switch initializes On to statusLed (ledSettings.isEnabled), which the carrier seeded true, and the onGet reads the same through the projection.
       assert.equal(onChar.value, true, "the switch initialized On to statusLed (ledSettings.isEnabled, true here)");
-      assert.equal(await onChar.triggerGet(), true, "the On getter reads statusLed (true)");
+      assert.equal(await triggerGet(onChar), true, "the On getter reads statusLed (true)");
     });
 
     test("with the feature and ledEnabled false, the switch exists but inits On false and onGet reads false", async () => {
@@ -134,7 +133,7 @@ describe("base ProtectDevice status-indicator switch capability (device-statusle
       const onChar = statusLedSwitch.getCharacteristic(Characteristic.On);
 
       assert.equal(onChar.value, false, "the switch initialized On to statusLed (ledSettings.isEnabled, false here)");
-      assert.equal(await onChar.triggerGet(), false, "the On getter reads statusLed (false)");
+      assert.equal(await triggerGet(onChar), false, "the On getter reads statusLed (false)");
     });
 
     test("without the feature, no status-indicator switch is materialized", () => {
@@ -162,7 +161,7 @@ describe("base ProtectDevice status-indicator switch capability (device-statusle
 
       // The carrier reads ledEnabled true, so onSet false is a change: it logs the disabled line and routes the camera/sensor statusLedCommand
       // (device.update({ ledSettings: { isEnabled: false } })). deepEqual on the whole array catches a missing or empty update.
-      await statusLedSwitch.getCharacteristic(Characteristic.On).triggerSet(false);
+      await triggerSet(statusLedSwitch.getCharacteristic(Characteristic.On), false);
 
       assert.ok(loggedAt(built.logEntries, "info", "Status indicator light disabled."), "the disabled-on-change line logged");
       assert.deepEqual(built.projection.updateCalls, [{ payload: { ledSettings: { isEnabled: false } } }], "the onSet routed the ledSettings update (isEnabled false)");
@@ -179,7 +178,7 @@ describe("base ProtectDevice status-indicator switch capability (device-statusle
       assert.ok(statusLedSwitch, "the switch materialized");
 
       // The carrier reads ledEnabled false, so onSet true is a change: it logs the enabled line and routes device.update({ ledSettings: { isEnabled: true } }).
-      await statusLedSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+      await triggerSet(statusLedSwitch.getCharacteristic(Characteristic.On), true);
 
       assert.ok(loggedAt(built.logEntries, "info", "Status indicator light enabled."), "the enabled-on-change line logged");
       assert.deepEqual(built.projection.updateCalls, [{ payload: { ledSettings: { isEnabled: true } } }], "the onSet routed the ledSettings update with isEnabled true");
@@ -198,7 +197,7 @@ describe("base ProtectDevice status-indicator switch capability (device-statusle
       // The carrier reads ledEnabled true, and the projection never folds the update, so statusLed stays true across the test: onSet true is value === statusLed, so the
       // if(this.statusLed !== value) guard suppresses BOTH onSet log lines. The change-gate is on the log ONLY - the command issues in both the change and no-change
       // cases - so the no-change case is asserted on the command (the exact ledSettings update), which is what keeps it non-vacuous.
-      await statusLedSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+      await triggerSet(statusLedSwitch.getCharacteristic(Characteristic.On), true);
 
       assert.equal(loggedAt(built.logEntries, "info", "Status indicator light enabled."), false, "no enabled change-log on a same-value set");
       assert.equal(loggedAt(built.logEntries, "info", "Status indicator light disabled."), false, "no disabled change-log on a same-value set");
@@ -222,7 +221,7 @@ describe("base ProtectDevice status-indicator switch capability (device-statusle
       // the action interpolated is "turn the status indicator light off"; the message strips its own trailing period before the format string supplies the terminal one.
       built.projection.updateRejection = new Error("The device is unreachable.");
 
-      await statusLedSwitch.getCharacteristic(Characteristic.On).triggerSet(false);
+      await triggerSet(statusLedSwitch.getCharacteristic(Characteristic.On), false);
 
       // tailLoggedAt (not loggedAt) so the line must END WITH the single-period sentence: runDeviceCommand strips the error message's own trailing period before the
       // format string supplies the terminal one, so a regression in that strip would leave a doubled period that endsWith catches but a plain includes() would not.
@@ -244,7 +243,7 @@ describe("base ProtectDevice status-indicator switch capability (device-statusle
       // "turn the status indicator light on".
       built.projection.updateRejection = new ProtectAuthorizationError("forbidden");
 
-      await statusLedSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+      await triggerSet(statusLedSwitch.getCharacteristic(Characteristic.On), true);
 
       assert.ok(loggedAt(built.logEntries, "error",
         "Unable to turn the status indicator light on. Please ensure this username has the full management role in UniFi Protect."),

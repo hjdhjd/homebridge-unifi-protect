@@ -118,7 +118,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
   public accessory: ProtectAccessory;
   // The live projection for this device. Holds (client, id), reads through to the store on every config access. Set once at construction; never reassigned -
-  // the accessory's identity is its MAC, stable across reboots, so the handle never goes stale. The concrete projection type rides this class's generic parameter,
+  // the accessory's identity is its MAC, stable across reboots, so the handle never goes stale. The concrete projection type comes from this class's generic parameter,
   // supplied by each family's class header, and the NVR root injects the projection itself at adoption, where it knows the concrete type. The parameter defaults to the
   // full category union, so a bare ProtectDevice reference (the NVR's deviceEndpoints iterator, a test stand-in) reads the whole projection union.
   protected readonly device: D;
@@ -129,7 +129,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   public hints!: ProtectHints;
 
   // The constructor captures the accessory and the live projection handle. A device's lifetime is its accessory's: it supplies no parent signal, so the spine composes
-  // its per-accessory controller against nvr.signal and the accessory's observers, MQTT registrations, and timers all ride the result. The hints bag is derived by the
+  // its per-accessory controller against nvr.signal and the accessory's observers, MQTT registrations, and timers all bind to the result. The hints bag is derived by the
   // leaf's own configureHints() call, and device configuration is wired separately by the NVR root after construction.
   constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: D) {
 
@@ -149,7 +149,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
    * The two-step cast is a compiler-reduction bridge, not a type claim. TypeScript cannot reduce a mapped type applied to an unresolved generic parameter constrained to
    * a union, and it rejects even the direct cast's overlap check between the parameter's apparent config union and the deferred mapped type, so the step through unknown
    * is what lets the body express a reduction the compiler cannot perform. Nothing is asserted by hand: the declared type is machine-derived from D, and it resolves to
-   * exactly the identity-dropped view of each family's own config - proven at every concrete leaf and at the bare default by the type-identity pins in
+   * exactly the identity-dropped view of each family's own config - proven at every concrete leaf and at the bare default by the type-identity assertions in
    * device-ufp-typing.test.ts, which go red if a future edit ever lets this cast mask a real shift.
    */
   public get ufp(): Readonly<WithoutIdentity<D["config"]>> {
@@ -287,7 +287,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     }
 
     // setInfo reads the full identity-bearing record (marketName/type/mac/hardwareRevision/firmwareVersion), so it takes the raw record - present at configure time -
-    // rather than the narrowed live-state projection that no longer carries identity.
+    // rather than the narrowed live-state projection, which carries no identity.
     return this.setInfo(this.accessory, this.device.config);
   }
 

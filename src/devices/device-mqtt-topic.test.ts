@@ -14,14 +14,13 @@
  */
 import { TestClock, TestMqttClient, settle } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
+import { hap, makeTestAccessory } from "../testing.helpers.ts";
 import type { Camera } from "unifi-protect";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectBase } from "./device-base.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { TEST_CLOCK_EPOCH } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
-import { makeTestAccessory } from "../testing.helpers.ts";
 import util from "node:util";
 
 // The smallest concrete leaf of the abstract base, mirroring command-error.test.ts: ProtectDevice declares no abstract members, so this adds nothing but a public window
@@ -102,7 +101,7 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
   const device = { config: { mac: MAC } };
   const accessory = makeTestAccessory();
 
-  accessory.context["mac"] = MAC;
+  accessory.context.mac = MAC;
 
   const mqtt = {
 
@@ -113,10 +112,10 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
   const nvr = {
 
     mqtt,
-    platform: { api: { hap: {} }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
+    platform: { api: { hap }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
     signal: new AbortController().signal
   };
-  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
+  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory, device as unknown as Camera);
 
   return { capture, instance };
 };
@@ -138,15 +137,15 @@ const makeGuardedDevice = (): { errors: string[]; instance: TestProtectDevice; m
   const device = { config, peek: (): Record<string, unknown> | undefined => (record.present ? config : undefined) };
   const accessory = makeTestAccessory();
 
-  accessory.context["mac"] = MAC;
+  accessory.context.mac = MAC;
 
   const nvr = {
 
     mqtt,
-    platform: { api: { hap: {} }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
+    platform: { api: { hap }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
     signal: new AbortController().signal
   };
-  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
+  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory, device as unknown as Camera);
 
   return { errors, instance, mqtt, record };
 };
@@ -172,7 +171,7 @@ const makeController = (): { capture: MqttCapture; instance: TestProtectBase } =
   const nvr = {
 
     mqtt,
-    platform: { api: { hap: {} }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
+    platform: { api: { hap }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
     ufp: { mac: NVR_MAC }
   };
   const instance = new TestProtectBase(nvr as unknown as ProtectNvr);

@@ -16,17 +16,16 @@
  * The isolation model mirrors the light reference: a beforeEach builds a fresh viewer so the capture arrays, the characteristic state, the observer baselines, and
  * store.observerCount are clean every test, and the wake log is windowed per push via a captured baseline. The afterEach(() => viewer?.cleanup()) unwinds the observers.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, writesTo } from "../testing.helpers.ts";
 import type { ProtectNvrLiveviewConfig, Viewer } from "unifi-protect";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { TestViewerProjection, makeLiveviewConfig, makeViewerConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
-import { loggedAt, settle } from "homebridge-plugin-utils/testing";
+import { loggedAt, settle, triggerSet } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../diagnostics.ts";
-import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectViewer } from "./viewer.ts";
-import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
@@ -44,8 +43,9 @@ const controllers: AbortController[] = [];
 // spawnObservers paths. Returns logEntries and mqtt (the viewer asserts both the failure/configured log lines and the captured MQTT liveview handlers). seedAccessory,
 // when supplied, runs against the fresh accessory before construction, standing in for the services a Homebridge restart restores from the accessory cache.
 function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {},
-  harnessOptions: { disconnected?: boolean; liveviews?: ProtectNvrLiveviewConfig[]; seedAccessory?: (accessory: TestAccessory) => void } = {}): {
-  accessory: TestAccessory; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; projection: TestViewerProjection; store: TestStateStore; viewer: ProtectViewer;
+  harnessOptions: { disconnected?: boolean; liveviews?: ProtectNvrLiveviewConfig[]; seedAccessory?: (accessory: TestProtectAccessory) => void } = {}): {
+  accessory: TestProtectAccessory; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; projection: TestViewerProjection; store: TestStateStore;
+  viewer: ProtectViewer;
 } {
 
   const viewerConfig = makeViewerConfig(configOptions);
@@ -60,12 +60,12 @@ function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {},
     mqtt.connected = false;
   }
 
-  const accessory = makeTestAccessory("Test Viewer", "uuid:test-viewer");
+  const accessory = makeTestAccessory("Test Viewer", viewerConfig.mac);
 
   harnessOptions.seedAccessory?.(accessory);
 
   const projection = new TestViewerProjection(viewerConfig.id, store);
-  const viewer = new ProtectViewer(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Viewer);
+  const viewer = new ProtectViewer(nvr as unknown as ProtectNvr, accessory, projection as unknown as Viewer);
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast (either of which the house lint preset forbids in opposite directions), and fails loudly if the opt-in ever stops installing the double.
@@ -85,7 +85,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
   const onWake = (message: unknown): void => { wakeLog.push(message as ObserverWakePayload); };
 
   // The per-test-fresh handles, rebuilt in beforeEach so every test starts from a clean viewer, clean captures, and clean wake baseline.
-  let accessory: TestAccessory;
+  let accessory: TestProtectAccessory;
   let constructionWakes = 0;
   let logEntries: readonly TestLogEntry[];
   let mqtt: TestMqttClient;
@@ -172,7 +172,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
 
     assert.ok(target, "the second liveview switch exists");
 
-    await target.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(target.getCharacteristic(Characteristic.On), true);
 
     assert.deepEqual(projection.updateCalls, [{ liveview: "liveview-2" }], "the real setViewer dispatched a single update with the requested liveview id");
     assert.equal(mqtt.published.length, 0, "the command with no controller confirmation published nothing");
@@ -200,7 +200,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
 
       assert.ok(restored, "the restored liveview switch is on the accessory");
 
-      await restored.getCharacteristic(Characteristic.On).triggerSet(true);
+      await triggerSet(restored.getCharacteristic(Characteristic.On), true);
 
       assert.deepEqual(fixture.projection.updateCalls, [{ liveview: "liveview-3" }], "setting the restored switch issued the viewer's update");
     } finally {
@@ -216,15 +216,16 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
 
     assert.ok(target && sibling, "both liveview switches exist");
 
-    // The write log records every updateCharacteristic-driven write (triggerSet's own post-handler cache write does not append). Capture the sibling's baseline, tap the
-    // other switch, and confirm the handler wrote nothing to the sibling - the buggy synchronous re-read re-asserted the stale pre-command layout, a re-write only the
-    // write log reveals since the final cached value is unchanged.
-    const siblingWritesBefore = sibling.getCharacteristic(Characteristic.On).writes.length;
+    // writesTo reads every write production made through HAP's update path, an unchanged rewrite included, while HomeKit's own write to the tapped switch carries
+    // another reason and stays out. Capture the sibling's baseline, tap the other switch, and confirm the handler wrote nothing to the sibling - the buggy synchronous
+    // re-read re-asserted the stale pre-command layout, a re-write only the write record reveals since the final value is unchanged.
+    const siblingOn = sibling.getCharacteristic(Characteristic.On);
+    const siblingWritesBefore = writesTo(accessory, siblingOn).length;
 
-    await target.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(target.getCharacteristic(Characteristic.On), true);
 
     assert.equal(projection.updateCalls.length, 1, "the command was dispatched");
-    assert.equal(sibling.getCharacteristic(Characteristic.On).writes.length, siblingWritesBefore,
+    assert.equal(writesTo(accessory, siblingOn).length, siblingWritesBefore,
       "the handler produced no write to the sibling switch - it is left for the viewer.liveview observer to reflect once the broadcast lands");
   });
 
@@ -234,7 +235,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
 
     assert.ok(active, "the active liveview switch exists");
 
-    await active.getCharacteristic(Characteristic.On).triggerSet(false);
+    await triggerSet(active.getCharacteristic(Characteristic.On), false);
 
     assert.deepEqual(projection.updateCalls, [{ liveview: null }], "a switch-off clears the liveview to null");
     assert.equal(mqtt.published.length, 0, "a clear-to-null command with no controller confirmation publishes nothing");
@@ -269,7 +270,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
 
     assert.ok(target, "the second liveview switch exists");
 
-    await target.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(target.getCharacteristic(Characteristic.On), true);
 
     assert.equal(projection.updateCalls.length, 1, "the command was attempted");
     assert.equal(mqtt.published.length, 0, "a failed change publishes nothing");
@@ -338,7 +339,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
 
     assert.ok(added, "a switch was added for the new liveview");
 
-    await added.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(added.getCharacteristic(Characteristic.On), true);
 
     assert.deepEqual(projection.updateCalls, [{ liveview: "liveview-3" }], "setting the added switch issued the viewer's update");
   });

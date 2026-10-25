@@ -3,23 +3,24 @@
  * streaming-capability.test.ts: The controller-side members of the camera family's streaming capability.
  *
  * The NVR reaches into every camera's streaming arm from several walks - the reboot-recovery probesize reset, the disconnect release, and the scheduled-reboot deferral
- * gate among them - and each walk speaks to the capability through one intent-named member rather than reaching into the delegate itself. This suite pins those members
- * against a REAL constructed doorbell-plus-package family: the release is exactly the pooled-subscription pair and deliberately NOT the full teardown (no recording-off,
- * no controller removal), the reboot recovery reaches parent and package alike, and the recording-transmitting gate answers safely at every level of absence.
+ * gate among them - and each walk speaks to the capability through one intent-named member rather than reaching into the delegate itself. This suite asserts those
+ * members against a REAL constructed doorbell-plus-package family: the release is exactly the pooled-subscription pair and deliberately NOT the full teardown (no
+ * recording-off, no controller removal), the reboot recovery reaches parent and package alike, and the recording-transmitting gate answers safely at every level of
+ * absence.
  *
- * It also carries the non-creating-getter pin. A walk that constructed a capability merely by looking at one would build machinery for cameras it was only meant to
- * inspect, so the harness NVR counts every construction it is asked for and the pin asserts a read leaves that count alone.
+ * It also carries the non-creating-getter assertion. A walk that constructed a capability merely by looking at one would build machinery for cameras it was only meant
+ * to inspect, so the harness NVR counts every construction it is asked for and the assertion proves a read leaves that count alone.
  */
 import { AMCREST_INIT_SEGMENT, G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
-import { Characteristic, Service, TestStateStore, makeProtectState, makeRecordingDelegateDouble, makeTestAccessory } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, controllerEvents, makeProtectState, makeRecordingDelegateDouble, makeTestAccessory,
+  writesTo } from "../../testing.helpers.ts";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS } from "../../settings.ts";
-import type { TestAccessory, TestRecordingDelegate, TestStreamingDelegate, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
 import type { TestCameraFeatureFlags, TestLivestreamSubscription } from "../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
+import type { TestProtectAccessory, TestRecordingDelegate, TestStreamingDelegate, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { assertNoUnhandledRejections, expectAt, logCount, settle } from "homebridge-plugin-utils/testing";
 import type { Camera } from "unifi-protect";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import { ProtectClient } from "unifi-protect";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
@@ -54,7 +55,7 @@ async function makeFamily(channels = G6_PRO_ENTRY_CHANNELS): Promise<Family> {
 
   openControllers.push(controller);
 
-  const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Back Door", "uuid:streaming-capability") as unknown as ProtectAccessory,
+  const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Back Door", cameraConfig.mac),
     new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
 
   await settle();
@@ -73,9 +74,9 @@ function delegateFor(factory: TestStreamingDelegateFactory, host: ProtectCamera)
 }
 
 // The accessory behind a device, for the controller-registration assertions.
-function accessoryOf(device: ProtectCamera): TestAccessory {
+function accessoryOf(device: ProtectCamera): TestProtectAccessory {
 
-  return device.accessory as unknown as TestAccessory;
+  return device.accessory as unknown as TestProtectAccessory;
 }
 
 describe("the streaming capability's controller-side members", () => {
@@ -127,8 +128,10 @@ describe("the streaming capability's controller-side members", () => {
     // The two things the release deliberately does NOT do. Widening it into the full teardown leaves both of these RED.
     assert.deepEqual(parentHksv.updateRecordingActiveCalls, [], "the parent's release issued no recording-off command");
     assert.deepEqual(packageHksv.updateRecordingActiveCalls, [], "the package's release issued no recording-off command");
-    assert.equal(accessoryOf(doorbell).removeControllerCalls.length, 0, "the parent's controller stayed registered across the release");
-    assert.equal(accessoryOf(doorbell.packageCamera).removeControllerCalls.length, 0, "the package's controller stayed registered across the release");
+    assert.equal(controllerEvents(accessoryOf(doorbell)).filter((event) => event.kind === "remove").length, 0,
+      "the parent's controller stayed registered across the release");
+    assert.equal(controllerEvents(accessoryOf(doorbell.packageCamera)).filter((event) => event.kind === "remove").length, 0,
+      "the package's controller stayed registered across the release");
   });
 
   // The machinery-less arm. A camera whose derivation never yielded holds a capability but no delegate, and the walk must pass over it silently rather than throw - the
@@ -255,8 +258,8 @@ describe("the streaming capability's recording-transmitting gate", () => {
   });
 
   /* The same member read on the package INSTANCE class. The deferral counts every camera view the controller manages, so a package has to answer this as reliably as
-   * its parent does - and the package's capability is wired by its own path, which is what this arm holds against drift. What the count DOES with the answer is pinned
-   * in the harness suite; this pins the answer itself on the package.
+   * its parent does - and the package's capability is wired by its own path, which is what this arm holds against drift. What the count DOES with the answer is
+   * asserted in the harness suite; this asserts the answer itself on the package.
    */
   test("isRecordingTransmitting answers through the package camera's own capability", async () => {
 
@@ -292,20 +295,20 @@ describe("the derivation's recording-audio probe", () => {
 
   // A real camera under the given options, its construction started but not settled, so a row can land an event before the derivation finishes, plus the handles the
   // rows read. The configure hook runs before construction, with the accessory, so a row can seed what a restart restores from the accessory cache.
-  function constructCamera(options: { configure?: (projection: TestCameraProjection, nvr: TestProtectNvr, accessory: TestAccessory) => void;
-    featureFlags?: Partial<TestCameraFeatureFlags>; userOptions?: string[]; } = {}): { accessory: TestAccessory; camera: ProtectCamera; cameraId: string;
+  function constructCamera(options: { configure?: (projection: TestCameraProjection, nvr: TestProtectNvr, accessory: TestProtectAccessory) => void;
+    featureFlags?: Partial<TestCameraFeatureFlags>; userOptions?: string[]; } = {}): { accessory: TestProtectAccessory; camera: ProtectCamera; cameraId: string;
     factory: TestStreamingDelegateFactory; logEntries: readonly TestLogEntry[]; nvr: TestProtectNvr; projection: TestCameraProjection; store: TestStateStore; } {
 
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: options.featureFlags, name: "Driveway" });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { controller, factory, logEntries, nvr } = makeTestNvr({ store, userOptions: options.userOptions });
     const projection = new TestCameraProjection(cameraConfig.id, store);
-    const accessory = makeTestAccessory("Driveway", "uuid:recording-audio-probe");
+    const accessory = makeTestAccessory("Driveway", cameraConfig.mac);
 
     openControllers.push(controller);
     options.configure?.(projection, nvr, accessory);
 
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
     return { accessory, camera, cameraId: cameraConfig.id, factory, logEntries, nvr, projection, store };
   }
@@ -540,7 +543,7 @@ describe("the derivation's recording-audio probe", () => {
       for(const characteristic of details) {
 
         assert.equal(operatingMode.testCharacteristic(characteristic), true, "a cached camera detail is still on the service");
-        assert.deepEqual(operatingMode.getCharacteristic(characteristic).writes, [], "a cached camera detail was never written");
+        assert.deepEqual(writesTo(accessory, operatingMode.getCharacteristic(characteristic)), [], "a cached camera detail was never written");
       }
     });
   });

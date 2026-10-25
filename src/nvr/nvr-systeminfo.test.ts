@@ -17,8 +17,8 @@
  *   wake-count scaffold - a constructionWakes === 0 assertion would pass trivially and mislead. The single nvr.systemInfo observer is netted by its REACTION (the
  *   temperature characteristic refreshes after a store push). store.observerCount IS a real registration-count surface the owner's observer joins, used here only as the
  *   complementary teardown leak check.
- * - It self-creates its accessory: the test supplies none; it reads the created accessory back off nvr.platform.accessories and asserts the platform double recorded the
- *   register call. The accessory UUID is deterministic: hap.uuid.generate(nvr.ufp.mac + ".NVRSystemInfo") = "uuid:74ACB9FFFFFF.NVRSystemInfo".
+ * - It self-creates its accessory: the test supplies none; it reads the created accessory back off nvr.platform.accessories and asserts the API double recorded the
+ *   register call. The accessory UUID is deterministic: hap.uuid.generate(nvr.ufp.mac + ".NVRSystemInfo"), the seed 74ACB9FFFFFF.NVRSystemInfo.
  * - nvr.ufp reads THROUGH the store (the harness's read-through client.nvr.config getter), so seeding the store's nvr slice IS how the construction record reaches
  *   nvr.ufp, and a pushNvrPatch that moves systemInfo by reference changes both selectNvr(state) and nvr.ufp at once.
  *
@@ -27,21 +27,20 @@
  * .value, which is written ONLY by the observer-driven updateCharacteristic: a non-firing observer leaves .value at the initial-pass write. So the observer test asserts
  * CurrentTemperature.value === NEW after pushNvrPatch moves a FRESH systemInfo by reference, never triggerGet.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, accessoryUuid, makeProtectState } from "../testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
-import { loggedAt, settle } from "homebridge-plugin-utils/testing";
-import { makeNvrConfig, makeTestNvr } from "./testing.helpers.ts";
+import { loggedAt, settle, triggerGet } from "homebridge-plugin-utils/testing";
+import { makeNvrConfig, makeTestNvr, restoreAccessories } from "./testing.helpers.ts";
+import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { ProtectNvrSystemInfo } from "./nvr-systeminfo.ts";
-import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
 
-// The deterministic accessory UUID the owner composes: the platform double's uuid generator is (seed) => "uuid:" + seed, and the owner generates from
-// nvr.ufp.mac + ".NVRSystemInfo" against the makeNvrConfig mac, so the UUID is fixed. A literal rather than a derivation so a drift in the UUID composition breaks
-// loudly.
-const SYSTEMINFO_UUID = "uuid:74ACB9FFFFFF.NVRSystemInfo";
+// The deterministic accessory UUID the owner composes: the owner seeds HAP's generator with nvr.ufp.mac + ".NVRSystemInfo" against the makeNvrConfig mac, so the
+// UUID is fixed. A literal seed rather than a derivation so a drift in the identity composition breaks loudly.
+const SYSTEMINFO_UUID = accessoryUuid("74ACB9FFFFFF.NVRSystemInfo");
 
 // The reusable construction helper: build a REAL ProtectNvrSystemInfo against the harness doubles, taking ONLY an nvr (the owner extends ProtectBase, so its ctor is
 // (nvr)). makeNvrConfig carries the systemInfo the initial pass dereferences; the store's nvr slice is seeded NON-NULL so nvr.ufp - which reads through the store -
@@ -50,13 +49,13 @@ const SYSTEMINFO_UUID = "uuid:74ACB9FFFFFF.NVRSystemInfo";
 // nvr.platform.accessories. The returned controller is the AbortController behind nvr.signal, aborted in teardown to tear down the owner's observe loop and its MQTT
 // subscriptions: the fixture tears down through the controller it built, the scope that owns every registration the test created.
 function buildSystemInfo(configOptions: Parameters<typeof makeNvrConfig>[0] = {}, harnessOptions: { seedCachedAccessory?: boolean; userOptions?: string[] } = {}): {
-  accessory: TestAccessory | undefined; apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"]; controller: AbortController; logEntries: readonly TestLogEntry[];
+  accessory: ProtectAccessory | undefined; api: ReturnType<typeof makeTestNvr>["api"]; controller: AbortController; logEntries: readonly TestLogEntry[];
   mqtt: TestMqttClient; nvr: TestProtectNvr; owner: ProtectNvrSystemInfo; store: TestStateStore;
 } {
 
   const nvrConfig = makeNvrConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
-  const { apiCalls, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
+  const { api, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast (either of which the house lint preset forbids in opposite directions), and fails loudly if the opt-in ever stops installing the double.
@@ -65,20 +64,20 @@ function buildSystemInfo(configOptions: Parameters<typeof makeNvrConfig>[0] = {}
     throw new Error("The MQTT recording double was not installed despite mqtt: true.");
   }
 
-  // The disabled-removal path pre-seeds a cached accessory at the deterministic UUID BEFORE construction, so the feature-off branch actually removes one rather than
-  // no-opping vacuously. The double's TestAccessory is reached through the platform's api.platformAccessory class so the seeded accessory is the same kind the owner
-  // would create.
+  // The disabled-removal path pre-seeds a cached accessory at the deterministic UUID BEFORE construction, restored onto the bridge as Homebridge restores a cached
+  // accessory, so the feature-off branch actually removes one rather than no-opping vacuously. The accessory is built through the platform's api.platformAccessory
+  // class, the one the owner creates its own through.
   if(harnessOptions.seedCachedAccessory) {
 
     const PlatformAccessory = nvr.platform.api.platformAccessory;
 
-    nvr.platform.accessories.push(new PlatformAccessory("Cached System Info", SYSTEMINFO_UUID));
+    restoreAccessories(nvr, [new PlatformAccessory("Cached System Info", SYSTEMINFO_UUID)]);
   }
 
   const owner = new ProtectNvrSystemInfo(nvr as unknown as ProtectNvr);
   const accessory = nvr.platform.accessories.find((candidate) => candidate.UUID === SYSTEMINFO_UUID);
 
-  return { accessory, apiCalls, controller, logEntries, mqtt, nvr, owner, store };
+  return { accessory, api, controller, logEntries, mqtt, nvr, owner, store };
 }
 
 describe("real ProtectNvrSystemInfo construction and controller-owner behavior", () => {
@@ -106,7 +105,7 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
 
     assert.ok(accessory, "the owner self-created an accessory at the deterministic UUID and pushed it onto the platform accessories array");
     assert.equal(accessory.UUID, SYSTEMINFO_UUID, "the self-created accessory carries the mac-derived NVRSystemInfo UUID");
-    assert.ok(built.apiCalls.some((call) => (call.kind === "register") && call.accessories.includes(accessory)),
+    assert.ok(built.api.calls.some((call) => (call.kind === "register") && call.accessories.includes(accessory)),
       "the platform double recorded a register call carrying the self-created accessory");
 
     // HARD-assert the TemperatureSensor service exists FIRST (non-optional), the feature-gate non-vacuity discipline.
@@ -117,7 +116,7 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
 
     // The initial pass wrote CurrentTemperature off systemInfo.cpu.temperature, and bound the onGet that reads it live.
     assert.equal(temperature.getCharacteristic(Characteristic.CurrentTemperature).value, 36, "CurrentTemperature initialized from systemInfo.cpu.temperature");
-    assert.equal(await temperature.getCharacteristic(Characteristic.CurrentTemperature).triggerGet(), 36, "the onGet reads through systemInfo.cpu.temperature live");
+    assert.equal(await triggerGet(temperature.getCharacteristic(Characteristic.CurrentTemperature)), 36, "the onGet reads through systemInfo.cpu.temperature live");
 
     // setInfo wired the controller-branded identity (the device-info concern owns the per-field writes; here we assert only that setInfo ran against the accessory).
     const info = accessory.getService(Service.AccessoryInformation);
@@ -145,7 +144,7 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
     // as a later pass would bind nothing, and the pull would fall through to the sentinel.
     temperature.getCharacteristic(Characteristic.CurrentTemperature).updateValue(-1);
 
-    assert.equal(await temperature.getCharacteristic(Characteristic.CurrentTemperature).triggerGet(), 36, "the pull answers the live temperature, not the sentinel");
+    assert.equal(await triggerGet(temperature.getCharacteristic(Characteristic.CurrentTemperature)), 36, "the pull answers the live temperature, not the sentinel");
   });
 
   test("construction with the feature disabled and a cached accessory present unregisters it, splices it out, and logs the removal", async () => {
@@ -158,7 +157,7 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
 
     // The cached accessory was removed: gone from the platform array, AND the platform double recorded an unregister call.
     assert.equal(built.accessory, undefined, "the cached system-information accessory was spliced out of the platform accessories array");
-    assert.ok(built.apiCalls.some((call) => (call.kind === "unregister") && call.accessories.some((candidate) => candidate.UUID === SYSTEMINFO_UUID)),
+    assert.ok(built.api.calls.some((call) => (call.kind === "unregister") && call.accessories.some((candidate) => candidate.UUID === SYSTEMINFO_UUID)),
       "the platform double recorded an unregister call for the cached accessory");
     assert.ok(loggedAt(built.logEntries, "info", "Removing UniFi Protect controller system information sensors."), "the removal path logged the removal line");
   });
@@ -173,8 +172,8 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
 
     assert.equal(built.accessory, undefined, "no accessory is created when the feature is off and none is cached");
     assert.equal(built.nvr.platform.accessories.length, 0, "the platform accessories array stays empty - nothing was created or restored");
-    assert.equal(built.apiCalls.some((call) => call.kind === "register"), false, "the silent no-op path records no register call");
-    assert.equal(built.apiCalls.some((call) => call.kind === "unregister"), false, "the silent no-op path records no unregister call");
+    assert.equal(built.api.calls.some((call) => call.kind === "register"), false, "the silent no-op path records no register call");
+    assert.equal(built.api.calls.some((call) => call.kind === "unregister"), false, "the silent no-op path records no unregister call");
   });
 
   test("the nvr.systemInfo observer refreshes the CACHED CurrentTemperature value after a reference-changing pushNvrPatch", async () => {

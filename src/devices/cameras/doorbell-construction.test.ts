@@ -17,29 +17,28 @@
  * vacuity-proofed by the same subscription later observing positive wakes. Test files run in separate processes under the node:test runner, so the subscriptions
  * never cross-talk with other suites.
  */
-import { Characteristic, Service, TestAccessory, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, accessoryUuid, controllerEvents, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { G2_PRO_CHANNELS, G6_INSTANT_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
-import type { TestApiCall, TestStreamingDelegate, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig, makeChimeConfig } from "../testing.helpers.ts";
-import { TestRecordingDispatch, makeTestNvr } from "../../nvr/testing.helpers.ts";
+import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
+import type { TestProtectAccessory, TestStreamingDelegate, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import { TestRecordingDispatch, makeTestNvr, restoreAccessories } from "../../nvr/testing.helpers.ts";
 import { after, afterEach, before, describe, test } from "node:test";
 import { assertNoUnhandledRejections, formatLogEntry, logCount, settle } from "homebridge-plugin-utils/testing";
 import type { Camera } from "unifi-protect";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 
 // Construct a real ProtectCamera against an isDoorbell-true config so it construction-attaches its DoorbellCapability, with the casts confined to this one boundary - the
 // instance under test is the production ProtectCamera and its composed capability.
-function constructDoorbell(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): ProtectCamera {
+function constructDoorbell(nvr: TestProtectNvr, accessory: TestProtectAccessory, projection: TestCameraProjection): ProtectCamera {
 
-  return new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+  return new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 }
 
 describe("real doorbell construction (suite A)", () => {
@@ -47,7 +46,7 @@ describe("real doorbell construction (suite A)", () => {
   const wakeLog: ObserverWakePayload[] = [];
   const onWake = (message: unknown): void => { wakeLog.push(message as ObserverWakePayload); };
 
-  let accessory: TestAccessory;
+  let accessory: TestProtectAccessory;
   let constructionWakes = 0;
   let doorbell: ProtectCamera;
   let factory: TestStreamingDelegateFactory;
@@ -66,7 +65,7 @@ describe("real doorbell construction (suite A)", () => {
 
     ({ controller: harnessController, factory, nvr } = makeTestNvr({ store }));
 
-    accessory = makeTestAccessory("Front Door", "uuid:74ACB9000001");
+    accessory = makeTestAccessory("Front Door", "74ACB9000001");
     doorbell = constructDoorbell(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
     await settle();
@@ -87,7 +86,7 @@ describe("real doorbell construction (suite A)", () => {
     const doorbellService = accessory.getService(Service.Doorbell);
 
     assert.ok(doorbellService, "the video doorbell service exists");
-    assert.equal(doorbellService.isPrimary, true, "configureDoorbellService marked the Doorbell service primary");
+    assert.equal(doorbellService.isPrimaryService, true, "configureDoorbellService marked the Doorbell service primary");
   });
 
   test("the doorbell wires nineteen observers - the camera's plain-camera set plus the capability's four - and fires none at construction", () => {
@@ -125,7 +124,7 @@ describe("real doorbell construction (suite A)", () => {
     const chimeConfig = makeChimeConfig({ cameraIds: [cameraConfig.id], ringSettings: [{ cameraId: cameraConfig.id, volume: 50 }] });
     const localStore = new TestStateStore(makeProtectState({ cameras: [cameraConfig], chimes: [chimeConfig] }));
     const { controller: localController, nvr: localNvr } = makeTestNvr({ store: localStore });
-    const localAccessory = makeTestAccessory("Front Door", "uuid:74ACB9000099");
+    const localAccessory = makeTestAccessory("Front Door", "74ACB9000099");
     const localDoorbell = constructDoorbell(localNvr, localAccessory, new TestCameraProjection(cameraConfig.id, localStore));
 
     await settle();
@@ -188,7 +187,7 @@ describe("real doorbell construction (suite A)", () => {
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLcdScreen: true, isDoorbell: true }, name: "Front Door" });
     const localStore = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { controller: localController, nvr: localNvr } = makeTestNvr({ store: localStore });
-    const localDoorbell = constructDoorbell(localNvr, makeTestAccessory("Front Door", "uuid:74ACB9000098"), new TestCameraProjection(cameraConfig.id, localStore));
+    const localDoorbell = constructDoorbell(localNvr, makeTestAccessory("Front Door", "74ACB9000098"), new TestCameraProjection(cameraConfig.id, localStore));
 
     await settle();
 
@@ -228,7 +227,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
   const wakeLog: ObserverWakePayload[] = [];
   const onWake = (message: unknown): void => { wakeLog.push(message as ObserverWakePayload); };
 
-  let apiCalls: TestApiCall[];
+  let api: TestHomebridgeApi;
   let cameraId = "";
   let constructionWakes = 0;
   let doorbell: ProtectCamera;
@@ -238,11 +237,11 @@ describe("doorbell + package camera family construction (suite B)", () => {
   let store: TestStateStore;
 
   // The package camera's accessory, asserted live.
-  function packageAccessory(): TestAccessory {
+  function packageAccessory(): TestProtectAccessory {
 
     assert.ok(doorbell.packageCamera, "the package camera instance is live");
 
-    return doorbell.packageCamera.accessory as unknown as TestAccessory;
+    return doorbell.packageCamera.accessory as unknown as TestProtectAccessory;
   }
 
   before(async () => {
@@ -254,9 +253,9 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
     cameraId = cameraConfig.id;
     store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    ({ apiCalls, controller: harnessController, logEntries, nvr } = makeTestNvr({ store, userOptions: ["Enable.Device.SyncName"] }));
+    ({ api, controller: harnessController, logEntries, nvr } = makeTestNvr({ store, userOptions: ["Enable.Device.SyncName"] }));
 
-    doorbell = constructDoorbell(nvr, makeTestAccessory("Front Door", "uuid:74ACB9000001"), new TestCameraProjection(cameraId, store));
+    doorbell = constructDoorbell(nvr, makeTestAccessory("Front Door", "74ACB9000001"), new TestCameraProjection(cameraId, store));
 
     await settle();
 
@@ -273,12 +272,12 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
     const accessory = packageAccessory();
 
-    assert.equal(accessory.UUID, "uuid:74ACB9000001.PackageCamera", "the accessory UUID derives from the parent MAC plus the identity suffix");
+    assert.equal(accessory.UUID, accessoryUuid("74ACB9000001.PackageCamera"), "the accessory UUID derives from the parent MAC plus the identity suffix");
     assert.ok(nvr.platform.accessories.includes(accessory), "the accessory is tracked in the platform's accessories array");
-    assert.equal(apiCalls.filter((call) => (call.kind === "register") && call.accessories.includes(accessory)).length, 1, "the accessory registered as bridged");
+    assert.equal(api.calls.filter((call) => (call.kind === "register") && call.accessories.includes(accessory)).length, 1, "the accessory registered as bridged");
     assert.deepEqual(Object.keys(accessory.context).sort(), [ "detectMotion", "nvr", "packageCamera" ], "the persisted context carries exactly the production keys");
-    assert.equal(accessory.context["packageCamera"], "74ACB9000001", "the packageCamera context key carries the parent MAC");
-    assert.equal(accessory.context["detectMotion"], true, "motion awareness defaults on");
+    assert.equal(accessory.context.packageCamera, "74ACB9000001", "the packageCamera context key carries the parent MAC");
+    assert.equal(accessory.context.detectMotion, true, "motion awareness defaults on");
   });
 
   test("the package camera's display name flows through the syncedName accessor with the display suffix applied", () => {
@@ -376,9 +375,9 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
     // The isDoorbell observer is unconditionally armed on every camera, so it may wake on the flap -
     // but the reconcile re-reads LIVE state on each wake, and the flap (isDoorbell drops then returns before any consumer drains) leaves live state at its final value.
-    const accessory = doorbell.accessory as unknown as TestAccessory;
+    const accessory = doorbell.accessory as unknown as TestProtectAccessory;
     const warnBaseline = logEntries.filter((entry) => entry.level === "warn").length;
-    const churnBaseline = accessory.controllerEvents.length;
+    const churnBaseline = controllerEvents(accessory).length;
 
     // The flap: isDoorbell drops and returns before any consumer drains.
     store.pushCameraFeatureFlags(cameraId, { isDoorbell: false });
@@ -393,7 +392,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
     // No controller churn: the self-collapse leaves isDoorbell at the value the controller was already built for, so the capability reconcile's controller-identity
     // check sees no frozen term appeared and skips the in-place controller rebuild - no removeController/configureController fired at the flap.
-    assert.equal(accessory.controllerEvents.length, churnBaseline, "the flap drove zero controller churn - no rebuild");
+    assert.equal(controllerEvents(accessory).length, churnBaseline, "the flap drove zero controller churn - no rebuild");
   });
 
   test("controller-health reachability: the doorbell no longer fans out to the package, whose endpoint surface is first-class", async () => {
@@ -436,7 +435,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
 
     assert.equal(doorbell.packageCamera, null, "cleanup nulls the package camera handle");
     assert.equal(store.observerCount, 0, "every family observer deregistered");
-    assert.equal(accessory.removeControllerCalls.length, 1, "the package's controller was unregistered at cleanup");
+    assert.equal(controllerEvents(accessory).filter((event) => event.kind === "remove").length, 1, "the package's controller was unregistered at cleanup");
 
     const teardownBaseline = wakeLog.length;
 
@@ -475,7 +474,7 @@ describe("doorbell bare-motion package forward (suite C)", () => {
 
     const recording = nvr.events as TestRecordingDispatch;
 
-    doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "uuid:74ACB9000001") as unknown as ProtectAccessory,
+    doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
       new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
 
     await settle();
@@ -537,20 +536,20 @@ describe("the package camera UUID-seed pin", () => {
 
     const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, name: "Front Door" });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
-    const { apiCalls, controller, nvr } = makeTestNvr({ store });
+    const { api, controller, nvr } = makeTestNvr({ store });
 
     // The pin is the LITERAL seed string, deliberately not derived from the production constant: cached accessories in the field were keyed by exactly this value,
     // so any drift in the persistence-critical identity suffix must break this fixture loudly.
-    const cached = new TestAccessory("Cached Package", "uuid:" + cameraConfig.mac + ".PackageCamera");
+    const cached = makeTestAccessory("Cached Package", cameraConfig.mac + ".PackageCamera");
 
-    nvr.platform.accessories.push(cached);
+    restoreAccessories(nvr, [cached]);
 
-    const doorbell = constructDoorbell(nvr, makeTestAccessory("Front Door", "uuid:74ACB9000001"), new TestCameraProjection(cameraConfig.id, store));
+    const doorbell = constructDoorbell(nvr, makeTestAccessory("Front Door", "74ACB9000001"), new TestCameraProjection(cameraConfig.id, store));
 
     await settle();
 
     assert.equal(doorbell.packageCamera?.accessory, cached, "the doorbell adopted the cached accessory by its persisted UUID");
-    assert.equal(apiCalls.filter((call) => (call.kind === "register") || (call.kind === "publishExternal")).length, 0, "no new accessory was ever registered");
+    assert.equal(api.calls.filter((call) => (call.kind === "register") || (call.kind === "publish")).length, 0, "no new accessory was ever registered");
 
     doorbell.cleanup();
 
@@ -691,7 +690,7 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
 
     capped.factory.maxSourcePixels = 1280 * 720;
 
-    const cappedCamera = new ProtectCamera(capped.nvr as unknown as ProtectNvr, makeTestAccessory() as unknown as ProtectAccessory,
+    const cappedCamera = new ProtectCamera(capped.nvr as unknown as ProtectNvr, makeTestAccessory(),
       new TestCameraProjection(cappedConfig.id, cappedStore) as unknown as Camera);
 
     await settle();
@@ -712,7 +711,7 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
 
     pinned.factory.maxSourcePixels = 1280 * 720;
 
-    const pinnedCamera = new ProtectCamera(pinned.nvr as unknown as ProtectNvr, makeTestAccessory() as unknown as ProtectAccessory,
+    const pinnedCamera = new ProtectCamera(pinned.nvr as unknown as ProtectNvr, makeTestAccessory(),
       new TestCameraProjection(pinnedConfig.id, pinnedStore) as unknown as Camera);
 
     await settle();
@@ -729,7 +728,7 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
     const openConfig = makeCameraConfig({ channels: G6_INSTANT_CHANNELS });
     const openStore = new TestStateStore(makeProtectState({ cameras: [openConfig] }));
     const open = makeTestNvr({ store: openStore });
-    const openCamera = new ProtectCamera(open.nvr as unknown as ProtectNvr, makeTestAccessory() as unknown as ProtectAccessory,
+    const openCamera = new ProtectCamera(open.nvr as unknown as ProtectNvr, makeTestAccessory(),
       new TestCameraProjection(openConfig.id, openStore) as unknown as Camera);
 
     await settle();

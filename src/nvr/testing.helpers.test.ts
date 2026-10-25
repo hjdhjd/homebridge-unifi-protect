@@ -13,9 +13,9 @@
  * endpoint walk reaches, and that a fired decision lands on the double's accessory graph through its removal tail.
  */
 import { PROTECT_NVR_REBOOT_CHECK_INTERVAL, PROTECT_NVR_REBOOT_INTERVAL } from "../settings.ts";
-import { SAVE_WINDOW_MS, asProtectAccessory, makeNvrConfig, makeTestAccessoryFamily, makeTestNvr } from "./testing.helpers.ts";
+import { SAVE_WINDOW_MS, makeNvrConfig, makeTestAccessoryFamily, makeTestNvr, restoreAccessories } from "./testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig, makeSensorConfig } from "../devices/testing.helpers.ts";
-import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import { TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import type { ProtectDevices } from "../types.ts";
@@ -43,23 +43,23 @@ describe("harness growth: the NVR double's removal wiring", () => {
   test("the double's wiring resolves the registered DelayDeviceRemoval default and the fired grace removes through the tail", () => {
 
     const store = new TestStateStore(makeProtectState());
-    const { apiCalls, clock, controller, logEntries, nvr } = makeTestNvr({ store });
-    const accessory = makeTestAccessory("Victim", "uuid:victim");
+    const { api, clock, controller, logEntries, nvr } = makeTestNvr({ store });
+    const accessory = makeTestAccessory("Victim", "74ACB9000201");
 
-    nvr.platform.accessories.push(accessory);
+    restoreAccessories(nvr, [accessory]);
 
     try {
 
       // Take the controller through a disruption and back to stable on the double's test clock, so the grace below arms from a settled controller.
       nvr.restabilizeController();
 
-      nvr.removals.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
+      nvr.removals.schedule({ accessory: accessory, stillGone: () => true });
 
       assert.ok(nvr.platform.accessories.includes(accessory), "the accessory survives until the grace fires");
 
       // A second schedule while one is pending keeps the first deadline, and the gate does that silently - so the ONE narration line across BOTH calls is what proves
       // the redundant schedule deduped, and its text is the resolved-interval pin.
-      nvr.removals.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
+      nvr.removals.schedule({ accessory: accessory, stillGone: () => true });
 
       assert.deepEqual(delayingLines(logEntries), ["Victim: Delaying device removal for at least 60 seconds."],
         "exactly one delay line across both schedules, carrying the registered sixty-second default");
@@ -67,7 +67,7 @@ describe("harness growth: the NVR double's removal wiring", () => {
       clock.advance(60000);
 
       assert.equal(nvr.platform.accessories.includes(accessory), false, "the fired grace removed the accessory through the double's removal tail");
-      assert.equal(apiCalls.filter((call) => call.kind === "unregister").length, 1, "the fired grace unregistered the bridged accessory exactly once");
+      assert.equal(api.calls.filter((call) => call.kind === "unregister").length, 1, "the fired grace unregistered the bridged accessory exactly once");
     } finally {
 
       controller.abort();
@@ -78,14 +78,14 @@ describe("harness growth: the NVR double's removal wiring", () => {
 
     const store = new TestStateStore(makeProtectState());
     const { clock, controller, logEntries, nvr } = makeTestNvr({ store });
-    const accessory = makeTestAccessory("Victim", "uuid:victim");
+    const accessory = makeTestAccessory("Victim", "74ACB9000201");
 
-    nvr.platform.accessories.push(accessory);
+    restoreAccessories(nvr, [accessory]);
 
     try {
 
       nvr.pushControllerStability(false);
-      nvr.removals.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
+      nvr.removals.schedule({ accessory: accessory, stillGone: () => true });
 
       // The gate checks stability before it narrates anything, so a suppressed schedule leaves no line at all - and nothing is armed to fire later.
       assert.deepEqual(delayingLines(logEntries), [], "an unstable controller schedules nothing and narrates nothing");
@@ -96,7 +96,7 @@ describe("harness growth: the NVR double's removal wiring", () => {
 
       // The positive control that keeps the suppression above from passing vacuously: the identical call, once stability returns, arms and fires.
       nvr.restabilizeController();
-      nvr.removals.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
+      nvr.removals.schedule({ accessory: accessory, stillGone: () => true });
 
       assert.equal(delayingLines(logEntries).length, 1, "the restabilized controller armed the grace the unstable one refused");
 
@@ -112,18 +112,21 @@ describe("harness growth: the NVR double's removal wiring", () => {
   test("user-disabling DelayDeviceRemoval makes removal immediate and the tail is presence-guarded and bridged-gated", () => {
 
     const store = new TestStateStore(makeProtectState());
-    const { apiCalls, controller, logEntries, nvr } = makeTestNvr({ store, userOptions: ["Disable.Nvr.DelayDeviceRemoval"] });
-    const bystander = makeTestAccessory("Bystander", "uuid:bystander");
-    const victim = makeTestAccessory("Victim", "uuid:victim");
+    const { api, controller, logEntries, nvr } = makeTestNvr({ store, userOptions: ["Disable.Nvr.DelayDeviceRemoval"] });
+    const bystander = makeTestAccessory("Bystander", "74ACB9000202");
+    const victim = makeTestAccessory("Victim", "74ACB9000201");
 
-    nvr.platform.accessories.push(victim, bystander);
-    nvr.removals.schedule({ accessory: asProtectAccessory(victim), stillGone: () => true });
+    // The victim is a cached accessory, restored onto the bridge. The bystander joins the platform array without joining the bridge, as a standalone accessory does,
+    // so the tail's bridged gate has an accessory to refuse below.
+    restoreAccessories(nvr, [victim]);
+    nvr.platform.accessories.push(bystander);
+    nvr.removals.schedule({ accessory: victim, stillGone: () => true });
 
     // The immediate path proves itself: the removal already happened when the call returned, and no delay was narrated because none was taken. The construction seed
     // leaves the controller stable, so this needs no clock ceremony at all.
     assert.deepEqual(nvr.platform.accessories, [bystander], "the disabled option removed the accessory synchronously");
     assert.deepEqual(delayingLines(logEntries), [], "no delay line is narrated on the immediate path");
-    assert.equal(apiCalls.filter((call) => call.kind === "unregister").length, 1, "a bridged accessory records exactly one unregister");
+    assert.equal(api.calls.filter((call) => call.kind === "unregister").length, 1, "a bridged accessory records exactly one unregister");
 
     // The presence guard: a double-removal must be a no-op, never a splice of an unrelated accessory.
     nvr.removeAccessoryFromHomeKit(victim);
@@ -131,11 +134,10 @@ describe("harness growth: the NVR double's removal wiring", () => {
     assert.deepEqual(nvr.platform.accessories, [bystander], "a stale double-removal leaves the platform array intact");
 
     // The bridged gate: an unbridged accessory is spliced but never unregistered.
-    bystander._associatedHAPAccessory.bridged = false;
     nvr.removeAccessoryFromHomeKit(bystander);
 
     assert.equal(nvr.platform.accessories.length, 0, "the unbridged accessory is spliced");
-    assert.equal(apiCalls.filter((call) => call.kind === "unregister").length, 1, "no unregister is recorded for an unbridged accessory");
+    assert.equal(api.calls.filter((call) => call.kind === "unregister").length, 1, "no unregister is recorded for an unbridged accessory");
 
     controller.abort();
   });
@@ -147,22 +149,22 @@ describe("harness growth: the NVR double's removal wiring", () => {
   test("the removal tail drops a removed accessory's pending save, so the save its window closes on names only the survivor", () => {
 
     const store = new TestStateStore(makeProtectState());
-    const { apiCalls, clock, controller, nvr } = makeTestNvr({ store });
-    const survivor = makeTestAccessory("Survivor", "uuid:survivor");
-    const victim = makeTestAccessory("Victim", "uuid:victim");
+    const { api, clock, controller, nvr } = makeTestNvr({ store });
+    const survivor = makeTestAccessory("Survivor", "74ACB9000203");
+    const victim = makeTestAccessory("Victim", "74ACB9000201");
 
-    nvr.platform.accessories.push(victim, survivor);
+    restoreAccessories(nvr, [ victim, survivor ]);
 
     try {
 
-      nvr.platform.persistence.persist(asProtectAccessory(victim), { detectMotion: false });
-      nvr.platform.persistence.persist(asProtectAccessory(survivor), { detectMotion: false });
+      nvr.platform.persistence.persist(victim, { detectMotion: false });
+      nvr.platform.persistence.persist(survivor, { detectMotion: false });
       nvr.removeAccessoryFromHomeKit(victim);
       clock.advance(SAVE_WINDOW_MS);
 
-      const saved = apiCalls.filter((call) => call.kind === "update").flatMap((call) => call.accessories);
+      const saved = api.calls.filter((call) => call.kind === "update").flatMap((call) => call.accessories);
 
-      assert.equal(apiCalls.filter((call) => (call.kind === "unregister") && call.accessories.includes(victim)).length, 1, "the bridged victim was unregistered");
+      assert.equal(api.calls.filter((call) => (call.kind === "unregister") && call.accessories.includes(victim)).length, 1, "the bridged victim was unregistered");
       assert.deepEqual(saved, [survivor], "the window's one save names the survivor and never the removed accessory");
     } finally {
 
@@ -206,7 +208,7 @@ describe("harness growth: MQTT recording double and the family builder", () => {
     assert.deepEqual(nvr.platform.accessories, [ parentAccessory, packageAccessory ], "both cached accessories land in the platform array");
     assert.deepEqual(parentAccessory.context, { mac: "74ACB9000001", nvr: nvr.ufp.mac }, "the parent context carries the production mac and nvr keys");
     assert.deepEqual(packageAccessory.context, { nvr: nvr.ufp.mac, packageCamera: "74ACB9000001" }, "the package context carries nvr and packageCamera, never mac");
-    assert.equal(packageAccessory.UUID, "uuid:74ACB9000001.PackageCamera", "the package UUID pins the persistence-critical identity-suffix fixture");
+    assert.equal(packageAccessory.UUID, accessoryUuid("74ACB9000001.PackageCamera"), "the package UUID holds the persistence-critical identity-suffix fixture fixed");
     assert.ok(parentAccessory._associatedHAPAccessory.bridged && packageAccessory._associatedHAPAccessory.bridged,
       "a restart restore only ever contains bridged accessories");
 
@@ -305,7 +307,7 @@ describe("A2 controller owners, commit 2: the managed-device registry and the ne
     const store = new TestStateStore(makeProtectState({ cameras: [camera] }));
     const { controller, nvr } = makeTestNvr({ store });
     const projection = new TestCameraProjection(camera.id, store);
-    const accessory = makeTestAccessory("Member Camera", "uuid:member-camera");
+    const accessory = makeTestAccessory("Member Camera", camera.mac);
     const member = { accessory, accessoryName: "Member Camera", protectId: projection.id, get ufp() { return projection.config; } } as unknown as ProtectDevices;
 
     nvr.configuredDevices.set(accessory.UUID, member);
@@ -373,7 +375,7 @@ describe("harness growth: the NVR double's reboot wiring", () => {
     const camera = { packageCamera: { streaming: { isRecordingTransmitting: true } }, protectId: "cam-widening",
       streaming: { isRecordingTransmitting: false } };
 
-    nvr.configuredDevices.set("uuid:cam-widening", camera as unknown as ProtectDevices);
+    nvr.configuredDevices.set(accessoryUuid("cam-widening"), camera as unknown as ProtectDevices);
 
     try {
 
@@ -405,18 +407,18 @@ describe("harness growth: the NVR double's reboot wiring", () => {
 
     const store = new TestStateStore(makeProtectState());
     const { clock, controller, logEntries, nvr } = makeTestNvr({ store, userOptions: ["Enable.Nvr.DelayDeviceRemoval.3600"] });
-    const packageAccessory = makeTestAccessory("Back Door Package Camera", "uuid:package-grace");
+    const packageAccessory = makeTestAccessory("Back Door Package Camera", "74ACB9000204.PackageCamera");
     const camera = { packageCamera: { streaming: { isRecordingTransmitting: true } }, protectId: "cam-grace", streaming: { isRecordingTransmitting: false } };
 
-    nvr.platform.accessories.push(packageAccessory);
-    nvr.configuredDevices.set("uuid:cam-grace", camera as unknown as ProtectDevices);
+    restoreAccessories(nvr, [packageAccessory]);
+    nvr.configuredDevices.set(accessoryUuid("cam-grace"), camera as unknown as ProtectDevices);
 
     try {
 
       nvr.restabilizeController();
 
       // The package is on its way out: a delayed removal is armed against its accessory, with an hour to run and a predicate that would keep it.
-      nvr.removals.schedule({ accessory: asProtectAccessory(packageAccessory), stillGone: () => false });
+      nvr.removals.schedule({ accessory: packageAccessory, stillGone: () => false });
 
       assert.deepEqual(delayingLines(logEntries), ["Back Door Package Camera: Delaying device removal for at least 3600 seconds."],
         "the removal grace is armed and pending");

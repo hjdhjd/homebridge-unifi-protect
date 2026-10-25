@@ -9,18 +9,17 @@
  *
  * The abstract base is exercised through the smallest possible concrete leaf: ProtectDevice declares no abstract members, so the subclass adds nothing but a window
  * onto the protected composed signal, and every method under test is the base's own. It is constructed against the minimal mocks isReachable / refreshReachability /
- * cleanup actually read, with the StatusActive characteristic identity wired to the same class the TestAccessory keyed its characteristics on, so the production
- * fan-out resolves the very Map entries the test materialized.
+ * cleanup actually read, and the rig hands production the runtime's HAP, whose classes the accessory's own characteristics come from, so the production fan-out
+ * reaches the very characteristics the test materialized.
  */
-import { Characteristic, Service, makeTestAccessory } from "../testing.helpers.ts";
+import { Characteristic, Service, hap, makeTestAccessory, writesTo } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { TEST_CLOCK_EPOCH } from "../nvr/testing.helpers.ts";
-import type { TestAccessory } from "../testing.helpers.ts";
 import { TestClock } from "homebridge-plugin-utils/testing";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import { composeSignals } from "homebridge-plugin-utils";
 
@@ -36,20 +35,19 @@ class TestProtectDevice extends ProtectDevice {
 }
 
 // Construct a real ProtectDevice against the minimal mocks its constructor and the methods under test actually read: the controller-health flag (client.connection),
-// the device record (read non-throwing via peek()), the HAP StatusActive identity (wired to the class the TestAccessory keyed its characteristics on), the test clock the
-// spine's timer registry is built on, started at the harness epoch, and a real AbortSignal for composeSignals. ProtectBase composes its debug channel against the
-// platform's scope gate, so that one member must be callable - this rig exercises no debug output, so a gate that always answers false is the honest wiring. The total
+// the device record (read non-throwing via peek()), the runtime's HAP namespace the accessory's own characteristics come from, the test clock the spine's timer
+// registry is built on, started at the harness epoch, and a real AbortSignal for composeSignals. ProtectBase composes its debug channel against the platform's scope
+// gate, so that one member must be callable - this rig exercises no debug output, so a gate that always answers false is the honest wiring. The total
 // isReachable reads the device's online state through peek().state, so the lever is the record's state field, and a vanished record (present false -> peek() undefined)
 // is the unreachable-without-throwing case. Returns the mutable health / record handles so a test can flip either input and re-read the real getter. The casts are
 // confined to this construction step; the instance itself is the production class.
-const makeReachableDevice = (accessory: TestAccessory):
+const makeReachableDevice = (accessory: TestProtectAccessory):
 { connection: { isHealthy: boolean }; device: { config: { state: string }; present: boolean }; instance: TestProtectDevice } => {
 
   const captured: unknown[] = [];
   const connection = { isHealthy: true };
   const device = { config: { state: "CONNECTED" }, name: "Test Accessory", peek(): { state: string } | undefined { return this.present ? this.config : undefined; },
     present: true };
-  const hap = { Characteristic: { StatusActive: Characteristic.StatusActive } };
   const sink = (...args: unknown[]): void => { captured.push(args); };
   const log = { debug: sink, error: sink, info: sink, warn: sink };
   const nvr = {
@@ -58,7 +56,7 @@ const makeReachableDevice = (accessory: TestAccessory):
     platform: { api: { hap }, clock: new TestClock(TEST_CLOCK_EPOCH), log, pluginLog: log, testDebug: (): boolean => false },
     signal: new AbortController().signal
   };
-  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, device as unknown as Camera);
+  const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory, device as unknown as Camera);
 
   return { connection, device, instance };
 };
@@ -237,10 +235,10 @@ describe("reachability (real ProtectDevice)", () => {
     motion.updateCharacteristic(Characteristic.StatusActive, true);
 
     const { instance } = makeReachableDevice(accessory);
-    const writeBaseline = motion.getCharacteristic(Characteristic.StatusActive).writes.length;
+    const writeBaseline = writesTo(accessory, motion.getCharacteristic(Characteristic.StatusActive)).length;
 
     assert.equal(instance.refreshReachability(), null, "a reachable device already shown active reports no transition");
-    assert.equal(motion.getCharacteristic(Characteristic.StatusActive).writes.length, writeBaseline + 1, "the unchanged reachable state was still written");
+    assert.equal(writesTo(accessory, motion.getCharacteristic(Characteristic.StatusActive)).length, writeBaseline + 1, "the unchanged reachable state was still written");
   });
 
   test("cleanup() aborts the composed per-accessory signal, tearing down every observe loop bound to it", () => {

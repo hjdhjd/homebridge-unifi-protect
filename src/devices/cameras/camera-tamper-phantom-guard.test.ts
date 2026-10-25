@@ -20,10 +20,9 @@ import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
-import type { TestAccessory } from "../../testing.helpers.ts";
+import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
@@ -32,9 +31,9 @@ import { settle } from "homebridge-plugin-utils/testing";
 // Construct a real ProtectCamera, with the casts confined to this one construction call - the instance under test is the production class and its real configure path.
 // A doorbell config (isDoorbell plus hasPackageCamera) composes the doorbell capability, which creates the package camera reachable through the camera's packageCamera
 // getter.
-function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): ProtectCamera {
+function construct(nvr: TestProtectNvr, accessory: TestProtectAccessory, projection: TestCameraProjection): ProtectCamera {
 
-  return new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+  return new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 }
 
 describe("the StatusTampered phantom guard - camera availability and tamper-event push sites", () => {
@@ -46,7 +45,7 @@ describe("the StatusTampered phantom guard - camera availability and tamper-even
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { controller, nvr } = makeTestNvr({ store });
-    const accessory = makeTestAccessory("Test Camera", "uuid:tamper-phantom-1");
+    const accessory = makeTestAccessory("Test Camera", cameraConfig.mac);
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
     await settle();
@@ -87,7 +86,7 @@ describe("the StatusTampered phantom guard - camera availability and tamper-even
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { controller, nvr } = makeTestNvr({ store });
-    const accessory = makeTestAccessory("Test Camera", "uuid:tamper-phantom-2");
+    const accessory = makeTestAccessory("Test Camera", cameraConfig.mac);
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
 
     await settle();

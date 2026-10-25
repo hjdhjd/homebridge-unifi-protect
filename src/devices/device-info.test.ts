@@ -23,29 +23,29 @@
  * edit - plus the exact change log; WITHOUT it the test captures the Name baseline immediately before the push and asserts the device.name observer STILL woke
  * (non-vacuous) but the Name characteristic is unchanged and no rename log fires - so the if(!syncName) return guard, not a dead observer, suppresses the rename
  * (mirroring light.test.ts's falsy-motion non-vacuity pattern). HardwareRevision is netted as a non-vacuous opt-in pair: makeSensorConfig omits hardwareRevision by
- * default, so setInfo's length-guard short-circuits; the accessory's AccessoryInformation service is born carrying only the Name characteristic every real HAP
- * information service has, so beyond that seed it holds exactly the kinds the configure path itself wrote and the HardwareRevision kind is never materialized - the
- * absent case is asserted with testCharacteristic so the read stays a pure predicate; passing hardwareRevision opts the value in so the length-guarded write lands
- * and is read back. The accessoryName getter's ?? "Unknown" fallback is unreachable here because the carrier's record name, read through peek()?.name, is always "Test
- * Sensor" (never nullish).
+ * default, so setInfo's length-guard short-circuits; HAP builds the accessory's AccessoryInformation service with the characteristics it requires, and
+ * HardwareRevision is an optional one, so beyond those the service holds exactly the kinds the configure path itself wrote and the HardwareRevision kind is never
+ * materialized - the absent case is asserted with testCharacteristic so the read stays a pure predicate; passing hardwareRevision opts the value in so the
+ * length-guarded write lands and is read back. The accessoryName getter's ?? "Unknown" fallback is unreachable here because the carrier's record name, read through
+ * peek()?.name, is always "Test Sensor" (never nullish).
  *
  * The isolation model is per-test-fresh: a beforeEach rebuilds a fresh device so the characteristic state, the observer baselines, and store.observerCount are clean
  * every test, and the wake log is windowed per push via a captured baseline. An afterEach unwinds the device's per-accessory abort.
  */
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, writesTo } from "../testing.helpers.ts";
 import type { ProtectSensorConfig, Sensor } from "unifi-protect";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import { formatLogEntry, loggedAt, settle } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../diagnostics.ts";
-import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
-import type { TestAccessory } from "../testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
+import { setAccessoryName } from "homebridge-plugin-utils";
 
 // Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
 // is the single push site, so a construction inside a test body is captured exactly as the fixture's is.
@@ -57,7 +57,7 @@ const controllers: AbortController[] = [];
 // and syncNameFromController read this.hints.syncName), then configureInfo (the AccessoryInformation writes plus the syncName-gated name sync), then spawnObservers (the
 // base observers). The userOptions thread into the REAL FeatureOptions engine, so Enable.Device.SyncName - and only it - flips hints.syncName true.
 function buildInfoDevice(configOptions: Parameters<typeof makeSensorConfig>[0] = {}, harnessOptions: { userOptions?: string[] } = {}): {
-  accessory: TestAccessory; device: TestBaseDevice; logEntries: readonly TestLogEntry[]; nvr: TestProtectNvr; store: TestStateStore;
+  accessory: TestProtectAccessory; device: TestBaseDevice; logEntries: readonly TestLogEntry[]; nvr: TestProtectNvr; store: TestStateStore;
 } {
 
   const sensorConfig = makeSensorConfig(configOptions);
@@ -66,9 +66,9 @@ function buildInfoDevice(configOptions: Parameters<typeof makeSensorConfig>[0] =
 
   controllers.push(controller);
 
-  const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
+  const accessory = makeTestAccessory("Test Sensor", sensorConfig.mac);
   const projection = new TestSensorProjection(sensorConfig.id, store) as unknown as Sensor;
-  const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
+  const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection);
 
   // Wire the base capabilities the way a family leaf does: hints first, then device-info, then the observer spawn.
   device.configureHintsFor();
@@ -87,7 +87,7 @@ describe("base ProtectDevice device-information capability (device-info concern 
   const onWake = (message: unknown): void => { wakeLog.push(message as ObserverWakePayload); };
 
   // The per-test-fresh handles, rebuilt in beforeEach so every test starts from a clean device, clean characteristic state, and clean wake baseline.
-  let accessory: TestAccessory;
+  let accessory: TestProtectAccessory;
   let constructionWakes = 0;
   let device: TestBaseDevice | undefined;
   let logEntries: readonly TestLogEntry[];
@@ -138,8 +138,8 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
     test("setInfo writes Manufacturer, Model, SerialNumber, and FirmwareRevision from the carrier", () => {
 
-      // HARD-assert the service exists FIRST: every TestAccessory carries an AccessoryInformation service from construction, so an absent service throws here rather than
-      // letting the later optional-chained value reads pass vacuously.
+      // HARD-assert the service exists FIRST: HAP gives every accessory an AccessoryInformation service at construction, so an absent service throws here rather
+      // than letting the later optional-chained value reads pass vacuously.
       const info = accessory.getService(Service.AccessoryInformation);
 
       assert.ok(info, "the accessory carries an AccessoryInformation service for setInfo to write");
@@ -185,10 +185,10 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
     test("setInfo's HardwareRevision length-guard writes when hardwareRevision is present and skips it when absent (a non-vacuous opt-in pair)", () => {
 
-      // The absent half rides the default beforeEach build (the all-quiet carrier, which omits hardwareRevision). The accessory's AccessoryInformation service carries
-      // its construction-time Name seed - the one characteristic every real HAP information service is born with - plus exactly the kinds setInfo itself wrote
-      // (Manufacturer/Model/SerialNumber/FirmwareRevision). HardwareRevision is in neither group, so it materializes ONLY if setInfo's length-guard wrote it; because
-      // the carrier omits hardwareRevision the guard short-circuits and the kind is never created. We probe with testCharacteristic, a pure has-predicate that (unlike
+      // The absent half uses the default beforeEach build (the all-quiet carrier, which omits hardwareRevision). HAP builds the accessory's AccessoryInformation
+      // service with the characteristics it requires, among them the Manufacturer, Model, SerialNumber and FirmwareRevision setInfo writes. HardwareRevision is an
+      // optional characteristic, so it materializes ONLY if setInfo's length-guard wrote it; because the carrier omits hardwareRevision the guard short-circuits and
+      // the kind is never created. We probe with testCharacteristic, a pure has-predicate that (unlike
       // getCharacteristic) does NOT lazily materialize the kind, so a false result is genuine evidence the write was skipped rather than an artifact of the read.
       const absentInfo = accessory.getService(Service.AccessoryInformation);
 
@@ -309,6 +309,37 @@ describe("base ProtectDevice device-information capability (device-info concern 
     });
   });
 
+  describe("HBPU's accessory naming over a real accessory", () => {
+
+    test("the real setAccessoryName renames both display names and writes the information service's Name and ConfiguredName on a real accessory", () => {
+
+      const named = makeTestAccessory("Original Name");
+      const info = named.getService(Service.AccessoryInformation);
+
+      assert.ok(info, "the accessory carries an information service from construction for the naming surface to find");
+
+      // The before half, which is what makes every after-assertion a proven transition. HAP seeds the information service's Name from the display name at
+      // construction, while ConfiguredName, an optional characteristic, does not exist until a name write creates it. The existence probe goes through
+      // testCharacteristic, a pure has-predicate that (unlike getCharacteristic) never materializes the kind it reads.
+      assert.equal(info.getCharacteristic(Characteristic.Name).value, "Original Name", "HAP seeds the information service's Name from the display name");
+      assert.equal(info.testCharacteristic(Characteristic.ConfiguredName), false, "ConfiguredName is absent until the naming surface writes it");
+
+      assert.equal(setAccessoryName(named, "Front Door"), true, "the helper reports that it wrote a name");
+      assert.equal(named.displayName, "Front Door", "the platform wrapper's displayName took the rename");
+      assert.equal(named._associatedHAPAccessory.displayName, "Front Door", "the HAP accessory's displayName took the rename");
+      assert.equal(info.displayName, "Front Door", "setServiceName wrote the information service's own displayName");
+      assert.equal(info.getCharacteristic(Characteristic.Name).value, "Front Door", "the Name characteristic carries the new name");
+      assert.equal(info.getCharacteristic(Characteristic.ConfiguredName).value, "Front Door",
+        "the ConfiguredName characteristic, the Home app's editable name, carries it too");
+
+      // A second rename to the same name finds every name already matching, so the helper writes nothing and says so.
+      named.clearObservations();
+
+      assert.equal(setAccessoryName(named, "Front Door"), false, "a rename to the name every surface already carries reports no write");
+      assert.deepEqual(writesTo(named, info.getCharacteristic(Characteristic.Name)), [], "and it writes nothing to the Name characteristic");
+    });
+  });
+
   describe("the firmware-refresh reaction (device.firmwareVersion -> configureInfo)", () => {
 
     test("a firmwareVersion push wakes the device.firmwareVersion observer and refreshes the FirmwareRevision characteristic", async () => {
@@ -363,7 +394,7 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
       const built = buildInfoDevice({ mac }, { userOptions });
 
-      built.accessory.context["mac"] = mac;
+      built.accessory.context.mac = mac;
 
       return built;
     }

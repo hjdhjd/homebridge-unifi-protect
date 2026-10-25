@@ -25,16 +25,16 @@
  * and the test asserts the switch FLIPPED false->true and the "...Motion detection enabled." log FIRED - not merely that detectMotion ended true.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
-import type { ProtectAccessory, ProtectDevices } from "../types.ts";
-import type { TestAccessory, TestService } from "../testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
-import { loggedAt, settle } from "homebridge-plugin-utils/testing";
-import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
+import { loggedAt, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
+import { makeNvrConfig, makeTestNvr, restoreAccessories } from "../nvr/testing.helpers.ts";
+import type { ProtectDevices } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import { ProtectSecuritySystem } from "./security-system.ts";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
@@ -43,29 +43,41 @@ import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
 // fixture MAC breaks loudly rather than silently following along.
 const CONTROLLER_MAC = "74ACB9FFFFFF";
 
-// The named HAP arm-state constants, read off the double's markers so the assertions and the production share one source. SecuritySystemCurrentState carries five
-// distinct values; SecuritySystemTargetState four (DISARM === DISARMED === 3 under HAP-distinct names).
+// The named HAP arm-state constants, read off HAP's own characteristic classes so the assertions and the production share one source. SecuritySystemCurrentState
+// carries five distinct values; SecuritySystemTargetState four (DISARM === DISARMED === 3 under HAP-distinct names).
 const CurrentState = Characteristic.SecuritySystemCurrentState;
 const TargetState = Characteristic.SecuritySystemTargetState;
+
+// The security accessory's TargetState characteristic, the one HomeKit's arm and disarm requests write. The SecuritySystem service is asserted present first, so an
+// absent service fails here rather than reaching the trigger as nothing to write.
+function targetStateOf(accessory: TestProtectAccessory): Characteristic {
+
+  const security = accessory.getService(Service.SecuritySystem);
+
+  assert.ok(security, "the SecuritySystem service exists");
+
+  return security.getCharacteristic(TargetState);
+}
 
 // Seed a member device double into the NVR's configuredDevices registry AND the platform accessories array so the cross-camera motion fanout resolves it. The fanout
 // resolves each platform accessory to its configuredDevices entry, gates on the device's recordPresent (a vanished record is skipped), the controller-MAC context, and
 // the camera-family modelKey, matches the member by its non-throwing protectId against the liveview's slots[].cameras, then flips its SWITCH_MOTION_SENSOR-subtyped
 // Switch and context.detectMotion. The member's detectMotion is seeded FALSY by default so a drive toward enabled is a genuine change (the write is change-gated), and
-// its modelKey defaults to "camera" so the camera-family gate admits it; a sensor/light member overrides modelKey to prove the gate skips it. Returns member and switch.
-function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: string; modelKey?: string; name: string; recordPresent?: boolean; uuid: string }):
-{ accessory: TestAccessory; motionSwitch: TestService } {
+// its modelKey defaults to "camera" so the camera-family gate admits it; a sensor/light member overrides modelKey to prove the gate skips it. The accessory is seeded
+// by the member's MAC and restored onto the bridge, as a device's cached accessory is. Returns member and switch.
+function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: string; mac: string; modelKey?: string; name: string; recordPresent?: boolean }):
+{ accessory: TestProtectAccessory; motionSwitch: Service } {
 
-  const accessory = makeTestAccessory(options.name, options.uuid);
+  const accessory = makeTestAccessory(options.name, options.mac);
 
-  accessory.context["nvr"] = CONTROLLER_MAC;
-  accessory.context["detectMotion"] = options.detectMotion ?? false;
+  accessory.context.nvr = CONTROLLER_MAC;
+  accessory.context.detectMotion = options.detectMotion ?? false;
 
   // The member's motion switch is the SWITCH_MOTION_SENSOR-subtyped Switch the security fanout reads (distinct from the security accessory's own plain alarm Switch).
   const motionSwitch = accessory.addService(new Service.Switch(options.name + " Motion", ProtectReservedNames.SWITCH_MOTION_SENSOR));
 
-  motionSwitch.updateCharacteristic(Characteristic.On, accessory.context["detectMotion"]);
-  nvr.platform.accessories.push(accessory);
+  motionSwitch.updateCharacteristic(Characteristic.On, accessory.context.detectMotion);
+  restoreAccessories(nvr, [accessory]);
 
   // The managed-device double the fanout resolves through configuredDevices: the security path gates each member on recordPresent and modelKey, and matches on the
   // non-throwing protectId. Cast through ProtectDevices at the construction boundary.
@@ -84,16 +96,16 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 // its saved scene. The returned controller is the AbortController behind nvr.signal, aborted in teardown: the fixture tears down through the controller it built, the
 // scope that owns every registration the test created.
 function buildSecuritySystem(
-  harnessOptions: { accessory?: TestAccessory; disconnected?: boolean; hardwareRevision?: string; liveviews?: ProtectNvrLiveviewConfig[];
+  harnessOptions: { accessory?: TestProtectAccessory; disconnected?: boolean; hardwareRevision?: string; liveviews?: ProtectNvrLiveviewConfig[];
     seed?: (nvr: TestProtectNvr) => void; userOptions?: string[]; } = {}): {
-  accessory: TestAccessory; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr; owner: ProtectSecuritySystem;
-  store: TestStateStore;
+  accessory: TestProtectAccessory; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr;
+  owner: ProtectSecuritySystem; store: TestStateStore;
 } {
 
   const nvrConfig = makeNvrConfig({ hardwareRevision: harnessOptions.hardwareRevision ?? "1.0.0" });
   const store = new TestStateStore(makeProtectState({ liveviews: harnessOptions.liveviews ?? [], nvr: nvrConfig }));
   const { controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
-  const accessory = harnessOptions.accessory ?? makeTestAccessory("Security System", "uuid:" + CONTROLLER_MAC + ".Security");
+  const accessory = harnessOptions.accessory ?? makeTestAccessory("Security System", CONTROLLER_MAC + ".Security");
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast (either of which the house lint preset forbids in opposite directions), and fails loudly if the opt-in ever stops installing the double.
@@ -107,7 +119,7 @@ function buildSecuritySystem(
 
   harnessOptions.seed?.(nvr);
 
-  const owner = new ProtectSecuritySystem(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory);
+  const owner = new ProtectSecuritySystem(nvr as unknown as ProtectNvr, accessory);
 
   return { accessory, controller, logEntries, mqtt, nvr, owner, store };
 }
@@ -132,7 +144,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     await settle();
 
-    // HARD-assert the SecuritySystem service exists FIRST (non-optional) - the marker-first construction discipline.
+    // HARD-assert the SecuritySystem service exists FIRST (non-optional), so a missing service fails here rather than letting the reads below pass vacuously.
     const security = built.accessory.getService(Service.SecuritySystem);
 
     assert.ok(security, "the SecuritySystem service was acquired at construction");
@@ -142,7 +154,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.equal(security.getCharacteristic(TargetState).value, TargetState.DISARM, "TargetState initialized to DISARM with no saved state");
 
     // The current-state onGet reads through the saved state (alarm-aware); with no alarm and no saved state it returns DISARMED.
-    assert.equal(await security.getCharacteristic(CurrentState).triggerGet(), CurrentState.DISARMED, "the CurrentState onGet reads Off with no saved securityState");
+    assert.equal(await triggerGet(security.getCharacteristic(CurrentState)), CurrentState.DISARMED, "the CurrentState onGet reads Off with no saved securityState");
 
     // The bespoke configureInfo wrote the controller-branded identity; HardwareRevision is non-vacuous via the opt-in hardwareRevision.
     const info = built.accessory.getService(Service.AccessoryInformation);
@@ -153,8 +165,8 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.equal(info.getCharacteristic(Characteristic.HardwareRevision).value, "1.0.0", "configureInfo wrote the controller hardwareRevision unconditionally");
 
     // The context was reset to carry the controller MAC and no state of the plugin's own, and the owner registers ZERO self-observers (it is owner-driven).
-    assert.equal(built.accessory.context["nvr"], CONTROLLER_MAC, "configureDevice reset the context to carry the controller MAC");
-    assert.equal(built.accessory.context["securityState"], undefined, "configureDevice stores no security state the user has not set");
+    assert.equal(built.accessory.context.nvr, CONTROLLER_MAC, "configureDevice reset the context to carry the controller MAC");
+    assert.equal(built.accessory.context.securityState, undefined, "configureDevice stores no security state the user has not set");
     assert.equal(built.store.observerCount, 0, "the security-system owner registers no self-observers - it is driven by the liveviews owner, HomeKit onSet, and MQTT");
   });
 
@@ -162,9 +174,9 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     // Pre-seed the accessory context with a saved AWAY_ARM state BEFORE construction so configureDevice preserves it through the context wipe (the restore-the-scene
     // path).
-    const accessory = makeTestAccessory("Security System", "uuid:" + CONTROLLER_MAC + ".Security");
+    const accessory = makeTestAccessory("Security System", CONTROLLER_MAC + ".Security");
 
-    accessory.context["securityState"] = CurrentState.AWAY_ARM;
+    accessory.context.securityState = CurrentState.AWAY_ARM;
 
     const built = buildSecuritySystem({ accessory });
 
@@ -194,7 +206,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.ok(loggedAt(enabled.logEntries, "info", "Enabling the security alarm switch on the security system accessory."), "the alarm-enabled info line logged");
 
     // The On onGet starts false (no alarm), and the onSet routes to setSecurityAlarm.
-    assert.equal(await alarm.getCharacteristic(Characteristic.On).triggerGet(), false, "the alarm On onGet reads the un-triggered alarm state");
+    assert.equal(await triggerGet(alarm.getCharacteristic(Characteristic.On)), false, "the alarm On onGet reads the un-triggered alarm state");
 
     // Without the feature the alarm Switch is absent (the pair).
     enabled.controller.abort();
@@ -222,7 +234,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     const target = built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState);
 
     // DISARM is always present; Protect-Away adds AWAY_ARM, in the production order (DISARM seeded first, then Away/Home/Night as configured).
-    assert.deepEqual(target?.props?.validValues, [ TargetState.DISARM, TargetState.AWAY_ARM ], "the validValues narrowed to DISARM + AWAY_ARM for the lone Protect-Away");
+    assert.deepEqual(target?.props.validValues, [ TargetState.DISARM, TargetState.AWAY_ARM ], "the validValues narrowed to DISARM + AWAY_ARM for the lone Protect-Away");
   });
 
   test("updateDevice with all three Protect arm liveviews narrows the validValues to DISARM + AWAY + STAY + NIGHT in production order", async () => {
@@ -243,7 +255,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     const target = built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState);
 
     // The production order is DISARM (always first), then Away, then Home (STAY_ARM), then Night (the Away/Home/Night iteration order in security-system.ts).
-    assert.deepEqual(target?.props?.validValues, [ TargetState.DISARM, TargetState.AWAY_ARM, TargetState.STAY_ARM, TargetState.NIGHT_ARM ],
+    assert.deepEqual(target?.props.validValues, [ TargetState.DISARM, TargetState.AWAY_ARM, TargetState.STAY_ARM, TargetState.NIGHT_ARM ],
       "the validValues carry every available arm state in the production order");
   });
 
@@ -256,8 +268,10 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     await settle();
 
     assert.equal(built.owner.updateDevice(), false, "updateDevice returns false with no liveviews configured");
-    assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).props, undefined,
-      "the no-liveviews early return never reached setProps");
+
+    // HAP builds every characteristic with its kind's full props, every arm state among TargetState's valid values, so an early return that never reached setProps
+    // leaves the props exactly as HAP built them.
+    assert.deepEqual(targetStateOf(built.accessory).props, new TargetState().props, "the no-liveviews early return never reached setProps");
   });
 
   test("updateDevice narrows the TargetState menu to disarm-only when only a non-arm liveview remains (the D4 blessed change)", async () => {
@@ -275,22 +289,22 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     const target = built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState);
 
-    assert.deepEqual(target?.props?.validValues, [TargetState.DISARM], "the validValues re-narrowed to disarm-only");
+    assert.deepEqual(target?.props.validValues, [TargetState.DISARM], "the validValues re-narrowed to disarm-only");
   });
 
   test("updateDevice snaps an out-of-menu TargetState to DISARM without running a sweep (the D5 blessed change)", async () => {
 
     // Start with a saved AWAY_ARM state and a Protect-Away liveview so TargetState initializes to AWAY_ARM and it is in the menu.
-    const accessory = makeTestAccessory("Security System", "uuid:" + CONTROLLER_MAC + ".Security");
+    const accessory = makeTestAccessory("Security System", CONTROLLER_MAC + ".Security");
 
-    accessory.context["securityState"] = CurrentState.AWAY_ARM;
+    accessory.context.securityState = CurrentState.AWAY_ARM;
 
     const built = buildSecuritySystem({ accessory, liveviews: [makeLiveviewConfig({ cameras: ["camera-away"], id: "lv-away", name: "Protect-Away" })] });
 
     activeController = built.controller;
 
     // A camera member so a sweep, if one wrongly ran, would flip its motion - the D5 correction must run NO sweep.
-    const camera = seedMember(built.nvr, { detectMotion: false, id: "camera-away", name: "Away Camera", uuid: "uuid:away-camera" });
+    const camera = seedMember(built.nvr, { detectMotion: false, id: "camera-away", mac: "74ACB9000101", name: "Away Camera" });
 
     await settle();
 
@@ -301,7 +315,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     // While the Away liveview exists, AWAY_ARM is in the menu, so updateDevice leaves the selection alone.
     built.owner.updateDevice();
 
-    assert.deepEqual(target.props?.validValues, [ TargetState.DISARM, TargetState.AWAY_ARM ], "AWAY_ARM is in the menu while its liveview exists");
+    assert.deepEqual(target.props.validValues, [ TargetState.DISARM, TargetState.AWAY_ARM ], "AWAY_ARM is in the menu while its liveview exists");
     assert.equal(target.value, TargetState.AWAY_ARM, "TargetState stays AWAY_ARM while it is reachable - no snap");
 
     const publishedBefore = built.mqtt.published.length;
@@ -314,7 +328,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.equal(target.value, TargetState.DISARM, "the out-of-menu AWAY_ARM snapped to DISARM as display truth");
 
     // The snap is display-only: updateCharacteristic fires no onSet, so no sweep ran - the camera's motion state is unchanged and nothing published.
-    assert.equal(camera.accessory.context["detectMotion"], false, "the D5 snap ran no sweep - the camera member's detectMotion is unchanged");
+    assert.equal(camera.accessory.context.detectMotion, false, "the D5 snap ran no sweep - the camera member's detectMotion is unchanged");
     assert.equal(built.mqtt.published.length, publishedBefore, "the D5 snap published nothing - it is a display-only correction");
   });
 
@@ -352,7 +366,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     activeController = built.controller;
 
-    seedMember(built.nvr, { id: "camera-away", name: "Away Camera", uuid: "uuid:away-camera" });
+    seedMember(built.nvr, { id: "camera-away", mac: "74ACB9000101", name: "Away Camera" });
 
     await settle();
 
@@ -428,28 +442,28 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     activeController = built.controller;
 
     // The matching member (its ufp.id matches the Protect-Home slot camera) with detectMotion seeded FALSY, plus a non-member camera the fanout must NOT touch.
-    const member = seedMember(built.nvr, { detectMotion: false, id: "camera-home", name: "Home Camera", uuid: "uuid:home-camera" });
-    const nonMember = seedMember(built.nvr, { detectMotion: false, id: "camera-other", name: "Other Camera", uuid: "uuid:other-camera" });
+    const member = seedMember(built.nvr, { detectMotion: false, id: "camera-home", mac: "74ACB9000102", name: "Home Camera" });
+    const nonMember = seedMember(built.nvr, { detectMotion: false, id: "camera-other", mac: "74ACB9000103", name: "Other Camera" });
 
     await settle();
 
     // Precondition: the member starts with motion OFF so the drive toward enabled is a genuine change (the write is change-gated on detectMotion !== targetState).
-    assert.equal(member.accessory.context["detectMotion"], false, "the member camera starts with motion detection off");
+    assert.equal(member.accessory.context.detectMotion, false, "the member camera starts with motion detection off");
     assert.equal(member.motionSwitch.getCharacteristic(Characteristic.On).value, false, "the member motion switch starts off");
 
     // Drive the STAY_ARM scene through the real TargetState onSet (HomeKit's set path).
-    await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.STAY_ARM);
+    await triggerSet(targetStateOf(built.accessory), TargetState.STAY_ARM);
 
     // The member FLIPPED on (the distinguishing assertion: false -> true, not merely ended true) and its context updated.
     assert.equal(member.motionSwitch.getCharacteristic(Characteristic.On).value, true, "the member's motion switch flipped on for the armed scene");
-    assert.equal(member.accessory.context["detectMotion"], true, "the member's detectMotion context flipped to true");
+    assert.equal(member.accessory.context.detectMotion, true, "the member's detectMotion context flipped to true");
 
     // The production line is "%s -> %s: Motion detection %s." where viewScene is the lowercased "protect-home"; the formatted parameter carries the member and enabled.
     assert.ok(loggedAt(built.logEntries, "info", "protect-home -> Home Camera: Motion detection enabled."),
       "the per-member motion-enabled line fired with the scene and member");
 
     // The non-member was untouched (its id is not in the Protect-Home liveview).
-    assert.equal(nonMember.accessory.context["detectMotion"], false, "the non-member camera was left untouched");
+    assert.equal(nonMember.accessory.context.detectMotion, false, "the non-member camera was left untouched");
     assert.equal(nonMember.motionSwitch.getCharacteristic(Characteristic.On).value, false, "the non-member motion switch stayed off");
 
     // CurrentState landed on STAY_ARM and the state published.
@@ -458,10 +472,10 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
       "the armed scene published the Home state");
 
     // Now drive the disarm direction from the true start to net the change the OTHER way (false-gate proven both directions).
-    await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.DISARM);
+    await triggerSet(targetStateOf(built.accessory), TargetState.DISARM);
 
     assert.equal(member.motionSwitch.getCharacteristic(Characteristic.On).value, false, "disarming flipped the member's motion switch back off");
-    assert.equal(member.accessory.context["detectMotion"], false, "disarming reset the member's detectMotion context");
+    assert.equal(member.accessory.context.detectMotion, false, "disarming reset the member's detectMotion context");
     assert.ok(loggedAt(built.logEntries, "info", "Motion detection disabled."), "the per-member motion-disabled line fired on disarm");
   });
 
@@ -474,15 +488,15 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     // Both ids are in the SAME target liveview - the only difference is recordPresent. The graced member must be skipped by the security fanout's recordPresent gate
     // BEFORE the protectId match, so removing that gate would flip its motion switch true (this is what the test would catch).
-    const present = seedMember(built.nvr, { detectMotion: false, id: "camera-present", name: "Present Camera", uuid: "uuid:present-camera" });
-    const graced = seedMember(built.nvr, { detectMotion: false, id: "camera-graced", name: "Graced Camera", recordPresent: false, uuid: "uuid:graced-camera" });
+    const present = seedMember(built.nvr, { detectMotion: false, id: "camera-present", mac: "74ACB9000104", name: "Present Camera" });
+    const graced = seedMember(built.nvr, { detectMotion: false, id: "camera-graced", mac: "74ACB9000105", name: "Graced Camera", recordPresent: false });
 
     await settle();
 
     assert.equal(graced.motionSwitch.getCharacteristic(Characteristic.On).value, false, "the graced member starts with motion detection off");
 
     // Drive the STAY_ARM scene through the real TargetState onSet.
-    await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.STAY_ARM);
+    await triggerSet(targetStateOf(built.accessory), TargetState.STAY_ARM);
 
     // The present member flipped on (its id is in the liveview and its record is present).
     assert.equal(present.motionSwitch.getCharacteristic(Characteristic.On).value, true, "the present member's motion switch flipped on for the armed scene");
@@ -491,7 +505,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     // because its record has vanished, so its motion switch and detectMotion context stay untouched.
     assert.equal(graced.motionSwitch.getCharacteristic(Characteristic.On).value, false,
       "the recordPresent gate skipped the graced member - its motion switch stayed off despite its id matching the target liveview");
-    assert.equal(graced.accessory.context["detectMotion"], false, "the graced member's detectMotion context was left untouched");
+    assert.equal(graced.accessory.context.detectMotion, false, "the graced member's detectMotion context was left untouched");
   });
 
   test("setSecurityState sweeps only camera-family members - a sensor keeps its motion delivery through arm and disarm (the D3 blessed change)", async () => {
@@ -503,23 +517,23 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     activeController = built.controller;
 
-    const camera = seedMember(built.nvr, { detectMotion: false, id: "camera-home", name: "Home Camera", uuid: "uuid:home-camera" });
-    const sensor = seedMember(built.nvr, { detectMotion: true, id: "sensor-1", modelKey: "sensor", name: "Motion Sensor", uuid: "uuid:motion-sensor" });
+    const camera = seedMember(built.nvr, { detectMotion: false, id: "camera-home", mac: "74ACB9000102", name: "Home Camera" });
+    const sensor = seedMember(built.nvr, { detectMotion: true, id: "sensor-1", mac: "74ACB9000106", modelKey: "sensor", name: "Motion Sensor" });
 
     await settle();
 
     // Arm STAY_ARM: the camera member flips on, the sensor is skipped by the modelKey gate and keeps its detectMotion.
-    await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.STAY_ARM);
+    await triggerSet(targetStateOf(built.accessory), TargetState.STAY_ARM);
 
-    assert.equal(camera.accessory.context["detectMotion"], true, "the camera member flipped on for the armed scene");
-    assert.equal(sensor.accessory.context["detectMotion"], true, "the sensor's detectMotion survived the arm - the modelKey gate skipped it");
+    assert.equal(camera.accessory.context.detectMotion, true, "the camera member flipped on for the armed scene");
+    assert.equal(sensor.accessory.context.detectMotion, true, "the sensor's detectMotion survived the arm - the modelKey gate skipped it");
     assert.equal(sensor.motionSwitch.getCharacteristic(Characteristic.On).value, true, "the sensor's motion switch was left untouched by the arm");
 
     // Disarm: the camera goes off, the sensor is STILL skipped and keeps its detectMotion (a disarm would otherwise latch every device off).
-    await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.DISARM);
+    await triggerSet(targetStateOf(built.accessory), TargetState.DISARM);
 
-    assert.equal(camera.accessory.context["detectMotion"], false, "the camera member went off on disarm");
-    assert.equal(sensor.accessory.context["detectMotion"], true, "the sensor's detectMotion survived the disarm too - its motion delivery is never latched off");
+    assert.equal(camera.accessory.context.detectMotion, false, "the camera member went off on disarm");
+    assert.equal(sensor.accessory.context.detectMotion, true, "the sensor's detectMotion survived the disarm too - its motion delivery is never latched off");
   });
 
   test("setSecurityState early-returns with no liveviews configured (no state change, no publish)", async () => {
@@ -533,7 +547,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     const publishedBefore = built.mqtt.published.length;
 
     // With no liveviews the setSecurityState early-returns before any state write or publish.
-    await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.AWAY_ARM);
+    await triggerSet(targetStateOf(built.accessory), TargetState.AWAY_ARM);
 
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.DISARMED,
       "with no liveviews CurrentState stays Off - the early return fired");
@@ -550,7 +564,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     await settle();
 
-    await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.STAY_ARM);
+    await triggerSet(targetStateOf(built.accessory), TargetState.STAY_ARM);
 
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.STAY_ARM,
       "the no-target branch still updates CurrentState for the user");
@@ -569,7 +583,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     await settle();
     await built.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "AlarmOn");
-    await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.STAY_ARM);
+    await triggerSet(targetStateOf(built.accessory), TargetState.STAY_ARM);
 
     assert.equal(built.accessory.getService(Service.Switch)?.getCharacteristic(Characteristic.On).value, false, "the no-target arm turned the alarm Switch off");
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.STAY_ARM, "CurrentState shows the scene");
@@ -580,9 +594,9 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
   test("setSecurityAlarm triggers the ALARM_TRIGGERED current state and the alarm Switch, and a reset returns to the held state", async () => {
 
     // A saved STAY_ARM is the held state, so the reset is told apart from the Off a security system with no saved state shows.
-    const accessory = makeTestAccessory("Security System", "uuid:" + CONTROLLER_MAC + ".Security");
+    const accessory = makeTestAccessory("Security System", CONTROLLER_MAC + ".Security");
 
-    accessory.context["securityState"] = CurrentState.STAY_ARM;
+    accessory.context.securityState = CurrentState.STAY_ARM;
 
     const built = buildSecuritySystem({ accessory, userOptions: ["Enable.SecuritySystem.Alarm"] });
 
@@ -595,7 +609,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.ok(alarm, "the alarm Switch exists");
 
     // Trigger the alarm through the real On onSet (HomeKit's set path).
-    await alarm.getCharacteristic(Characteristic.On).triggerSet(true);
+    await triggerSet(alarm.getCharacteristic(Characteristic.On), true);
 
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.ALARM_TRIGGERED,
       "triggering the alarm drove CurrentState to ALARM_TRIGGERED");
@@ -604,7 +618,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
       "the alarm published the Alarm state");
 
     // Reset returns to the held securityState, the saved STAY_ARM.
-    await alarm.getCharacteristic(Characteristic.On).triggerSet(false);
+    await triggerSet(alarm.getCharacteristic(Characteristic.On), false);
 
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.STAY_ARM,
       "resetting the alarm returns CurrentState to the held STAY_ARM state");
@@ -686,7 +700,7 @@ describe("the security system's state stated as it is built and restated per bro
 
       built.mqtt.connected = false;
       await settle();
-      await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.STAY_ARM);
+      await triggerSet(targetStateOf(built.accessory), TargetState.STAY_ARM);
       await settle();
 
       assert.equal(built.mqtt.publishedTo("/securitysystem").length, 1, "only the build statement is recorded, the set made with no session held being refused");
@@ -711,14 +725,14 @@ describe("the security system's saved scene shown as it is built", () => {
    */
   test("a saved scene is shown as the security system is built, nothing is applied to the cameras, and the build states its state once", async () => {
 
-    const accessory = makeTestAccessory("Security System", "uuid:" + CONTROLLER_MAC + ".Security");
+    const accessory = makeTestAccessory("Security System", CONTROLLER_MAC + ".Security");
     const cameras: ReturnType<typeof seedMember>[] = [];
 
-    accessory.context["securityState"] = CurrentState.AWAY_ARM;
+    accessory.context.securityState = CurrentState.AWAY_ARM;
 
     const built = buildSecuritySystem({ accessory, liveviews: [makeLiveviewConfig({ cameras: ["camera-away"], id: "lv-away", name: "Protect-Away" })],
-      seed: (nvr) => void cameras.push(seedMember(nvr, { detectMotion: true, id: "camera-away", name: "Away Camera", uuid: "uuid:away-camera" }),
-        seedMember(nvr, { detectMotion: true, id: "camera-other", name: "Other Camera", uuid: "uuid:other-camera" })) });
+      seed: (nvr) => void cameras.push(seedMember(nvr, { detectMotion: true, id: "camera-away", mac: "74ACB9000101", name: "Away Camera" }),
+        seedMember(nvr, { detectMotion: true, id: "camera-other", mac: "74ACB9000103", name: "Other Camera" })) });
 
     try {
 
@@ -730,8 +744,8 @@ describe("the security system's saved scene shown as it is built", () => {
       assert.ok(member && nonMember, "the cameras were constructed before the security system was built");
       assert.equal(security?.getCharacteristic(CurrentState).value, CurrentState.AWAY_ARM, "the security system shows the saved scene");
       assert.equal(security.getCharacteristic(TargetState).value, TargetState.AWAY_ARM, "and its target state shows the saved scene");
-      assert.equal(member.accessory.context["detectMotion"], true, "the camera the scene names keeps motion detection on");
-      assert.equal(nonMember.accessory.context["detectMotion"], true, "the camera the scene leaves out keeps the motion detection setting it persists itself");
+      assert.equal(member.accessory.context.detectMotion, true, "the camera the scene names keeps motion detection on");
+      assert.equal(nonMember.accessory.context.detectMotion, true, "the camera the scene leaves out keeps the motion detection setting it persists itself");
       assert.equal(nonMember.motionSwitch.getCharacteristic(Characteristic.On).value, true, "and its motion switch still shows motion detection on");
       assert.ok(!loggedAt(built.logEntries, "info", "Setting the liveview scene"), "no scene was applied");
       assert.deepEqual(built.mqtt.publishedTo("/securitysystem").map((entry) => entry.payload), ["Away"], "the build states the saved state once and only once");
@@ -748,7 +762,7 @@ describe("the security system's saved scene shown as it is built", () => {
 
     const cameras: ReturnType<typeof seedMember>[] = [];
     const built = buildSecuritySystem({ liveviews: [makeLiveviewConfig({ cameras: ["camera-home"], id: "lv-home", name: "Protect-Home" })],
-      seed: (nvr) => void cameras.push(seedMember(nvr, { detectMotion: true, id: "camera-other", name: "Other Camera", uuid: "uuid:other-camera" })) });
+      seed: (nvr) => void cameras.push(seedMember(nvr, { detectMotion: true, id: "camera-other", mac: "74ACB9000103", name: "Other Camera" })) });
 
     try {
 
@@ -761,8 +775,8 @@ describe("the security system's saved scene shown as it is built", () => {
       assert.equal(security?.getCharacteristic(CurrentState).value, CurrentState.DISARMED, "the security system shows Off");
       assert.equal(security.getCharacteristic(TargetState).value, TargetState.DISARM, "and its target state shows Off");
       assert.deepEqual(built.mqtt.publishedTo("/securitysystem").map((entry) => entry.payload), ["Off"], "the build states Off once and only once");
-      assert.equal(built.accessory.context["securityState"], undefined, "no security state is stored until the user sets one");
-      assert.equal(nonMember.accessory.context["detectMotion"], true, "a camera no scene names keeps motion detection on");
+      assert.equal(built.accessory.context.securityState, undefined, "no security state is stored until the user sets one");
+      assert.equal(nonMember.accessory.context.detectMotion, true, "a camera no scene names keeps motion detection on");
       assert.ok(!loggedAt(built.logEntries, "info", "Setting the liveview scene"), "no scene was applied");
       assert.ok(!loggedAt(built.logEntries, "info", "No liveview configured for this security system state."), "no scene was attempted");
     } finally {

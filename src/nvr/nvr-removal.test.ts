@@ -15,14 +15,14 @@
  * those functions serve, and deliberately does not restate them. Honest coverage note: what runSweep DOES in production - the controller's sweepRemovableDevices - is
  * the root's territory and stays untested; the recorder here proves only that the gate calls it, and at which instants.
  */
-import { TEST_CLOCK_EPOCH, asProtectAccessory } from "./testing.helpers.ts";
+import { accessoryUuid, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { RemovalStabilityGate } from "./nvr-removal.ts";
+import { TEST_CLOCK_EPOCH } from "./testing.helpers.ts";
 import { TestClock } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
-import { makeTestAccessory } from "../testing.helpers.ts";
 import util from "node:util";
 
 // Everything the gate's actions and log wrote, plus the grace the supplier answers with. A plain mutable record rather than closures with accessors: an arm reads
@@ -68,7 +68,7 @@ function buildGate(options: { graceSeconds?: number } = {}): { accessory: Return
   // controller that has been up longer than the settling window; a shallower one leaves the remainder of the window to run.
   const pushGood = (uptimeMs: number): void => gate.refresh({ good: true, upSince: clock.now() - uptimeMs });
 
-  return { accessory: makeTestAccessory("Victim", "uuid:victim"), clock, controller, gate, pushGood, recorder };
+  return { accessory: makeTestAccessory("Victim", "74ACB9000201"), clock, controller, gate, pushGood, recorder };
 }
 
 // The delay-narration lines the gate emitted, which are the only lines it writes unless a caller supplied a reason.
@@ -204,7 +204,7 @@ describe("the removal-stability gate: leaving good state drains everything", () 
 
       assert.equal(recorder.sweeps, 1, "the sweep is spent");
 
-      gate.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
+      gate.schedule({ accessory: accessory, stillGone: () => true });
       gate.refresh({ good: false });
       clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
 
@@ -215,10 +215,10 @@ describe("the removal-stability gate: leaving good state drains everything", () 
       // the fresh grace firing is what proves the drain reached the keyed timer rather than only the sweep.
       pushGood(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
       clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
-      gate.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
+      gate.schedule({ accessory: accessory, stillGone: () => true });
       clock.advance(60000);
 
-      assert.deepEqual(recorder.removals, [asProtectAccessory(accessory)], "the same accessory scheduled afresh armed and fired");
+      assert.deepEqual(recorder.removals, [accessory], "the same accessory scheduled afresh armed and fired");
     } finally {
 
       controller.abort();
@@ -253,8 +253,8 @@ describe("the removal-stability gate: scheduling a removal", () => {
     try {
 
       pushGood(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
-      gate.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
-      gate.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
+      gate.schedule({ accessory: accessory, stillGone: () => true });
+      gate.schedule({ accessory: accessory, stillGone: () => true });
 
       // The dedup is silent, so the single narration line is what marks the second call as a no-op: a device that keeps re-yielding while it stays gone must not have
       // its grace restarted on every yield.
@@ -276,7 +276,7 @@ describe("the removal-stability gate: scheduling a removal", () => {
     try {
 
       pushGood(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
-      gate.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
+      gate.schedule({ accessory: accessory, stillGone: () => true });
 
       assert.equal(recorder.removals.length, 1, "the removal ran synchronously inside the schedule call");
       assert.deepEqual(delayingLines(recorder), [], "no delay is narrated when none is taken");
@@ -300,7 +300,7 @@ describe("the removal-stability gate: scheduling a removal", () => {
       let gone = true;
 
       pushGood(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
-      gate.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => gone });
+      gate.schedule({ accessory: accessory, stillGone: () => gone });
 
       // The device comes back inside its grace, which is the whole point of having one.
       gone = false;
@@ -323,10 +323,10 @@ describe("the removal-stability gate: scheduling a removal", () => {
     try {
 
       pushGood(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
-      gate.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
+      gate.schedule({ accessory: accessory, stillGone: () => true });
       gate.cancelFor(accessory.UUID);
 
-      assert.doesNotThrow(() => gate.cancelFor("uuid:never-scheduled"), "cancelling an accessory with no pending removal does nothing");
+      assert.doesNotThrow(() => gate.cancelFor(accessoryUuid("never-scheduled")), "cancelling an accessory with no pending removal does nothing");
 
       clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
 
@@ -344,7 +344,7 @@ describe("the removal-stability gate: scheduling a removal", () => {
     try {
 
       // Never stabilized: the gate is in the state a plugin start against an unreachable controller leaves it in.
-      gate.schedule({ accessory: asProtectAccessory(accessory), reason: "The controller no longer reports this device.", stillGone: () => true });
+      gate.schedule({ accessory: accessory, reason: "The controller no longer reports this device.", stillGone: () => true });
 
       assert.deepEqual(recorder.logLines, [], "the stability gate returns ahead of any logging, so a suppressed schedule is entirely silent");
 
@@ -354,7 +354,7 @@ describe("the removal-stability gate: scheduling a removal", () => {
 
       // The same call once the controller has settled is the positive control: it arms, narrates, and fires.
       pushGood(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
-      gate.schedule({ accessory: asProtectAccessory(accessory), reason: "The controller no longer reports this device.", stillGone: () => true });
+      gate.schedule({ accessory: accessory, reason: "The controller no longer reports this device.", stillGone: () => true });
       clock.advance(60000);
 
       assert.equal(recorder.removals.length, 1, "the identical call landed once the controller was trusted");
@@ -374,7 +374,7 @@ describe("the removal-stability gate: narration", () => {
     try {
 
       pushGood(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
-      gate.schedule({ accessory: asProtectAccessory(accessory), reason: "The controller no longer reports this device.", stillGone: () => true });
+      gate.schedule({ accessory: accessory, reason: "The controller no longer reports this device.", stillGone: () => true });
 
       assert.deepEqual(recorder.logLines, [ "The controller no longer reports this device.", "Victim: Delaying device removal for at least 60 seconds." ],
         "the reason is narrated once at schedule time, followed by the delay line carrying the resolved interval");
@@ -395,7 +395,7 @@ describe("the removal-stability gate: narration", () => {
     try {
 
       pushGood(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
-      gate.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
+      gate.schedule({ accessory: accessory, stillGone: () => true });
 
       assert.deepEqual(delayingLines(recorder), ["Victim: Delaying device removal for at least 1 second."], "a single-second grace reads as one second, not one seconds");
     } finally {
@@ -412,7 +412,7 @@ describe("the removal-stability gate: the lifetime signal", () => {
     const { accessory, clock, controller, gate, pushGood, recorder } = buildGate();
 
     pushGood(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
-    gate.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
+    gate.schedule({ accessory: accessory, stillGone: () => true });
 
     controller.abort();
 
@@ -422,7 +422,7 @@ describe("the removal-stability gate: the lifetime signal", () => {
 
     // A post-teardown schedule still passes the stability gate and still narrates - the clock is untouched by an abort - so what is asserted is the absence of the
     // REMOVAL: the registry is retired, so no timer arms and nothing can fire later.
-    gate.schedule({ accessory: asProtectAccessory(accessory), stillGone: () => true });
+    gate.schedule({ accessory: accessory, stillGone: () => true });
     clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
 
     assert.deepEqual(recorder.removals, [], "a schedule against a torn-down gate can never produce a removal");

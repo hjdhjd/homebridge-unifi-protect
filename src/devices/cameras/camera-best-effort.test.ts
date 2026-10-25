@@ -20,17 +20,16 @@
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
-import type { TestAccessory, TestCharacteristic } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import type { TestClock, TestMqttClient } from "homebridge-plugin-utils/testing";
-import { advanceThroughSchedule, settle } from "homebridge-plugin-utils/testing";
+import { advanceThroughSchedule, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../../settings.ts";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
+import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
@@ -40,7 +39,7 @@ import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 // per-accessory abort regardless of which path the test drove.
 interface BuiltLuxCamera {
 
-  accessory: TestAccessory;
+  accessory: TestProtectAccessory;
   camera: ProtectCamera;
   clock: TestClock;
   controller: AbortController;
@@ -79,10 +78,10 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       // device.ts; the reachability.test.ts idiom on makeTestNvr's mutable client).
       nvr.client.connection.isHealthy = reachable;
 
-      const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+      const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
       const projection = new TestCameraProjection(cameraConfig.id, store);
 
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
       // Settle the floating configure IIFE (which awaits the init getLux) and the observe loops' lazy registration before any drive.
       await settle();
@@ -102,9 +101,9 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       assert.ok(lightSensor, "featureFlags.hasLuxCheck materializes the ambient LightSensor");
 
       // The CurrentAmbientLightLevel onGet (ambient-light.ts) reads the stored init value, and the StatusActive onGet (ambient-light.ts) reads isReachable (true here).
-      assert.equal(await lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 100,
+      assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel)), 100,
         "the positive init reading passes through untouched to the CurrentAmbientLightLevel onGet");
-      assert.equal(await lightSensor.getCharacteristic(Characteristic.StatusActive).triggerGet(), true, "the StatusActive onGet reads isReachable");
+      assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.StatusActive)), true, "the StatusActive onGet reads isReachable");
       assert.equal(built.projection.luxCalls.length, 1, "the construction-time init issued the lux query exactly once, proving the projection's lux() is wired");
     });
 
@@ -115,9 +114,9 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { controller, nvr } = makeTestNvr({ store });
-      const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+      const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
       const projection = new TestCameraProjection(cameraConfig.id, store);
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
       await settle();
 
@@ -138,12 +137,12 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { controller, nvr } = makeTestNvr({ store });
-      const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+      const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
       const projection = new TestCameraProjection(cameraConfig.id, store);
 
       projection.luxReading = 0;
 
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
       await settle();
 
@@ -152,7 +151,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
         const lightSensor = accessory.getService(Service.LightSensor);
 
         assert.ok(lightSensor, "featureFlags.hasLuxCheck materializes the ambient LightSensor");
-        assert.equal(await lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 0.0001,
+        assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel)), 0.0001,
           "a genuine zero reading is floored to the HomeKit 0.0001 minimum, not reported as zero");
         assert.equal(projection.luxCalls.length, 1, "the init issued the lux query once");
       } finally {
@@ -172,9 +171,9 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       nvr.client.connection.isHealthy = false;
 
-      const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+      const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
       const projection = new TestCameraProjection(cameraConfig.id, store);
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
       await settle();
 
@@ -183,10 +182,10 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
         const lightSensor = accessory.getService(Service.LightSensor);
 
         assert.ok(lightSensor, "featureFlags.hasLuxCheck materializes the ambient LightSensor even while unreachable");
-        assert.equal(await lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 0.0001,
+        assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel)), 0.0001,
           "the unreachable init re-maps the -1 no-reading sentinel to the 0.0001 floor");
         assert.equal(projection.luxCalls.length, 0, "the doomed query is never issued while unreachable - lux() is never called");
-        assert.equal(await lightSensor.getCharacteristic(Characteristic.StatusActive).triggerGet(), false, "the StatusActive onGet reads the unreachable state");
+        assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.StatusActive)), false, "the StatusActive onGet reads the unreachable state");
       } finally {
 
         camera.cleanup();
@@ -202,12 +201,12 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { clock, controller, nvr } = makeTestNvr({ mqtt: true, store });
-      const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+      const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
       const projection = new TestCameraProjection(cameraConfig.id, store);
 
       projection.luxReading = 42;
 
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
       await settle();
 
@@ -226,7 +225,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
         await settle();
 
-        assert.equal(await lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 80, "the poll updated the changed reading to 80");
+        assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel)), 80, "the poll updated the changed reading to 80");
         assert.ok(nvr.mqtt?.published.some((entry) => (entry.topic === (cameraConfig.mac + "/ambientlight")) && (entry.payload === "80")),
           "the poll published the new reading on the device-scoped ambientlight topic");
       } finally {
@@ -243,12 +242,12 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { clock, controller, nvr } = makeTestNvr({ mqtt: true, store });
-      const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+      const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
       const projection = new TestCameraProjection(cameraConfig.id, store);
 
       projection.luxReading = 42;
 
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
       await settle();
 
@@ -265,7 +264,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
         await settle();
 
-        assert.equal(await lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 42,
+        assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel)), 42,
           "a thrown reading skips the poll - the prior 42 holds");
         assert.deepEqual(nvr.mqtt?.publishedTo(cameraConfig.mac + "/ambientlight").map((entry) => entry.payload), ["42"],
           "the reconcile's adoption of the first reading is the topic's one statement, and the skipped poll published nothing");
@@ -285,12 +284,12 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } });
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { controller, nvr } = makeTestNvr({ store });
-      const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+      const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
       const projection = new TestCameraProjection(cameraConfig.id, store);
 
       projection.luxReading = 100;
 
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
       await settle();
 
@@ -301,7 +300,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
         assert.ok(lightSensor, "featureFlags.hasLuxCheck materializes the ambient LightSensor");
 
         // The vacuity guard: the genuine first read stored 100, so the post-failure assertion proves a PRESERVED reading rather than an initial one.
-        assert.equal(await lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 100,
+        assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel)), 100,
           "the genuine first reading stored 100 before the failed refresh");
 
         // The next read throws (the camera momentarily unreachable mid-flight, or the lux capability transiently withdrawn), so the re-run's getLux returns -1.
@@ -315,7 +314,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
         // The init guard adopted only a genuine reading: the failed re-read left the last-known 100 in place. Reverting the guard (the unconditional this.ambientLight =
         // await getLux() then if(-1) 0.0001) stamps the display to the 0.0001 floor here -> RED.
-        assert.equal(await lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel).triggerGet(), 100,
+        assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel)), 100,
           "a failed refresh read preserved the last-known 100 rather than flooring the display");
       } finally {
 
@@ -352,7 +351,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       const projection = new TestCameraProjection(cameraConfig.id, store);
 
       harnessController = controller;
-      doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "uuid:74ACB9000001") as unknown as ProtectAccessory,
+      doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
         projection as unknown as Camera);
 
       await settle();
@@ -362,11 +361,11 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
     // Resolve the package camera's flashlight On characteristic, hard-asserting the package camera is live and the gated Lightbulb exists FIRST (Doorbell.PackageCamera.
     // Flashlight defaults TRUE, so no Enable string is needed; an absent service would let every value assertion pass vacuously).
-    function flashlightOn(): TestCharacteristic {
+    function flashlightOn(): Characteristic {
 
       assert.ok(doorbell?.packageCamera, "the package camera instance is live post-settle");
 
-      const packageAccessory = doorbell.packageCamera.accessory as unknown as TestAccessory;
+      const packageAccessory = doorbell.packageCamera.accessory as unknown as TestProtectAccessory;
       const flashlight = packageAccessory.getServiceById(Service.Lightbulb, ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT);
 
       assert.ok(flashlight, "Doorbell.PackageCamera.Flashlight materializes the package flashlight Lightbulb");
@@ -381,13 +380,13 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       const onChar = flashlightOn();
 
-      await onChar.triggerSet(true);
+      await triggerSet(onChar, true);
 
       // The command: no pulse issued (the dark-guard returned before activateFlashlight).
       assert.equal(projection.flashlightCalls.length, 0, "the not-dark guard issues no flashlight pulse");
 
-      // The reflection: triggerSet caches On true, then the deferred reflect fires updateCharacteristic(On, false). Advance the clock through the window and assert the
-      // reflect-off landed.
+      // The reflection: HAP stores the written On true, then the deferred reflect fires updateCharacteristic(On, false). Advance the clock through the window and
+      // assert the reflect-off landed.
       clock.advance(PROTECT_HOMEKIT_REFLECT_DELAY);
 
       assert.equal(onChar.value, false, "the not-dark guard reflects the flashlight off after the 50ms window");
@@ -400,14 +399,14 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       const onChar = flashlightOn();
 
-      await onChar.triggerSet(true);
+      await triggerSet(onChar, true);
 
       // The command: exactly one pulse, threading the abort signal the retry binds (activateFlashlight in camera-package.ts).
       assert.equal(projection.flashlightCalls.length, 1, "the dark On set issues exactly one flashlight pulse");
       assert.ok(projection.flashlightCalls[0]?.opts?.signal, "the pulse threads the retry's abort signal");
 
-      // The reflection: flashlightState is true, read through the On onGet (configureFlashlight in camera-package.ts) which is robust to triggerSet's value-cache.
-      assert.equal(await onChar.triggerGet(), true, "a successful pulse lights the flashlight On");
+      // The reflection: flashlightState is true, read through the On onGet (configureFlashlight in camera-package.ts) which is robust to HAP's stored write.
+      assert.equal(await triggerGet(onChar), true, "a successful pulse lights the flashlight On");
 
       // The 20-second heartbeat (configureFlashlight in camera-package.ts) re-pulses; settle() drains the async () => void activateFlashlight() the advance fired.
       clock.advance(20000);
@@ -424,10 +423,10 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       const onChar = flashlightOn();
 
-      await onChar.triggerSet(false);
+      await triggerSet(onChar, false);
 
       assert.equal(projection.flashlightCalls.length, 0, "the Off set issues no flashlight command");
-      assert.equal(await onChar.triggerGet(), false, "the Off set reflects the flashlight off via flashlightState");
+      assert.equal(await triggerGet(onChar), false, "the Off set reflects the flashlight off via flashlightState");
     });
 
     test("dark with a persistently rejecting pulse: the retry exhausts three attempts and reflects off", async () => {
@@ -445,7 +444,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       // Fire the on without awaiting it, then walk the clock through each backoff wait, letting each failed attempt reach its next wait before the clock moves. The
       // attempt count is read as soon as the walk settles and before the set is awaited, so a backoff left waiting in real time reads short of the full budget.
       // activateFlashlight's own try/catch swallows the final rejection, so the set then resolves rather than throwing.
-      const activating = onChar.triggerSet(true);
+      const activating = triggerSet(onChar, true);
 
       await advanceThroughSchedule(clock, [ 1000, 1000 ]);
 
@@ -453,7 +452,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       await activating;
 
-      assert.equal(await onChar.triggerGet(), false, "an exhausted pulse reflects the flashlight off via flashlightState");
+      assert.equal(await triggerGet(onChar), false, "an exhausted pulse reflects the flashlight off via flashlightState");
     });
 
     test("an off during an in-flight activation wins: no re-latch, no heartbeat arm", async () => {
@@ -464,15 +463,15 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       // Fire the on WITHOUT awaiting - its handler suspends at the retry await, having issued its one pulse - then drive the off to completion (which bumps the intent
       // generation), then let the on resume into its now-superseded continuation.
-      const activating = onChar.triggerSet(true);
+      const activating = triggerSet(onChar, true);
 
-      await onChar.triggerSet(false);
+      await triggerSet(onChar, false);
       await activating;
 
       // The off won: the flashlight reads off through the onGet (flashlightState), un-re-latched by the stale activation's post-retry continuation. The onGet is the
-      // authoritative read here - the code never pushes updateCharacteristic on this path, so the characteristic's cached set-value is a harness artifact of the last
-      // triggerSet to resolve, not a state the code wrote.
-      assert.equal(await onChar.triggerGet(), false, "the off during the in-flight activation wins - the flashlight reads off");
+      // authoritative read here - the code never pushes updateCharacteristic on this path, so the characteristic's stored value is HAP's record of the last HomeKit
+      // write to resolve, not a state the code wrote.
+      assert.equal(await triggerGet(onChar), false, "the off during the in-flight activation wins - the flashlight reads off");
 
       // The superseded activation skipped arming the keyed interval, so the heartbeat was never armed: advancing past its cadence issues no further pulse. A shape
       // that gated only inside activateFlashlight would arm the heartbeat from the stale closure, and this advance would grow the pulse count.
@@ -492,18 +491,18 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       const onChar = flashlightOn();
 
       // Not dark: the on schedules a 50ms deferred off-reset under its captured generation.
-      await onChar.triggerSet(true);
+      await triggerSet(onChar, true);
 
       // The camera becomes dark, and a fresh on latches the flashlight - a NEW generation the earlier deferred reset must not stomp.
       store.pushCameraPatch(cameraId, { isDark: true });
-      await onChar.triggerSet(true);
+      await triggerSet(onChar, true);
 
-      assert.equal(await onChar.triggerGet(), true, "the later dark activation lit the flashlight on");
+      assert.equal(await triggerGet(onChar), true, "the later dark activation lit the flashlight on");
 
       // Advance the earlier activation's 50ms window: its reset re-checks its captured generation, sees itself superseded, and does nothing - the flashlight stays on.
       clock.advance(PROTECT_HOMEKIT_REFLECT_DELAY);
 
-      assert.equal(await onChar.triggerGet(), true, "the later activation's On survives the earlier not-dark reset window");
+      assert.equal(await triggerGet(onChar), true, "the later activation's On survives the earlier not-dark reset window");
       assert.equal(onChar.value, true, "the switch characteristic stays on, not stomped off by the stale not-dark reset");
     });
   });
@@ -527,7 +526,7 @@ describe("the camera's ambient-light reading restated per broker session", () =>
       projection.luxReading = options.reading;
     }
 
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Test Camera", "uuid:74ACB9000001") as unknown as ProtectAccessory,
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Test Camera", "74ACB9000001"),
       projection as unknown as Camera);
 
     try {
@@ -566,7 +565,7 @@ describe("the camera's ambient-light reading restated per broker session", () =>
   // Build a lux-capable camera reading the given level and hand back the levers the rows below drive: the capability's reconcile, reached through the camera's private
   // accessor because a capability wake is exactly a run of it, the session double, and the topic's recorded payloads.
   const buildLuxCamera = ({ connected = true, reading, userOptions = [] }: { connected?: boolean; reading?: number; userOptions?: string[] }): {
-    accessory: TestAccessory; cleanup: () => void; clock: TestClock; mqtt: TestMqttClient; projection: TestCameraProjection; read: () => string[];
+    accessory: TestProtectAccessory; cleanup: () => void; clock: TestClock; mqtt: TestMqttClient; projection: TestCameraProjection; read: () => string[];
     reconcile: () => Promise<void>;
   } => {
 
@@ -574,7 +573,7 @@ describe("the camera's ambient-light reading restated per broker session", () =>
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { clock, controller, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions });
     const projection = new TestCameraProjection(cameraConfig.id, store);
-    const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+    const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
 
     assert.ok(mqtt, "the NVR double carries an MQTT client double");
 
@@ -590,7 +589,7 @@ describe("the camera's ambient-light reading restated per broker session", () =>
       projection.luxReading = reading;
     }
 
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
     const capability = (camera as unknown as { ambientLight: { reconcile: () => Promise<void> } }).ambientLight;
 
     return {

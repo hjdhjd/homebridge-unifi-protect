@@ -12,7 +12,6 @@ import { TestBaseDevice, TestCameraProjection, TestChimeProjection, TestLightPro
   makeLightConfig, makeLiveviewConfig, makeRingtoneConfig, makeSensorConfig, makeViewerConfig } from "./testing.helpers.ts";
 import { TestRecordingDispatch, makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { describe, test } from "node:test";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import assert from "node:assert/strict";
@@ -675,9 +674,9 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     const store = new TestStateStore(makeProtectState({ sensors: [sensor] }));
     const { controller, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): TestRecordingDispatch => new TestRecordingDispatch(innerNvr), store });
     const recording = nvr.events as TestRecordingDispatch;
-    const accessory = makeTestAccessory("Test Sensor", "uuid:sensor-fire");
+    const accessory = makeTestAccessory("Test Sensor", sensor.mac);
     const projection = new TestSensorProjection("sensor-fire", store) as unknown as Sensor;
-    const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
+    const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection);
 
     assert.deepEqual(recording.calls, [], "the recorder starts empty");
 
@@ -698,9 +697,9 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     const sensor = makeSensorConfig({ id: "sensor-vehicle" });
     const store = new TestStateStore(makeProtectState({ sensors: [sensor] }));
     const { controller, nvr } = makeTestNvr({ store, userOptions: ["Enable.Motion.Switch"] });
-    const accessory = makeTestAccessory("Test Sensor", "uuid:sensor-vehicle");
+    const accessory = makeTestAccessory("Test Sensor", sensor.mac);
     const projection = new TestSensorProjection("sensor-vehicle", store) as unknown as Sensor;
-    const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
+    const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection);
 
     // The ufp read-through narrows to the Sensor carrier: a sensor-specific state field resolves off the seeded record, while the immutable controller id is read through
     // the dedicated non-throwing accessor rather than the identity-dropping state view.
@@ -722,9 +721,9 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     const sensor = makeSensorConfig({ id: "sensor-led" });
     const store = new TestStateStore(makeProtectState({ sensors: [sensor] }));
     const { controller, nvr } = makeTestNvr({ store, userOptions: ["Enable.Device.StatusLed.Switch"] });
-    const accessory = makeTestAccessory("Test Sensor", "uuid:sensor-led");
+    const accessory = makeTestAccessory("Test Sensor", sensor.mac);
     const projection = new TestSensorProjection("sensor-led", store) as unknown as Sensor;
-    const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
+    const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection);
 
     // A smoke check that the public window reaches the base configureStatusLedSwitch: with the Enable.Device.StatusLed.Switch feature it validates and acquires the
     // status-indicator switch and returns true (the deep status-LED nets - reflection, the onSet command routing, the change-gated log, the failure / auth paths - are
@@ -741,9 +740,9 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     const sensor = makeSensorConfig({ id: "sensor-info" });
     const store = new TestStateStore(makeProtectState({ sensors: [sensor] }));
     const { controller, nvr } = makeTestNvr({ store });
-    const accessory = makeTestAccessory("Test Sensor", "uuid:sensor-info");
+    const accessory = makeTestAccessory("Test Sensor", sensor.mac);
     const projection = new TestSensorProjection("sensor-info", store) as unknown as Sensor;
-    const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
+    const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection);
 
     // The base configurators read this.hints, so populate them first, then drive the device-info window. A smoke check that the public window reaches the base
     // configureInfo: it returns true and writes the AccessoryInformation Model (the carrier marketName) - the deep device-info nets (every setInfo write, the
@@ -763,9 +762,9 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     const sensor = makeSensorConfig({ id: "sensor-observe" });
     const store = new TestStateStore(makeProtectState({ sensors: [sensor] }));
     const { controller, nvr } = makeTestNvr({ store });
-    const accessory = makeTestAccessory("Test Sensor", "uuid:sensor-observe");
+    const accessory = makeTestAccessory("Test Sensor", sensor.mac);
     const projection = new TestSensorProjection("sensor-observe", store) as unknown as Sensor;
-    const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
+    const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection);
 
     device.configureHintsFor();
     device.spawnObserversFor();

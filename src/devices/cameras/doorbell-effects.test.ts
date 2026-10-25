@@ -18,8 +18,9 @@
  * re-test the handler's HomeKit effects, which are event-dispatch.ts's own concern.
  *
  * The volume Lightbulb's Brightness onSet is netted as a cross-device write: it routes to setChimeVolume, which PATCHes every real client.chimes entry serving this
- * doorbell with a modified ring, clamps a negative Brightness to zero, skips a chime that does not serve this doorbell or carries no ring for it, early-returns on
- * the first failed write, and reports both a generic failure and an authorization failure through the shared command-error log.
+ * doorbell with a modified ring, skips a chime that does not serve this doorbell or carries no ring for it, early-returns on the first failed write, and reports
+ * both a generic failure and an authorization failure through the shared command-error log. A negative Brightness never reaches the handler: HAP refuses one written
+ * from HomeKit, and the MQTT set range-checks its value first.
  *
  * The doorbell capability's MQTT handler bodies are netted directly against the doorbell's registered subscriptions: the /chime GET and SET (reading and routing the
  * chime volume through the same Lightbulb path) and the /message GET and SET (reading the current LCD message and parsing, validating, translating, and routing a
@@ -34,21 +35,20 @@
  */
 import type { Camera, ProtectCameraConfig, ProtectChimeConfig, ProtectNvrConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
+import { HAPStatus, TIMER_DELAY_MAX_MS } from "homebridge-plugin-utils";
 import { TEST_CLOCK_EPOCH, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { TestCameraProjection, TestChimeProjection, makeCameraConfig, makeChimeConfig } from "../testing.helpers.ts";
 import type { TestClock, TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
-import { loggedAt, settle } from "homebridge-plugin-utils/testing";
+import { hapStatus, loggedAt, settle, triggerSet } from "homebridge-plugin-utils/testing";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
 import type { Nullable } from "homebridge-plugin-utils";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectCamera } from "./camera.ts";
 import { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
-import { TIMER_DELAY_MAX_MS } from "homebridge-plugin-utils";
-import type { TestAccessory } from "../../testing.helpers.ts";
+import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { effectiveLcdMessage } from "./doorbell.ts";
@@ -79,7 +79,7 @@ class RecordingRingDispatch extends ProtectEventDispatch {
 // failure through the shared command-error log (logEntries) and publishes the new volume through the MQTT double (mqtt) on success.
 interface BuiltDoorbell {
 
-  accessory: TestAccessory;
+  accessory: TestProtectAccessory;
   cameraConfig: ProtectCameraConfig;
   // The camera's read-through projection, the SAME instance the doorbell's #device write-through reaches (camera.ts passes this.device into
   // createDoorbellCapability), so the /message SET's setMessage -> this.#device.update lands on this projection's updateCalls. Exposed for the /message assertions.
@@ -128,9 +128,9 @@ async function buildDoorbell(options: { chimeConfigs?: ProtectChimeConfig[]; dis
     mqtt.connected = false;
   }
 
-  const accessory = makeTestAccessory("Front Door", "uuid:74ACB9000001");
+  const accessory = makeTestAccessory("Front Door", "74ACB9000001");
   const projection = new TestCameraProjection(cameraConfig.id, store);
-  const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+  const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
   // Settle the floating configure IIFE, the capability's configure, and the observe loops' lazy registration before any push so the doorbell is fully wired.
   await settle();
@@ -257,8 +257,8 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
   describe("the volume-Lightbulb Brightness onSet -> setChimeVolume cross-device write (real client.chimes drive)", () => {
 
     // The doorbell's identity in this suite: makeCameraConfig defaults the id to "test-camera-1" and the mac to "74ACB9000001", so a chime serving this doorbell must
-    // list "test-camera-1" in its cameraIds and key its ring there, and the publish rides the "74ACB9000001/chime" topic. These literals must match exactly - a mismatch
-    // makes the filter / find skip every chime and the write becomes vacuous, which the single-chime case's captured payload proves against directly.
+    // list "test-camera-1" in its cameraIds and key its ring there, and the publish goes out on the "74ACB9000001/chime" topic. These literals must match exactly - a
+    // mismatch makes the filter / find skip every chime and the write becomes vacuous, which the single-chime case's captured payload proves against directly.
     const doorbellId = "test-camera-1";
     const chimeTopic = "74ACB9000001/chime";
 
@@ -279,7 +279,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.ok(served, "the held chime projection is present");
 
-      await volumeBulb.getCharacteristic(Characteristic.Brightness).triggerSet(70);
+      await triggerSet(volumeBulb.getCharacteristic(Characteristic.Brightness), 70);
 
       assert.deepEqual(served.updateCalls, [{ payload: { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 70 }] } }],
         "the PATCH carries one ring entry: this doorbell's ring spread with only the volume changed to 70");
@@ -293,7 +293,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
       assert.ok(!loggedAt(built.logEntries, "error", "Unable to set the chime volume"), "an accepted write logs no failure");
     });
 
-    test("a negative Brightness is clamped to zero in the written payload", async () => {
+    test("a negative Brightness write is refused with HAP's invalid-value status and reaches no chime", async () => {
 
       const chime = makeChimeConfig({ cameraIds: [doorbellId], ringSettings: [{ cameraId: doorbellId, ringtoneId: "tone-a", volume: 50 }] });
 
@@ -307,19 +307,19 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.ok(served, "the held chime projection is present");
 
-      // A negative Brightness reaches setChimeVolume(-15) intact - triggerSet bypasses HAP's own characteristic clamping - so it genuinely exercises the Math.max(value,
-      // 0) clamp. (The On=false onSet would call setChimeVolume with a LITERAL 0, where a deleted clamp still yields 0, so it could not prove the clamp.)
-      await volumeBulb.getCharacteristic(Characteristic.Brightness).triggerSet(-15);
+      // HAP validates a controller's write against Brightness's own range before the set handler runs, so a negative Brightness never reaches setChimeVolume: the write
+      // is refused with HAP's invalid-value status, and no ring PATCH reaches the chime.
+      await assert.rejects(triggerSet(volumeBulb.getCharacteristic(Characteristic.Brightness), -15), hapStatus(HAPStatus.INVALID_VALUE_IN_REQUEST));
 
-      assert.deepEqual(served.updateCalls, [{ payload: { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 0 }] } }],
-        "a negative volume clamps to zero in the written ring PATCH");
-      assert.equal(built.mqtt.publishedTo("/chime").length, 0, "the command with no controller confirmation published nothing");
+      assert.deepEqual(served.updateCalls, [], "the refused write sends the chime no ring PATCH");
+      assert.equal(built.mqtt.publishedTo("/chime").length, 0, "the refused write published nothing");
 
+      // The controller reporting a zero volume on its own is still confirmed and published once.
       built.store.pushChimePatch(chime.id, { ringSettings: [{ cameraId: doorbellId, repeatTimes: 1, ringtoneId: "tone-a", volume: 0 }] });
       await settle();
 
       assert.deepEqual(built.mqtt.published.filter((entry) => entry.topic === chimeTopic), [{ payload: "0", retain: false, topic: chimeTopic }],
-        "the confirmed clamped value is what we publish");
+        "the controller-confirmed zero volume is what we publish");
     });
 
     test("a chime volume change pushed to a doorbell built without Doorbell.Volume.Dimmer publishes nothing", async () => {
@@ -362,7 +362,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.ok(servedA && servedB, "both held chime projections are present");
 
-      await volumeBulb.getCharacteristic(Characteristic.Brightness).triggerSet(55);
+      await triggerSet(volumeBulb.getCharacteristic(Characteristic.Brightness), 55);
 
       assert.equal(servedA.updateCalls.length, 1, "the first chime serving this doorbell is written");
       assert.equal(servedB.updateCalls.length, 1, "the second chime serving this doorbell is written");
@@ -392,7 +392,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.ok(foreignProjection && servedProjection, "both held chime projections are present");
 
-      await volumeBulb.getCharacteristic(Characteristic.Brightness).triggerSet(45);
+      await triggerSet(volumeBulb.getCharacteristic(Characteristic.Brightness), 45);
 
       assert.equal(foreignProjection.updateCalls.length, 0, "the chime that does not list this doorbell is filtered out and never written");
       assert.equal(servedProjection.updateCalls.length, 1, "only the chime that serves this doorbell is written");
@@ -420,7 +420,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.ok(noRingProjection && servedProjection, "both held chime projections are present");
 
-      await volumeBulb.getCharacteristic(Characteristic.Brightness).triggerSet(35);
+      await triggerSet(volumeBulb.getCharacteristic(Characteristic.Brightness), 35);
 
       assert.equal(noRingProjection.updateCalls.length, 0, "the chime listing the doorbell but with no ring for it is skipped; the loop continues to the next");
       assert.equal(servedProjection.updateCalls.length, 1, "the chime carrying a ring for this doorbell is written");
@@ -452,7 +452,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
       // write genuinely throws and the early-return is exercised.
       firstProjection.updateRejection = new Error("The chime rejected the write.");
 
-      await volumeBulb.getCharacteristic(Characteristic.Brightness).triggerSet(25);
+      await triggerSet(volumeBulb.getCharacteristic(Characteristic.Brightness), 25);
 
       assert.equal(firstProjection.updateCalls.length, 1, "the first chime's write was attempted");
       assert.equal(secondProjection.updateCalls.length, 0, "the second chime is never written once the first write fails - the loop early-returns");
@@ -477,7 +477,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       served.updateRejection = new ProtectAuthorizationError("forbidden");
 
-      await volumeBulb.getCharacteristic(Characteristic.Brightness).triggerSet(25);
+      await triggerSet(volumeBulb.getCharacteristic(Characteristic.Brightness), 25);
 
       assert.equal(built.mqtt.published.filter((entry) => entry.topic === chimeTopic).length, 0, "an authorization failure publishes nothing");
       assert.ok(loggedAt(built.logEntries, "error", "Unable to set the chime volume. Please ensure this username has the full management role in UniFi Protect."),
@@ -505,7 +505,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       // onSet true: the handler fires this.nvr.events.doorbellEventHandler(this) - no accessory.context write, no controller write. The recording override captures the
       // routing.
-      await triggerSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+      await triggerSet(triggerSwitch.getCharacteristic(Characteristic.On), true);
 
       assert.equal(ring.rings.length, 1, "the truthy trigger fired exactly one ring through doorbellEventHandler");
       assert.equal(ring.rings[0]?.id, built.cameraConfig.id, "the ring routed to this doorbell (the protectDevice argument is the doorbell itself)");
@@ -524,7 +524,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
       const ring = built.nvr.events as unknown as RecordingRingDispatch;
 
       // onSet false: the handler's else branch never calls doorbellEventHandler (it only re-asserts an in-flight ring), so no ring is routed.
-      await triggerSwitch.getCharacteristic(Characteristic.On).triggerSet(false);
+      await triggerSet(triggerSwitch.getCharacteristic(Characteristic.On), false);
 
       assert.equal(ring.rings.length, 0, "a falsy trigger fires no ring");
     });
@@ -532,9 +532,9 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
   describe("the doorbell-capability MQTT handler bodies (the /chime and /message get/set bodies)", () => {
 
-    // The doorbell's identity in this suite: makeCameraConfig defaults the mac to "74ACB9000001", so every captured subscription rides a "74ACB9000001/<tail>" topic and
-    // the publish rides "74ACB9000001/chime". These literals must match exactly - a mismatch makes the subscription find skip and the test reads as vacuous, which the
-    // HARD-assert-exists gate catches.
+    // The doorbell's identity in this suite: makeCameraConfig defaults the mac to "74ACB9000001", so every captured subscription is on a "74ACB9000001/<tail>" topic and
+    // the publish goes out on "74ACB9000001/chime". These literals must match exactly - a mismatch makes the subscription find skip and the test reads as vacuous, which
+    // the HARD-assert-exists gate catches.
     const mac = "74ACB9000001";
 
     // The message topic exists only while Doorbell.Messages is on, so the message get and set rows build with the feature enabled.
@@ -582,7 +582,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         // The body parses "70", passes the gate (not NaN, 0..100), and setCharacteristic(Brightness, 70) -> the Brightness onSet -> setChimeVolume(70).
         // setCharacteristic is fire-and-forget, so settle past the onSet before asserting. The On onSet (value > 0 truthy) early-returns, so exactly one served-chime
-        // write lands. This nets only the MQTT body's parse / gate / route - setChimeVolume's clamp / fan-out / auth are the
+        // write lands. This nets only the MQTT body's parse / gate / route - setChimeVolume's fan-out and auth are the
         // setChimeVolume cross-device write describe's concern.
         await built.mqtt.invokeSet(mac + "/chime/set", "70");
         await settle();
@@ -874,7 +874,7 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       // Set the message through its switch (a write-through the observer never sees), then push the controller's echo carrying the resetAt: the observer wakes, turns
       // the switch on, and arms the self-re-syncing expiry timer.
-      await messageSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+      await triggerSet(messageSwitch.getCharacteristic(Characteristic.On), true);
       built.nvr.client.state.pushCameraPatch(built.cameraConfig.id, { lcdMessage: { resetAt: t0 + 30000, text: "Back soon", type: "CUSTOM_MESSAGE" } });
       await settle();
 

@@ -11,7 +11,6 @@ import { TestStateStore, makeProtectState, makeTestAccessory } from "../../testi
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import assert from "node:assert/strict";
@@ -24,7 +23,7 @@ async function constructCamera(userOptions: string[]): Promise<{ camera: Protect
   const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
   const { controller, nvr } = makeTestNvr({ store, userOptions });
-  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "uuid:74ACB900000A") as unknown as ProtectAccessory,
+  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB900000A"),
     new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
 
   await settle();

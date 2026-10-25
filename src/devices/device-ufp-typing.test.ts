@@ -18,7 +18,6 @@
  * The one runtime test carries a fact the type pins cannot state: the identity narrowing is compile-time only. A live record still carries its id, mac, and modelKey at
  * runtime, so the whole force of dropping them from the view is the type - no code may read runtime absence as the guard.
  */
-import type { ProtectAccessory, WithoutIdentity } from "../types.ts";
 import type { ProtectCameraConfig, ProtectChimeConfig, ProtectDeviceConfig, ProtectFobConfig, ProtectLightConfig, ProtectRelayConfig, ProtectSensorConfig,
   ProtectViewerConfig, Sensor } from "unifi-protect";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
@@ -33,6 +32,7 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectRelay } from "./relay.ts";
 import type { ProtectSensor } from "./sensor.ts";
 import type { ProtectViewer } from "./viewer.ts";
+import type { WithoutIdentity } from "../types.ts";
 import assert from "node:assert/strict";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
@@ -87,9 +87,9 @@ describe("the device config view's runtime relationship to its compile-time narr
 
   const store = new TestStateStore(makeProtectState({ sensors: [makeSensorConfig({ id: "sensor-ufp-typing", mac: "74ACB9000042" })] }));
   const { controller, nvr } = makeTestNvr({ store });
-  const accessory = makeTestAccessory("Test Sensor", "uuid:sensor-ufp-typing");
+  const accessory = makeTestAccessory("Test Sensor", "74ACB9000042");
   const projection = new TestSensorProjection("sensor-ufp-typing", store) as unknown as Sensor;
-  const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
+  const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection);
 
   after(() => controller.abort());
 

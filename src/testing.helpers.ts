@@ -2,1164 +2,229 @@
  *
  * testing.helpers.ts: The cross-cutting test helpers shared across every unit test in homebridge-unifi-protect.
  *
- * The plugin's production code reads and writes through Homebridge's HAP shapes (Service, Characteristic, Accessory) on every per-accessory configure path. We never
- * want a unit test to drag in the real homebridge package or stand up a live HAP runtime, so this file exposes a hand-built HAP test-double that mirrors only the
- * surface the plugin actually touches: Service identity and construction, Characteristic identity, getService / getServiceById / addService / removeService /
- * configureController on Accessory, getCharacteristic / updateCharacteristic / removeCharacteristic on Service, and onGet / onSet / value on Characteristic. That
- * surface is intentionally tight and expands as the production code it exercises reaches for new kinds; adding a kind is a small constructible marker class plus an
- * entry in the namespace object.
+ * Every accessory, service and characteristic a suite touches is the real thing. This file loads the Homebridge runtime once, through HBPU's Homebridge double, so an
+ * accessory is Homebridge's own PlatformAccessory over the hap-nodejs copy Homebridge loads, its services and characteristics are HAP's own, and the API the
+ * controller double hands production is HBPU's TestHomebridgeApi, which runs Homebridge's bridge bookkeeping and records the calls Homebridge accepted. A suite's
+ * assertion about HomeKit state therefore reads what production would leave there, and the harness restates no part of HAP or Homebridge to get it. The accessory
+ * builder derives every identity through HAP's own UUID generator, the way production derives each accessory's UUID, and the read helpers below give suites the
+ * views HAP keeps no log of: the values production wrote to one characteristic, the controller configurations and removals an accessory saw, and the options a camera
+ * controller was built with.
  *
- * Alongside the HAP double this file holds the rest of the harness's cross-cutting core: TestStateStore, the facade over unifi-protect's real state store, with
- * makeProtectState to seed it; the streaming and timeshift stubs every device family that constructs a real camera host shares (the streaming delegate and its factory,
- * which satisfies the platform's dependency-inversion contract so a REAL device can be constructed with no FFmpeg, and the timeshift buffer and supervisor doubles);
- * and the TestApiCall record shape the registration sink captures into.
+ * Alongside them this file holds the rest of the harness's cross-cutting core: TestStateStore, the facade over unifi-protect's real state store, with makeProtectState
+ * to seed it; and the streaming and timeshift stubs every device family that constructs a real camera host shares: the streaming delegate with its controller
+ * stand-in and its factory, which satisfies the platform's dependency-inversion contract so a REAL device can be constructed with no FFmpeg, and the timeshift buffer
+ * and supervisor doubles.
  *
  * The per-subsystem helpers live beside the code they serve, each importing this file: devices/testing.helpers.ts owns the config builders, the projection doubles,
- * and TestBaseDevice; media/testing.helpers.ts owns TestCameraHost and the fragment and livestream doubles; nvr/testing.helpers.ts owns the NVR, platform, and MQTT
- * doubles and the makeTestNvr composition root. The doubles mirror contracts owned elsewhere - the service/characteristic surface is HAP's as consumed by
- * homebridge-plugin-utils' real service helpers, the removal machinery is ProtectNvr's - and fidelity to those cited contracts, not invention, is the line the harness
- * holds. State is the one concern that needs no mirroring at all: TestStateStore runs unifi-protect's own store (src/state/store.ts) rather than a restatement of it.
+ * and TestBaseDevice; media/testing.helpers.ts owns TestCameraHost and the fragment and livestream doubles; nvr/testing.helpers.ts owns the NVR and platform doubles
+ * and the makeTestNvr composition root. State needs no restating either: TestStateStore runs unifi-protect's own store (src/state/store.ts).
  *
  * Co-located with production code under src/ so the type-check pass covers this file alongside everything else, while tsconfig.build.json excludes every *.helpers.ts,
  * *.fixtures.ts, and *.test.ts from the emitted dist/, so none of the rig reaches the published package.
  */
-import type { CameraController, CameraControllerOptions, Resolution } from "homebridge";
+import type { CameraController, CameraControllerOptions, ChangeReason, CharacteristicValue, Controller, ControllerServiceMap, Resolution, WithUUID } from "homebridge";
 import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } from "./media/stream-delegate.ts";
 import type { DeepPartial, DeviceSelectors, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig,
   ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState, ProtectStateRecord, ProtectViewerConfig, StateModelKey,
   StateStore } from "unifi-protect";
+import type { ProtectAccessory, ProtectAccessoryContext } from "./types.ts";
+import { TestHomebridgeApi, loadHomebridge } from "homebridge-plugin-utils/testing";
 import type { AdvertisedStreams } from "./devices/cameras/camera.ts";
 import type { ChannelProfile } from "./media/resolution.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectCameraHost } from "./media/camera-host.ts";
 import type { SnapshotSource } from "./media/timeshift.ts";
+import type { TestPlatformAccessory } from "homebridge-plugin-utils/testing";
 import { controllerIdentityOf } from "./media/stream-delegate.ts";
 import { createStateStore } from "unifi-protect";
 
-// Identity class for a HAP Characteristic kind. Each characteristic kind is its own marker class; production code passes the class as a key to
-// getCharacteristic / updateCharacteristic. Carries a hapKind instance property so test failures surface the kind directly in inspect output and so the class is
-// meaningful enough to dodge the no-extraneous-class lint rule.
-class OnCharacteristicType {
-
-  public readonly hapKind = "On" as const;
-}
-
-class StatusActiveCharacteristicType {
-
-  public readonly hapKind = "StatusActive" as const;
-}
-
-// The low-battery characteristic. The sensor's updateBatteryStatus writes StatusLowBattery onto the Battery service from batteryStatus.isLow; it is resolved on-demand
-// from the namespace (not a service seed), so the kind must exist as a first-class key for that write to land on a distinct entry rather than collide on an undefined
-// key.
-class StatusLowBatteryCharacteristicType {
-
-  public readonly hapKind = "StatusLowBattery" as const;
-}
-
-// The tamper-status characteristic. Added for the firehose tamper delivery and the sensor tamper push: the camera's tamperEventHandler and the sensor's tamper observer
-// both write StatusTampered on a MotionSensor (and, for sensors, every state-bearing service), so an accessory carrying it exercises those reactions against the double.
-class StatusTamperedCharacteristicType {
-
-  public readonly hapKind = "StatusTampered" as const;
-}
-
-// The configured-name characteristic. The Home app labels a ServiceLabel-grouped switch - the fob's buttons - by ConfiguredName rather than the plain Name, so the fob's
-// button-label reconcile reads and writes exactly this kind, and the user-rename tests materialize it directly to stand in for a name the user assigned.
-class ConfiguredNameCharacteristicType {
-
-  public readonly hapKind = "ConfiguredName" as const;
-}
-
-// The contact-sensor-state characteristic. Added for the auth-sensor delivery tests: the auth delivery trips the contact sensor between detected (resting / not
-// authenticated) and not-detected (a recognized scan), so the double carries those two named states as statics, mirroring how real HAP exposes them as constructor
-// constants.
-class ContactSensorStateCharacteristicType {
-
-  public static readonly CONTACT_DETECTED = 0;
-  public static readonly CONTACT_NOT_DETECTED = 1;
-  public readonly hapKind = "ContactSensorState" as const;
-}
-
-// The lock-state characteristics. The camera's UniFi Access lock writes both LockCurrentState and LockTargetState - the establishment stamp sets them SECURED at create
-// or restart, and the LockTargetState onSet toggles each between SECURED and UNSECURED across a user unlock and its auto re-lock - so the double carries those two named
-// states (the only ones the plugin reads) as statics on each marker, mirroring how real HAP exposes them as constructor constants.
-class LockCurrentStateCharacteristicType {
-
-  public static readonly SECURED = 1;
-  public static readonly UNSECURED = 0;
-  public readonly hapKind = "LockCurrentState" as const;
-}
-
-class LockTargetStateCharacteristicType {
-
-  public static readonly SECURED = 1;
-  public static readonly UNSECURED = 0;
-  public readonly hapKind = "LockTargetState" as const;
-}
-
-/* The security-system state characteristics. The security-system owner reads the named arm states off these two characteristics on every state transition: the current
- * state carries five distinct values (the currentSecuritySystemState string map is keyed by them) and the target state carries four (the setProps validValues array
- * carries them, and the onSet maps a target to a current), so the double mirrors HAP's exact constants as statics on each marker. Distinct values are required, not
- * incidental - a collision would collapse the Record<number, string> map and silently mis-key the MQTT state string. SecuritySystemCurrentState is also the seed
- * characteristic the SecuritySystem service marker constructs with (acquireService recovers the Characteristic constructor from the new service's first characteristic).
- * The static members are alphabetical per the house style; note the Current marker uses DISARMED=3 while the Target marker uses DISARM=3 - the same integer under two
- * HAP-distinct names, both of which the production code reaches by name.
+/**
+ * The Homebridge runtime every suite runs on: the hap-nodejs copy and the PlatformAccessory class Homebridge loads from this repository's tree, resolved once for the
+ * whole process. The NVR and media helpers build their API doubles over this same runtime, so every accessory a suite meets shares one HAP.
  */
-class SecuritySystemCurrentStateCharacteristicType {
+export const runtime = await loadHomebridge(import.meta.url);
 
-  public static readonly ALARM_TRIGGERED = 4;
-  public static readonly AWAY_ARM = 1;
-  public static readonly DISARMED = 3;
-  public static readonly NIGHT_ARM = 2;
-  public static readonly STAY_ARM = 0;
-  public readonly hapKind = "SecuritySystemCurrentState" as const;
-}
-
-class SecuritySystemTargetStateCharacteristicType {
-
-  public static readonly AWAY_ARM = 1;
-  public static readonly DISARM = 3;
-  public static readonly NIGHT_ARM = 2;
-  public static readonly STAY_ARM = 0;
-  public readonly hapKind = "SecuritySystemTargetState" as const;
-}
-
-// The AccessoryInformation characteristics. Added for the camera-construction harness: ProtectBase.setInfo writes Manufacturer / Model / SerialNumber /
-// FirmwareRevision onto the AccessoryInformation service at configure time, and the accessoryName getter reads the Name characteristic, so distinct kinds are
-// required for each so the writes never collide on an undefined key.
-class FirmwareRevisionCharacteristicType {
-
-  public readonly hapKind = "FirmwareRevision" as const;
-}
-
-// The hardware-revision characteristic. The security-system owner's bespoke configureInfo writes HardwareRevision onto the AccessoryInformation service unconditionally
-// (it bases it off nvr.ufp.hardwareRevision with no length guard), so the kind must be a distinct key for that write to land rather than collide on an undefined key.
-// (ProtectBase.setInfo also writes it, but length-guarded behind a populated hardwareRevision the device-info concern net deliberately omits; the controller-owner net is
-// the first to reach it.)
-class HardwareRevisionCharacteristicType {
-
-  public readonly hapKind = "HardwareRevision" as const;
-}
-
-class ManufacturerCharacteristicType {
-
-  public readonly hapKind = "Manufacturer" as const;
-}
-
-class ModelCharacteristicType {
-
-  public readonly hapKind = "Model" as const;
-}
-
-class NameCharacteristicType {
-
-  public readonly hapKind = "Name" as const;
-}
-
-class SerialNumberCharacteristicType {
-
-  public readonly hapKind = "SerialNumber" as const;
-}
-
-// The battery-level characteristic. The sensor's updateBatteryStatus writes BatteryLevel onto the Battery service from batteryStatus.percentage, and it is the seed
-// characteristic the Battery service marker constructs with, so the kind must exist as a first-class key for the sensor family's real construction to reach it.
-class BatteryLevelCharacteristicType {
-
-  public readonly hapKind = "BatteryLevel" as const;
-}
-
-// The ambient-light characteristic. The sensor's ambient-light service binds onGet and pushes the current light level on CurrentAmbientLightLevel (with the 0.0001
-// HomeKit floor), and it is the seed characteristic the LightSensor service marker constructs with, so the kind must be a distinct key for that path to read faithfully.
-class CurrentAmbientLightLevelCharacteristicType {
-
-  public readonly hapKind = "CurrentAmbientLightLevel" as const;
-}
-
-// The relative-humidity characteristic. The sensor's humidity service binds onGet and pushes the current humidity on CurrentRelativeHumidity (with the <0 floor), and it
-// is the seed characteristic the HumiditySensor service marker constructs with, so the kind must be a distinct key for that path to read faithfully.
-class CurrentRelativeHumidityCharacteristicType {
-
-  public readonly hapKind = "CurrentRelativeHumidity" as const;
-}
-
-// The temperature characteristic. The sensor's temperature service binds onGet and pushes the current temperature on CurrentTemperature, and it is the seed
-// characteristic the TemperatureSensor service marker constructs with, so the kind must be a distinct key for that path to read faithfully.
-class CurrentTemperatureCharacteristicType {
-
-  public readonly hapKind = "CurrentTemperature" as const;
-}
-
-// The leak-detected characteristic. The sensor's leak service binds onGet and pushes the leak state on LeakDetected, and it is the seed characteristic the LeakSensor
-// service marker constructs with, so the kind must be a distinct key for that path to read faithfully.
-class LeakDetectedCharacteristicType {
-
-  public readonly hapKind = "LeakDetected" as const;
-}
-
-// The motion-detected characteristic. The camera's configureMotionSensor initializes MotionDetected to false on the motion service it acquires, and the motion
-// delivery flips it, so the construction harness needs the kind as a first-class key (it is also the seed characteristic the MotionSensor marker constructs with).
-class MotionDetectedCharacteristicType {
-
-  public readonly hapKind = "MotionDetected" as const;
-}
-
-// The occupancy-detected characteristic. configureOccupancySensor initializes OccupancyDetected to false on the occupancy service it acquires (device.ts) and the
-// occupancy MQTT getter reads it, so the kind must exist as a first-class key. device-motion is the first concern test to construct an occupancy sensor, so this is added
-// here per the "expand as production reaches a new kind" pattern that grows MotionDetected and the rest above; before it the OccupancySensor service seeded the generic
-// Name stand-in because OccupancyDetected was verified unreached.
-class OccupancyDetectedCharacteristicType {
-
-  public readonly hapKind = "OccupancyDetected" as const;
-}
-
-/* The air-quality characteristic kinds, added together because the sensor's air quality and carbon dioxide services reach them as one surface. AirQuality is the level
- * the air quality service always carries and CarbonDioxideDetected the alert its own service always carries - each the seed characteristic its service marker
- * constructs with - while CarbonDioxideLevel and the three density kinds are PRESENCE-DRIVEN: the sensor adds and removes them as their metrics come and go, so each
- * must be a distinct key for a presence assertion (testCharacteristic) to tell one density's arrival from another's.
- *
- * HAP spells the fine particulate characteristic PM2_5Density, with an underscore production reads by that exact name. The namespace key below is quoted and the
- * backing class named without the underscore, which is what keeps the house camel-case rule satisfied while the key production reaches for stays byte-identical to
- * HAP's own.
+/**
+ * The runtime's HAP namespace, the one production reaches as `api.hap`.
  */
-class AirQualityCharacteristicType {
+export const hap = runtime.hap;
 
-  public readonly hapKind = "AirQuality" as const;
-}
-
-class CarbonDioxideDetectedCharacteristicType {
-
-  public readonly hapKind = "CarbonDioxideDetected" as const;
-}
-
-class CarbonDioxideLevelCharacteristicType {
-
-  public readonly hapKind = "CarbonDioxideLevel" as const;
-}
-
-class PM10DensityCharacteristicType {
-
-  public readonly hapKind = "PM10Density" as const;
-}
-
-class PM25DensityCharacteristicType {
-
-  public readonly hapKind = "PM2_5Density" as const;
-}
-
-class VOCDensityCharacteristicType {
-
-  public readonly hapKind = "VOCDensity" as const;
-}
-
-/* The smoke-detector characteristic kinds, added together because the sensor's smoke and carbon monoxide services reach them as one surface. SmokeDetected and
- * CarbonMonoxideDetected are each the seed characteristic its own service marker constructs with, and the sensor binds a read-through and pushes a value on each from a
- * live status block.
- *
- * StatusFault joins them here rather than beside StatusActive and StatusTampered because the smoke pair is the only surface that carries it: the sensor writes it per
- * service from the detector's own fault flags and deliberately never through the shared state helper, so a presence assertion (testCharacteristic) on any other service
- * is what proves the characteristic stayed off the rest of the accessory.
+/**
+ * HAP's own Characteristic and Service classes, the namespaces a suite names a kind by (`Characteristic.On`, `Service.Switch`), each exported as a value and, below,
+ * as the instance type, the way the class itself serves as both.
  */
-class CarbonMonoxideDetectedCharacteristicType {
+export const { Characteristic, Service } = hap;
 
-  public readonly hapKind = "CarbonMonoxideDetected" as const;
-}
+export type Characteristic = InstanceType<typeof hap.Characteristic>;
 
-class SmokeDetectedCharacteristicType {
+export type Service = InstanceType<typeof hap.Service>;
 
-  public readonly hapKind = "SmokeDetected" as const;
-}
-
-class StatusFaultCharacteristicType {
-
-  public readonly hapKind = "StatusFault" as const;
-}
-
-// The brightness characteristic. The doorbell's chime-volume Lightbulb and the camera's night-vision dimmer both bind onGet/onSet handlers and push updates on
-// Brightness, so the kind must be a distinct key for those paths to exercise faithfully.
-class BrightnessCharacteristicType {
-
-  public readonly hapKind = "Brightness" as const;
-}
-
-// The camera-operating-mode characteristic pair. NightVision and CameraOperatingModeIndicator live on the SAME CameraOperatingMode service in production (the
-// night-vision and status-indicator pushes), so without distinct keys the two writes would collide on one undefined-keyed entry and silently mask each other.
-class CameraOperatingModeIndicatorCharacteristicType {
-
-  public readonly hapKind = "CameraOperatingModeIndicator" as const;
-}
-
-class NightVisionCharacteristicType {
-
-  public readonly hapKind = "NightVision" as const;
-}
-
-// The programmable-switch-event characteristic. The doorbell ring delivery fires sendEventNotification(SINGLE_PRESS) and the fob button delivery fires the mapped
-// single/double/long press on this characteristic, so the marker carries all three named press constants as statics, mirroring how real HAP exposes them as constructor
-// constants. It is also the Doorbell and StatelessProgrammableSwitch markers' seed characteristic.
-class ProgrammableSwitchEventCharacteristicType {
-
-  public static readonly DOUBLE_PRESS = 1;
-  public static readonly LONG_PRESS = 2;
-  public static readonly SINGLE_PRESS = 0;
-  public readonly hapKind = "ProgrammableSwitchEvent" as const;
-}
-
-// The service-label-index characteristic. The fob's grouped button switches carry their STABLE 1-based table index on this characteristic (and a lone visible button has
-// its stale index removed), so the marker must be a distinct key the create/regroup paths write and remove.
-class ServiceLabelIndexCharacteristicType {
-
-  public readonly hapKind = "ServiceLabelIndex" as const;
-}
-
-// The service-label-namespace characteristic. The fob's ServiceLabel sets this to ARABIC_NUMERALS, so the marker carries the named namespace constants as statics
-// (mirroring how real HAP exposes them as constructor constants) - else a "namespace === ARABIC_NUMERALS" assertion would be a vacuous undefined === undefined.
-class ServiceLabelNamespaceCharacteristicType {
-
-  public static readonly ARABIC_NUMERALS = 1;
-  public static readonly DOTS = 0;
-  public readonly hapKind = "ServiceLabelNamespace" as const;
-}
-
-// The HAP Characteristic namespace as the test-double exposes it. StatusActive is the one that matters most...the isReachable rewire writes it across every device
-// class, so the reachability tests pivot on this characteristic. On covers the toggle pair used by switches in the double's self-test. LockCurrentState /
-// LockTargetState back the camera's UniFi Access lock onSet and the capability-reconcile lock self-heal tests. ContactSensorState backs the auth-sensor delivery
-// tests, where the firehose router's authEventHandler trips it on a recognized fingerprint/NFC scan, and StatusTampered backs the camera tamper-event handler and
-// the sensor tamper observer tests. The AccessoryInformation kinds (Manufacturer / Model / SerialNumber / FirmwareRevision / Name) and MotionDetected back the
-// real-construction harness; Brightness, NightVision, and CameraOperatingModeIndicator back the doorbell-family construction harness; ProgrammableSwitchEvent backs
-// the doorbell ring and the fob button-press deliveries, and ServiceLabelIndex / ServiceLabelNamespace back the fob's grouped-button ServiceLabel while ConfiguredName
-// backs the fob's button-label reconcile, where the Home app names a grouped button switch by that characteristic and a user rename writes it; OccupancyDetected
-// backs the device-motion base-capability net, where configureOccupancySensor first reaches it. BatteryLevel / StatusLowBattery (the battery service updater) and
-// CurrentAmbientLightLevel / CurrentRelativeHumidity / CurrentTemperature / LeakDetected (the sensor's per-mode services) back the sensor-family real-construction
-// net, where ProtectSensor first reaches them, joined there by AirQuality / CarbonDioxideDetected and the presence-driven CarbonDioxideLevel / PM10Density /
-// PM2_5Density / VOCDensity of the air quality and carbon dioxide services, and by SmokeDetected / CarbonMonoxideDetected / StatusFault of the smoke detector's own
-// services, where configureSmokeDetector first reaches them. SecuritySystemCurrentState / SecuritySystemTargetState (the security-system state machine,
-// the Current marker also
-// the SecuritySystem service's seed) and HardwareRevision (the security-system's bespoke configureInfo) back the controller-owner net, where ProtectSecuritySystem
-// first reaches them. Expand as the production code reaches for new kinds.
-export const Characteristic = {
-
-  AirQuality: AirQualityCharacteristicType,
-  BatteryLevel: BatteryLevelCharacteristicType,
-  Brightness: BrightnessCharacteristicType,
-  CameraOperatingModeIndicator: CameraOperatingModeIndicatorCharacteristicType,
-  CarbonDioxideDetected: CarbonDioxideDetectedCharacteristicType,
-  CarbonDioxideLevel: CarbonDioxideLevelCharacteristicType,
-  CarbonMonoxideDetected: CarbonMonoxideDetectedCharacteristicType,
-  ConfiguredName: ConfiguredNameCharacteristicType,
-  ContactSensorState: ContactSensorStateCharacteristicType,
-  CurrentAmbientLightLevel: CurrentAmbientLightLevelCharacteristicType,
-  CurrentRelativeHumidity: CurrentRelativeHumidityCharacteristicType,
-  CurrentTemperature: CurrentTemperatureCharacteristicType,
-  FirmwareRevision: FirmwareRevisionCharacteristicType,
-  HardwareRevision: HardwareRevisionCharacteristicType,
-  LeakDetected: LeakDetectedCharacteristicType,
-  LockCurrentState: LockCurrentStateCharacteristicType,
-  LockTargetState: LockTargetStateCharacteristicType,
-  Manufacturer: ManufacturerCharacteristicType,
-  Model: ModelCharacteristicType,
-  MotionDetected: MotionDetectedCharacteristicType,
-  Name: NameCharacteristicType,
-  NightVision: NightVisionCharacteristicType,
-  OccupancyDetected: OccupancyDetectedCharacteristicType,
-  On: OnCharacteristicType,
-  PM10Density: PM10DensityCharacteristicType,
-  "PM2_5Density": PM25DensityCharacteristicType,
-  ProgrammableSwitchEvent: ProgrammableSwitchEventCharacteristicType,
-  SecuritySystemCurrentState: SecuritySystemCurrentStateCharacteristicType,
-  SecuritySystemTargetState: SecuritySystemTargetStateCharacteristicType,
-  SerialNumber: SerialNumberCharacteristicType,
-  ServiceLabelIndex: ServiceLabelIndexCharacteristicType,
-  ServiceLabelNamespace: ServiceLabelNamespaceCharacteristicType,
-  SmokeDetected: SmokeDetectedCharacteristicType,
-  StatusActive: StatusActiveCharacteristicType,
-  StatusFault: StatusFaultCharacteristicType,
-  StatusLowBattery: StatusLowBatteryCharacteristicType,
-  StatusTampered: StatusTamperedCharacteristicType,
-  VOCDensity: VOCDensityCharacteristicType
-} as const;
-
-// Shorthand for the constructor-as-key shape both Service and Characteristic expose. We use the class itself (not an instance) as the Map key throughout, so
-// these are constructor types whose argument list is intentionally permissive...the marker classes take no arguments (or, for the constructible service markers,
-// the HAP (displayName?, subtype?) pair), and we want the alias to admit either.
-export type ServiceType = abstract new (...args: never[]) => object;
-export type CharacteristicType = abstract new (...args: never[]) => object;
-
-// The props object production passes to Characteristic.setProps - the security-system owner narrows SecuritySystemTargetState's validValues this way. validValues is the
-// only field the plugin sets and the only one a test asserts; the open index signature mirrors HAP's far wider PartialAllowingNull<CharacteristicProps> surface so any
-// other prop production might set still type-checks at the call site. A named interface (not an inline intersection) keeps the field and the setProps parameter one
-// source and reads cleanly under the house no-property-access-from-index-signature rule, where the explicitly-declared validValues stays dot-accessible.
-export interface TestCharacteristicProps extends Record<string, unknown> {
-
-  validValues?: number[];
-}
-
-// One characteristic backing instance, owned by a TestService. Holds the last value written, plus the optional onGet / onSet handlers production code installs.
-// triggerGet / triggerSet are the test-side knobs that exercise the bound handlers without going through a real HAP request path.
-export class TestCharacteristic {
-
-  // The two characteristic cross-references the naming surface reads: setServiceName recovers the characteristic namespace from an instance's constructor and writes
-  // through its ConfiguredName and Name statics, mirroring real hap-nodejs. Only the naming pair is wired, matching the AccessoryInformation-scoped bridge on the
-  // service side.
-  public static readonly ConfiguredName = Characteristic.ConfiguredName;
-  public static readonly Name = Characteristic.Name;
-  public readonly type: CharacteristicType;
-  // The event-notification log, mirroring HAP's sendEventNotification semantics: an event is a transient occurrence pushed to subscribers (the doorbell ring's
-  // SINGLE_PRESS), recorded in order here, and it deliberately never changes the characteristic's cached value.
-  public readonly events: unknown[] = [];
-  // The last props object production set via setProps, captured so a test can assert the security-system owner's updateDevice narrowed the target state's validValues.
-  // Undefined until production calls setProps; a silent no-op double would make the arm-states reconcile net vacuous.
-  public props: TestCharacteristicProps | undefined = undefined;
-  // An append-only log of every updateCharacteristic-driven write (each pushed by updateValue), alongside the single-value cache. A stale re-write of a value the
-  // characteristic already holds cannot be told apart by the final cached value, so a test that must prove the code did NOT write to a sibling reads this log rather
-  // than .value. triggerSet's own post-handler cache write does not append here - only production's updateCharacteristic pushes do.
-  public readonly writes: unknown[] = [];
-  private currentValue: unknown = null;
-  private getHandler: (() => unknown) | undefined = undefined;
-  private setHandler: ((value: unknown) => void | Promise<void>) | undefined = undefined;
-
-  public constructor(type: CharacteristicType) {
-
-    this.type = type;
-  }
-
-  // The most recently written value. Production code reads this after updateCharacteristic to confirm its own write landed.
-  public get value(): unknown {
-
-    return this.currentValue;
-  }
-
-  // Write a value into the characteristic. Returns this so it chains in the production-typical "service.updateCharacteristic(...)" pattern.
-  public updateValue(value: unknown): this {
-
-    this.currentValue = value;
-    this.writes.push(value);
-
-    return this;
-  }
-
-  // Record the props production set on this characteristic, mirroring HAP's Characteristic.setProps, which returns the characteristic so production chains it off
-  // getCharacteristic (the security-system owner's updateDevice narrows SecuritySystemTargetState's validValues this way). The double captures the last props object so
-  // a test can assert the exact validValues array landed; the recordable-double discipline (capture-then-return-this) mirrors onSet / updateValue.
-  public setProps(props: TestCharacteristicProps): this {
-
-    this.props = props;
-
-    return this;
-  }
-
-  // Install the production read handler. Tests inspect what was bound via triggerGet; the handler itself stays opaque to the test surface.
-  public onGet(handler: () => unknown): this {
-
-    this.getHandler = handler;
-
-    return this;
-  }
-
-  // Install the production write handler. Tests drive it via triggerSet; the production code's handler runs as if HomeKit invoked it.
-  public onSet(handler: (value: unknown) => void | Promise<void>): this {
-
-    this.setHandler = handler;
-
-    return this;
-  }
-
-  // Record an event notification, mirroring HAP's transient-event push (the doorbell ring delivery). The cached value is deliberately untouched - events are not
-  // state writes in HAP, and a test asserting .value after a ring must see whatever was last written, not the press constant.
-  public sendEventNotification(value: unknown): void {
-
-    this.events.push(value);
-  }
-
-  // Test-side trigger for the installed onGet handler. Falls through to the last-written value when no handler is bound, matching HAP's read-from-cache
-  // semantics when the production code never installs a custom getter.
-  public async triggerGet(): Promise<unknown> {
-
-    if(!this.getHandler) {
-
-      return this.currentValue;
-    }
-
-    return this.getHandler();
-  }
-
-  // Test-side trigger for the installed onSet handler. After the handler resolves, the supplied value becomes the new cached value, mirroring HAP's behavior
-  // where a successful set updates the characteristic's read cache.
-  public async triggerSet(value: unknown): Promise<void> {
-
-    if(this.setHandler) {
-
-      await this.setHandler(value);
-    }
-
-    this.currentValue = value;
-  }
-}
-
-/* One service instance attached to a TestAccessory. Holds a Map of characteristic-kind -> TestCharacteristic so getCharacteristic returns the same instance
- * across calls...production code binds onGet once and expects the binding to stay attached on the next read.
- *
- * Two pieces of this shape are dictated by homebridge-plugin-utils' REAL service helpers, which run unmodified against the double on the construction paths:
- *
- * - characteristics is a PUBLIC ARRAY view (the Map stays private backing), because acquireService's getCharacteristicConstructor destructures the first element
- *   of service.characteristics to recover the Characteristic constructor - and throws when no first element exists, which is why the constructible service
- *   markers below seed one characteristic at construction.
- *
- * - displayName is MUTABLE, because setServiceName assigns it on every acquire.
- *
- * UUID is the kind's identity string, mirrored from the marker class's static (see the UUID getter below). It must NEVER resolve to the empty string: the real
- * helpers' name-set predicates (serviceHasName and friends) build their sets by looking up one static per service kind on a service's constructor, and
- * AccessoryInformation is the single kind the doubles wire (the static getter below), so every other kind's lookup misses and maps to the empty string - and a
- * service whose UUID resolved to "" would false-positive into setServiceName's ConfiguredName / Name writes against undefined characteristic statics, silently
- * polluting the double with undefined-keyed characteristics. Non-empty kind strings keep those degenerate predicates honestly false, while giving production code
- * that matches services by identity (the doorbell's validateMessageSwitches compares service.UUID against Service.Switch.UUID) real, distinct identities to match
- * on.
- *
- * AccessoryInformation is the one deliberately-wired exception, scoped to the surface the family exercises: its statics are real on both sides (the service kind
- * here, the ConfiguredName / Name pair on TestCharacteristic), so the library's accessory-naming surface - locating the information service, gating its name
- * writes behind the predicates, and performing them - behaves against the double the way it does against real HAP. Every other kind stays unwired, which is what
- * keeps the degenerate predicates false and the name writes off every service whose naming no test characterizes.
+/**
+ * A characteristic kind as a suite names one, such as `Characteristic.On`: a class HAP's service methods take where they build or write a characteristic
+ * (`getCharacteristic`, `updateCharacteristic`) and where they test for one (`testCharacteristic`), which type the class in each of those roles.
  */
-export class TestService {
+export type CharacteristicKind = WithUUID<new () => Characteristic> & WithUUID<typeof Characteristic>;
 
-  // The one static cross-reference the doubles carry: homebridge-plugin-utils locates the AccessoryInformation service - and keys its name-write predicates -
-  // through constructor statics, the way real hap-nodejs service classes expose the whole service registry on every subclass. AccessoryInformation alone is wired
-  // so the library's accessory-naming surface behaves genuinely against the double; every other kind stays deliberately unwired, keeping the degenerate name
-  // predicates honestly false outside the one service whose naming the family tests. A getter rather than an initializer because the Service namespace is declared
-  // after this class; the getter reads it lazily, after both exist.
-  public static get AccessoryInformation(): ServiceType {
-
-    return Service.AccessoryInformation;
-  }
-
-  public readonly type: ServiceType;
-  public displayName: string;
-  // Whether production marked this the accessory's primary service (the camera's configureDoorbellService does), recorded by setPrimaryService below.
-  public isPrimary = false;
-  public readonly subtype: string | undefined;
-  // The services production linked to this one via addLinkedService, mirroring HAP's Service.linkedServices. The fob's ServiceLabel links each grouped button switch, so
-  // a test asserts exactly which switches were linked.
-  public readonly linkedServices: TestService[] = [];
-  private readonly characteristicsByType = new Map<CharacteristicType, TestCharacteristic>();
-
-  public constructor(type: ServiceType, displayName: string, subtype: string | undefined) {
-
-    this.type = type;
-    this.displayName = displayName;
-    this.subtype = subtype;
-  }
-
-  // The service kind's identity string, mirrored from the TYPE's static. this.type is the marker class on BOTH construction paths - the marker constructors pass
-  // their own class and the legacy addService(type, ...) form passes the namespace entry - whereas this.constructor is the bare TestService on the legacy path and
-  // carries no static. Real HAP identifies kinds by UUID; the double uses the kind string, which is just as unique within the namespace and far more legible in
-  // assertion failures. The fallback is a non-empty sentinel for a hand-rolled type outside the namespace, preserving the never-empty rule documented above.
-  public get UUID(): string {
-
-    return (this.type as { UUID?: string }).UUID ?? "unidentified-service-kind";
-  }
-
-  // Record whether production designated this service as the accessory's primary service, mirroring HAP's Service.setPrimaryService.
-  public setPrimaryService(isPrimary = true): void {
-
-    this.isPrimary = isPrimary;
-  }
-
-  // Link another service to this one, mirroring HAP's Service.addLinkedService (a faithful mirror: a void push, includes-guarded so a repeat link is a no-op exactly
-  // as real HAP dedups). The fob's ServiceLabel links each grouped button switch through this.
-  public addLinkedService(service: TestService): void {
-
-    if(!this.linkedServices.includes(service)) {
-
-      this.linkedServices.push(service);
-    }
-  }
-
-  // The public array view of the materialized characteristics, mirroring HAP's Service.characteristics surface. Order is insertion order, so a marker's seed
-  // characteristic is always the first element - exactly what the real getCharacteristicConstructor destructures.
-  public get characteristics(): TestCharacteristic[] {
-
-    return [...this.characteristicsByType.values()];
-  }
-
-  // Fetch or lazily create the characteristic of the given kind. Lazy creation matches HAP, which instantiates required characteristics on first access.
-  public getCharacteristic(charType: CharacteristicType): TestCharacteristic {
-
-    let char = this.characteristicsByType.get(charType);
-
-    if(!char) {
-
-      char = new TestCharacteristic(charType);
-      this.characteristicsByType.set(charType, char);
-    }
-
-    return char;
-  }
-
-  // Write a value to the characteristic of the given kind. Returns this so production code's chained updates compile.
-  public updateCharacteristic(charType: CharacteristicType, value: unknown): this {
-
-    this.getCharacteristic(charType).updateValue(value);
-
-    return this;
-  }
-
-  // Mirror HAP's Service.setCharacteristic(type, value), which routes to Characteristic.setValue and therefore FIRES the bound onSet handler - the path the
-  // production MQTT subscribeSet handlers use to drive a device command through HomeKit's own set machinery. This is deliberately distinct from
-  // updateCharacteristic above, which is a status push (updateValue) that does NOT run the handler. The handler is fired and not awaited, mirroring HAP's
-  // synchronous, fire-and-forget setCharacteristic; a rejection is swallowed because HAP does not surface the set-handler's failure to the setCharacteristic caller
-  // (the device handlers route through runDeviceCommand and resolve rather than throw, so this catch is the faithful-and-robust belt, not a masked error). A test
-  // settles past one tick to let the handler run, then asserts the effect; triggerSet caches the value after the handler resolves, so the read cache stays correct.
-  public setCharacteristic(charType: CharacteristicType, value: unknown): this {
-
-    void this.getCharacteristic(charType).triggerSet(value).catch((): void => { /* HAP does not surface the set-handler's rejection to the caller. */ });
-
-    return this;
-  }
-
-  // Declare an optional characteristic on this service, mirroring HAP's Service.addOptionalCharacteristic. The camera's ambient light capability takes this path directly
-  // from its acquire initializer (it permits StatusActive on the LightSensor before binding its onGet), a path no other construction route reaches - the real
-  // acquireService's own addOptionalCharacteristic calls for ConfiguredName / Name stay gated off the markers by the degenerate name-set predicates (see the class doc).
-  // HAP lazily materializes a permitted characteristic on first access, so the double materializes it now through getCharacteristic, keeping the later
-  // getCharacteristic / onGet bind against the SAME instance and never throwing on the direct call.
-  public addOptionalCharacteristic(charType: CharacteristicType): void {
-
-    this.getCharacteristic(charType);
-  }
-
-  // Report whether the characteristic of the given kind has already been created on this service. Mirrors HAP's Service.testCharacteristic, which the
-  // homebridge-plugin-utils sweep (updateServices, behind ProtectDevice.refreshReachability) calls to decide whether a service carries StatusActive before writing it,
-  // and which the library's presence gates read before attaching or removing. Unlike getCharacteristic, this never lazily creates the characteristic - it is a pure
-  // predicate over what has already been added.
-  public testCharacteristic(charType: CharacteristicType): boolean {
-
-    return this.characteristicsByType.has(charType);
-  }
-
-  // Remove a characteristic instance from this service, mirroring HAP's Service.removeCharacteristic. The homebridge-plugin-utils presence gates take this path to prune
-  // a characteristic their verdict refuses, such as the camera's StatusTampered when tamper detection is turned off: they read prior existence side-effect-free through
-  // testCharacteristic, so they never materialize a characteristic just to remove it. The double keys one instance per kind, so removal by the instance's kind is exact.
-  public removeCharacteristic(characteristic: TestCharacteristic): void {
-
-    this.characteristicsByType.delete(characteristic.type);
-  }
-}
-
-/* Identity class for a HAP Service kind. HAP exposes each service kind (MotionSensor, OccupancySensor, Switch, ...) as a distinct constructor; production code
- * passes that constructor as a key into accessory.getService / addService and into service.getCharacteristic. We mirror that contract with one marker class per
- * kind, exposed through the Service namespace below.
- *
- * Each marker is a CONSTRUCTIBLE subclass of TestService carrying HAP's (displayName?, subtype?) constructor, because homebridge-plugin-utils' real acquireService
- * instantiates the namespace entry directly on its create branch - "new serviceType(name, subtype)" - and then immediately recovers the Characteristic constructor
- * from the new service's first characteristic. Every marker therefore seeds exactly one characteristic at construction: the kind's primary required characteristic
- * where the namespace already carries it (MotionDetected for MotionSensor, On for Switch and Lightbulb, Name for AccessoryInformation, ContactSensorState for
- * ContactSensor, LockCurrentState for LockMechanism, ProgrammableSwitchEvent for Doorbell), and Name as the documented generic stand-in for kinds whose required
- * characteristic is not in the namespace yet (the seed exists to satisfy getCharacteristicConstructor; it upgrades to the kind-true characteristic when a test
- * first exercises that kind). The seed applies ONLY when a marker is constructed - the legacy addService(type, name?, subtype?) form still produces a plain,
- * characteristic-empty TestService, which existing tests rely on. Each marker carries its hapKind property so test failures surface the kind directly in inspect
- * output, plus a static UUID (the kind string) that the TestService instance UUID mirrors - real, distinct, never-empty identities for production code that
- * matches services by UUID (see the TestService doc comment for why empty would be hazardous).
+/**
+ * The accessory every harness builder hands back: Homebridge's own PlatformAccessory over the runtime's HAP, carrying the plugin's typed context, made through an API
+ * double so it records every value change and characteristic warning HAP raises on it.
  */
-class AccessoryInformationServiceType extends TestService {
+export type TestProtectAccessory = TestPlatformAccessory<ProtectAccessoryContext>;
 
-  public static readonly UUID = "AccessoryInformation";
-  public readonly hapKind = "AccessoryInformation" as const;
+// The API double whose accessory class builds every accessory makeTestAccessory hands back. An accessory made here is placed on another API's bridge by that API's
+// own restore or registration, because each API double runs on the one runtime above and accepts any accessory of its PlatformAccessory class.
+const constructionApi = new TestHomebridgeApi(runtime);
 
-  public constructor(displayName = "", subtype?: string) {
+// The counter behind each default accessory identity, so accessories built without a seed, same-named or not, never share a UUID: Homebridge skips a registration
+// whose UUID it already holds, which would leave a later accessory off the bridge in silence.
+let accessorySeeds = 0;
 
-    super(AccessoryInformationServiceType, displayName, subtype);
+// The next default seed, unique within the process.
+function nextSeed(): string {
 
-    this.getCharacteristic(NameCharacteristicType);
-  }
-}
+  accessorySeeds++;
 
-// The air-quality kind. Added for the sensor-family air quality net: ProtectSensor.configureAirQualitySensor acquires it when the sensor reports a metric HomeKit can
-// model, then drives its AirQuality level and hangs the presence-driven densities off it. Seeds its primary AirQuality characteristic.
-class AirQualitySensorServiceType extends TestService {
-
-  public static readonly UUID = "AirQualitySensor";
-  public readonly hapKind = "AirQualitySensor" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(AirQualitySensorServiceType, displayName, subtype);
-
-    this.getCharacteristic(AirQualityCharacteristicType);
-  }
-}
-
-// The battery kind. Added for the sensor-family real-construction net: ProtectSensor.configureBatteryService unconditionally acquires a Battery service and
-// updateBatteryStatus writes its BatteryLevel / StatusLowBattery, so the kind must exist as a distinct key. Seeds its primary BatteryLevel characteristic.
-class BatteryServiceType extends TestService {
-
-  public static readonly UUID = "Battery";
-  public readonly hapKind = "Battery" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(BatteryServiceType, displayName, subtype);
-
-    this.getCharacteristic(BatteryLevelCharacteristicType);
-  }
-}
-
-// The camera-operating-mode kind. Added for the camera-construction harness: configureCameraDetails and the per-field camera updaters resolve it by key (and do
-// nothing when it is absent), so the kind must exist as a distinct key. Its HAP-required characteristics are not in the namespace, so it seeds the generic Name
-// stand-in.
-class CameraOperatingModeServiceType extends TestService {
-
-  public static readonly UUID = "CameraOperatingMode";
-  public readonly hapKind = "CameraOperatingMode" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(CameraOperatingModeServiceType, displayName, subtype);
-
-    this.getCharacteristic(NameCharacteristicType);
-  }
-}
-
-// The carbon-dioxide kind. Added for the sensor-family air quality net: ProtectSensor.configureCo2Sensor acquires it when the sensor reports carbon dioxide, driving
-// the alert state from the controller's configured threshold and hanging the presence-driven level off it. Seeds its primary CarbonDioxideDetected characteristic.
-class CarbonDioxideSensorServiceType extends TestService {
-
-  public static readonly UUID = "CarbonDioxideSensor";
-  public readonly hapKind = "CarbonDioxideSensor" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(CarbonDioxideSensorServiceType, displayName, subtype);
-
-    this.getCharacteristic(CarbonDioxideDetectedCharacteristicType);
-  }
-}
-
-// The carbon-monoxide kind. Added for the sensor-family smoke net: ProtectSensor.configureSmokeDetector acquires it when the controller advertises the CO alarm type,
-// binds its read-through, and writes the alarm state and StatusFault from a live status block. Seeds its primary CarbonMonoxideDetected characteristic.
-class CarbonMonoxideSensorServiceType extends TestService {
-
-  public static readonly UUID = "CarbonMonoxideSensor";
-  public readonly hapKind = "CarbonMonoxideSensor" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(CarbonMonoxideSensorServiceType, displayName, subtype);
-
-    this.getCharacteristic(CarbonMonoxideDetectedCharacteristicType);
-  }
-}
-
-// The contact-sensor kind. Added for the auth-sensor delivery tests: the firehose router's authEventHandler resolves an "Auth"-subtyped ContactSensor service and writes
-// its ContactSensorState on a recognized fingerprint/NFC scan, so an accessory carrying one exercises the real auth trip/reset path; the same kind is also acquired by
-// configureLeakSensor's opt-in moisture-sensor mode (Sensor.MoistureSensor), which the sensor-family leak suite exercises separately.
-class ContactSensorServiceType extends TestService {
-
-  public static readonly UUID = "ContactSensor";
-  public readonly hapKind = "ContactSensor" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(ContactSensorServiceType, displayName, subtype);
-
-    this.getCharacteristic(ContactSensorStateCharacteristicType);
-  }
-}
-
-// The doorbell kind. Added for the camera-construction harness: configureDoorbellTrigger reads accessory.getService(Service.Doorbell) unconditionally, so the kind
-// must exist as a distinct key. Seeds its HAP-required ProgrammableSwitchEvent characteristic, which the ring delivery fires event notifications on.
-class DoorbellServiceType extends TestService {
-
-  public static readonly UUID = "Doorbell";
-  public readonly hapKind = "Doorbell" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(DoorbellServiceType, displayName, subtype);
-
-    this.getCharacteristic(ProgrammableSwitchEventCharacteristicType);
-  }
-}
-
-// The humidity-sensor kind. Added for the sensor-family real-construction net: ProtectSensor.configureHumiditySensor acquires a HumiditySensor service when humidity is
-// enabled, binds onGet, and pushes CurrentRelativeHumidity, so the kind must exist as a distinct key. Seeds its primary CurrentRelativeHumidity characteristic.
-class HumiditySensorServiceType extends TestService {
-
-  public static readonly UUID = "HumiditySensor";
-  public readonly hapKind = "HumiditySensor" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(HumiditySensorServiceType, displayName, subtype);
-
-    this.getCharacteristic(CurrentRelativeHumidityCharacteristicType);
-  }
-}
-
-// The leak-sensor kind. Added for the sensor-family real-construction net: ProtectSensor.configureLeakSensor acquires LeakSensor services (internal / external subtypes)
-// in the default leak mode, binds onGet, and pushes LeakDetected, so the kind must exist as a distinct key. Seeds its primary LeakDetected characteristic.
-class LeakSensorServiceType extends TestService {
-
-  public static readonly UUID = "LeakSensor";
-  public readonly hapKind = "LeakSensor" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(LeakSensorServiceType, displayName, subtype);
-
-    this.getCharacteristic(LeakDetectedCharacteristicType);
-  }
-}
-
-// The light-sensor kind. Added for the sensor-family real-construction net: ProtectSensor.configureAmbientLightSensor acquires a LightSensor service when ambient light
-// is enabled, binds onGet, and pushes CurrentAmbientLightLevel, so the kind must exist as a distinct key. Seeds its primary CurrentAmbientLightLevel characteristic.
-class LightSensorServiceType extends TestService {
-
-  public static readonly UUID = "LightSensor";
-  public readonly hapKind = "LightSensor" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(LightSensorServiceType, displayName, subtype);
-
-    this.getCharacteristic(CurrentAmbientLightLevelCharacteristicType);
-  }
-}
-
-// The lightbulb kind. Added for the camera-construction harness: configureNightVisionDimmer validates a Lightbulb service by key (a no-op at defaults), so the
-// kind must exist as a distinct key.
-class LightbulbServiceType extends TestService {
-
-  public static readonly UUID = "Lightbulb";
-  public readonly hapKind = "Lightbulb" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(LightbulbServiceType, displayName, subtype);
-
-    this.getCharacteristic(OnCharacteristicType);
-  }
-}
-
-// The lock-mechanism kind. The camera's configureAccessFeatures acquires an "Access"-subtyped LockMechanism service and the capability-reconcile suite drives its
-// LockTargetState onSet and self-heals it from a late supportUnlock, so an accessory carrying one exercises the real unlock / re-secure / establishment-stamp path.
-class LockMechanismServiceType extends TestService {
-
-  public static readonly UUID = "LockMechanism";
-  public readonly hapKind = "LockMechanism" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(LockMechanismServiceType, displayName, subtype);
-
-    this.getCharacteristic(LockCurrentStateCharacteristicType);
-  }
-}
-
-// The motion-sensor kind. Added for the base-capability net: ProtectDevice.configureMotionSensor acquires this service unconditionally when motion is enabled and
-// the motion delivery flips MotionDetected on it, so the kind must exist as a distinct key. Seeds its primary MotionDetected characteristic.
-class MotionSensorServiceType extends TestService {
-
-  public static readonly UUID = "MotionSensor";
-  public readonly hapKind = "MotionSensor" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(MotionSensorServiceType, displayName, subtype);
-
-    this.getCharacteristic(MotionDetectedCharacteristicType);
-  }
-}
-
-// The occupancy sensor kind. The service constructs with its kind-true OccupancyDetected characteristic because production's configureOccupancySensor initializes
-// OccupancyDetected to false on the occupancy service it acquires, exactly as the marker doc comment describes.
-class OccupancySensorServiceType extends TestService {
-
-  public static readonly UUID = "OccupancySensor";
-  public readonly hapKind = "OccupancySensor" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(OccupancySensorServiceType, displayName, subtype);
-
-    this.getCharacteristic(OccupancyDetectedCharacteristicType);
-  }
-}
-
-// The security-system kind. Added for the controller-owner net: ProtectSecuritySystem.configureSecuritySystem acquires a SecuritySystem service (else construction
-// throws at acquireService), reads/writes its SecuritySystemCurrentState / SecuritySystemTargetState, and updateDevice sets the target's validValues, so the kind must
-// exist as a distinct key. Seeds its primary SecuritySystemCurrentState characteristic so the real acquireService recovers the Characteristic constructor from the new
-// service's first characteristic, the Battery / sensor precedent.
-class SecuritySystemServiceType extends TestService {
-
-  public static readonly UUID = "SecuritySystem";
-  public readonly hapKind = "SecuritySystem" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(SecuritySystemServiceType, displayName, subtype);
-
-    this.getCharacteristic(SecuritySystemCurrentStateCharacteristicType);
-  }
-}
-
-// The service-label kind. Added for the fob-family real-construction net: ProtectFob.configureButtons acquires a ServiceLabel service to group two or more visible button
-// switches and sets its ServiceLabelNamespace, so the kind must exist as a distinct key. Seeds its primary ServiceLabelNamespace characteristic so the real
-// acquireService recovers the Characteristic constructor from the new service's first characteristic, the Battery / sensor precedent.
-class ServiceLabelServiceType extends TestService {
-
-  public static readonly UUID = "ServiceLabel";
-  public readonly hapKind = "ServiceLabel" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(ServiceLabelServiceType, displayName, subtype);
-
-    this.getCharacteristic(ServiceLabelNamespaceCharacteristicType);
-  }
-}
-
-// The smoke kind. Added for the sensor-family smoke net: ProtectSensor.configureSmokeDetector acquires it when the controller advertises the smoke alarm type, binds its
-// read-through, and writes the alarm state and StatusFault from a live status block. Seeds its primary SmokeDetected characteristic.
-class SmokeSensorServiceType extends TestService {
-
-  public static readonly UUID = "SmokeSensor";
-  public readonly hapKind = "SmokeSensor" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(SmokeSensorServiceType, displayName, subtype);
-
-    this.getCharacteristic(SmokeDetectedCharacteristicType);
-  }
-}
-
-// The stateless-programmable-switch kind. Added for the fob-family real-construction net: ProtectFob.configureButtons acquires one per button and the event-dispatch
-// router fires its ProgrammableSwitchEvent on a delivered press, so the kind must exist as a distinct key. Seeds its HAP-required ProgrammableSwitchEvent characteristic,
-// which the button delivery fires event notifications on.
-class StatelessProgrammableSwitchServiceType extends TestService {
-
-  public static readonly UUID = "StatelessProgrammableSwitch";
-  public readonly hapKind = "StatelessProgrammableSwitch" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(StatelessProgrammableSwitchServiceType, displayName, subtype);
-
-    this.getCharacteristic(ProgrammableSwitchEventCharacteristicType);
-  }
-}
-
-// The switch kind. Backs the double's own self-test plus every On/off accessory across the device families - the motion event and trigger switches, the
-// status-indicator switch, the chime speaker and physical-chime switches, the HKSV and NVR recording switches, the doorbell mute and trigger switches, the relay
-// outputs, the liveview switches, and the security-system alarm switch - so the kind must exist as a distinct key. Seeds its primary On characteristic.
-class SwitchServiceType extends TestService {
-
-  public static readonly UUID = "Switch";
-  public readonly hapKind = "Switch" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(SwitchServiceType, displayName, subtype);
-
-    this.getCharacteristic(OnCharacteristicType);
-  }
-}
-
-// The temperature-sensor kind. Added for the sensor-family real-construction net: ProtectSensor.configureTemperatureSensor acquires a TemperatureSensor service when
-// temperature is enabled, binds onGet, and pushes CurrentTemperature, so the kind must exist as a distinct key. Seeds its primary CurrentTemperature characteristic.
-class TemperatureSensorServiceType extends TestService {
-
-  public static readonly UUID = "TemperatureSensor";
-  public readonly hapKind = "TemperatureSensor" as const;
-
-  public constructor(displayName = "", subtype?: string) {
-
-    super(TemperatureSensorServiceType, displayName, subtype);
-
-    this.getCharacteristic(CurrentTemperatureCharacteristicType);
-  }
-}
-
-// The HAP Service namespace as the test-double exposes it. Add new kinds here when a test reaches for one the production code touches. Alphabetical, per the
-// house style for object property order.
-export const Service = {
-
-  AccessoryInformation: AccessoryInformationServiceType,
-  AirQualitySensor: AirQualitySensorServiceType,
-  Battery: BatteryServiceType,
-  CameraOperatingMode: CameraOperatingModeServiceType,
-  CarbonDioxideSensor: CarbonDioxideSensorServiceType,
-  CarbonMonoxideSensor: CarbonMonoxideSensorServiceType,
-  ContactSensor: ContactSensorServiceType,
-  Doorbell: DoorbellServiceType,
-  HumiditySensor: HumiditySensorServiceType,
-  LeakSensor: LeakSensorServiceType,
-  LightSensor: LightSensorServiceType,
-  Lightbulb: LightbulbServiceType,
-  LockMechanism: LockMechanismServiceType,
-  MotionSensor: MotionSensorServiceType,
-  OccupancySensor: OccupancySensorServiceType,
-  SecuritySystem: SecuritySystemServiceType,
-  ServiceLabel: ServiceLabelServiceType,
-  SmokeSensor: SmokeSensorServiceType,
-  StatelessProgrammableSwitch: StatelessProgrammableSwitchServiceType,
-  Switch: SwitchServiceType,
-  TemperatureSensor: TemperatureSensorServiceType
-} as const;
-
-// The HAP CameraController the streaming delegate constructs at the tail of its own constructor. A constructible marker is what lets that delegate be unit-constructed
-// at all, and recording the options argument lets a construction test read the wiring the delegate composed - its own delegate handle, the streaming options, the
-// recording arm when one is present - off the object HAP would have received. The surface is deliberately the constructor alone: prepareStream reaches for the static
-// generateSynchronisationSource, which lands here with the first test that drives a stream request, per this file's grow-on-need principle. Named TestCameraController
-// rather than CameraController because the file type-imports homebridge's CameraController above; the hap namespace key below is the production name.
-export class TestCameraController {
-
-  public readonly options: CameraControllerOptions;
-
-  public constructor(options: CameraControllerOptions) {
-
-    this.options = options;
-  }
-}
-
-/* One accessory. Carries an AccessoryInformation service from construction (every HomeKit accessory has one); subsequent addService calls append additional
- * services. getService / getServiceById mirror HAP's distinction between "the bare service of this type" and "the service of this type with a specific subtype".
- *
- * The construction-harness growth: a mutable context record (the camera's configureDevice reassigns it wholesale, then writes keys), the ordered controller-event
- * log with HAP's one-controller-per-accessory rule enforced (the double records identity and order, and never operates on the controller's innards),
- * removeService (the faithful removal homebridge-plugin-utils' validService performs when an existing service fails validation), and the _associatedHAPAccessory
- * mirror with a mutable displayName (the accessoryName setter writes both) plus the bridged flag the accessory persistence gates its saves and unregisters on - true
- * by default (a registered or restored accessory is bridged), flipped false by the platform double's publishExternalAccessories and unregisterPlatformAccessories
- * recorders, exactly as standalone publication and a removal from the bridge leave a real accessory unbridged.
- */
-export class TestAccessory {
-
-  public context: Record<string, unknown> = {};
-  public displayName: string;
-  public readonly UUID: string;
-  // Exposed so code that iterates every service on the accessory (the homebridge-plugin-utils updateServices sweep walks accessory.services) sees the same surface HAP's
-  // PlatformAccessory.services offers.
-  public readonly services: TestService[] = [];
-  // The ordered controller-event log: every configureController / removeController call in arrival order, each stamped with its sequence number, so a test can
-  // assert not just identity and count but ordering across a configure / remove / re-configure lifecycle.
-  public readonly controllerEvents: { controller: unknown; kind: "configure" | "remove"; seq: number }[] = [];
-  // The single configured controller - the chokepoint mirroring HAP's one-camera-controller-per-accessory registry, which throws on a same-id double configure.
-  public configuredController: Nullable<unknown> = null;
-  // The internal HAP accessory mirror the accessoryName setter writes alongside the platform accessory's own displayName, carrying the bridged flag the accessory
-  // persistence's saves and unregisters and the package camera's detach guidance read.
-  public readonly _associatedHAPAccessory: { bridged: boolean; displayName: string };
-
-  public constructor(displayName: string, uuid: string) {
-
-    this.displayName = displayName;
-    this.UUID = uuid;
-    this._associatedHAPAccessory = { bridged: true, displayName };
-
-    // Construct the information service through its marker so it is born carrying the Name characteristic real HAP always gives it. The seed is what the real name
-    // helpers destructure to recover the Characteristic constructor, and a device's syncName-gated rename runs before setInfo seeds anything, so an empty
-    // information service would throw on the very first rename of a fresh accessory.
-    this.services.push(new Service.AccessoryInformation(displayName));
-  }
-
-  // Update the accessory display-name pair the way Homebridge's own setter does: the platform wrapper's displayName and the underlying HAP accessory's move
-  // together, so a production path that renames through the documented API leaves the double in the same state the real platform would carry.
-  public updateDisplayName(name: string): void {
-
-    this.displayName = name;
-    this._associatedHAPAccessory.displayName = name;
-  }
-
-  // The configure-side view of the controller-event log, derived so existing identity-and-count assertions keep working against the unified ordered log.
-  public get configureControllerCalls(): unknown[] {
-
-    return this.controllerEvents.filter((event) => event.kind === "configure").map((event) => event.controller);
-  }
-
-  // The remove-side view of the controller-event log, derived for the same reason.
-  public get removeControllerCalls(): unknown[] {
-
-    return this.controllerEvents.filter((event) => event.kind === "remove").map((event) => event.controller);
-  }
-
-  /* Add a new service to the accessory, in either of the two forms HAP's real addService accepts: a service INSTANCE (what acquireService passes after
-   * constructing a namespace marker), or the legacy (type, name?, subtype?) form, which keeps its exact original semantics - a plain TestService with no seeded
-   * characteristic - so existing tests that assert on freshly-added services being characteristic-empty stay valid. The instanceof test is sound
-   * because a marker CLASS (a constructor object) is never an instance of TestService - only constructed services are. Returns the service so production code can
-   * immediately bind characteristics on it.
-   */
-  public addService(service: TestService): TestService;
-  public addService(type: ServiceType, name?: string, subtype?: string): TestService;
-  public addService(typeOrService: ServiceType | TestService, name?: string, subtype?: string): TestService {
-
-    const service = (typeOrService instanceof TestService) ? typeOrService : new TestService(typeOrService, name ?? this.displayName, subtype);
-
-    this.services.push(service);
-
-    return service;
-  }
-
-  // Record a controller registration. HAP permits exactly one camera controller per accessory and throws on a same-id double configure (hap-nodejs
-  // Accessory.configureController); the double enforces the same rule through the configuredController chokepoint, so a production path that double-registers
-  // fails a test as loudly as it would fail live.
-  public configureController(controller: unknown): void {
-
-    if(this.configuredController !== null) {
-
-      throw new Error("A controller was already added to the accessory " + this.displayName + ".");
-    }
-
-    this.configuredController = controller;
-    this.controllerEvents.push({ controller: controller, kind: "configure", seq: this.controllerEvents.length });
-  }
-
-  // Record a controller removal, the cleanup-side mirror of configureController. Removing the configured controller clears the chokepoint, mirroring HAP's registry
-  // delete, so a later re-configure succeeds exactly as it would live.
-  public removeController(controller: unknown): void {
-
-    this.controllerEvents.push({ controller: controller, kind: "remove", seq: this.controllerEvents.length });
-
-    if(this.configuredController === controller) {
-
-      this.configuredController = null;
-    }
-  }
-
-  // Find the first service of the given type with no subtype. Production code uses this for the "primary" service of a type.
-  public getService(type: ServiceType): TestService | undefined {
-
-    return this.services.find((service) => (service.type === type) && (service.subtype === undefined));
-  }
-
-  // Find the service of the given type AND subtype. Production code uses subtypes to disambiguate among multiple Switch services on one accessory.
-  public getServiceById(type: ServiceType, subtype: string): TestService | undefined {
-
-    return this.services.find((service) => (service.type === type) && (service.subtype === subtype));
-  }
-
-  // Remove a service instance from the accessory, mirroring HAP's PlatformAccessory.removeService. This is the removal path homebridge-plugin-utils' validService
-  // takes when an existing service fails validation, and the camera's smart-detect sensor pruning calls it directly.
-  public removeService(service: TestService): void {
-
-    const index = this.services.indexOf(service);
-
-    if(index !== -1) {
-
-      this.services.splice(index, 1);
-    }
-  }
+  return "homebridge-unifi-protect.test-accessory." + accessorySeeds.toString();
 }
 
 /**
- * Build a TestAccessory with a sensible default name and UUID. Pass overrides when a test needs a specific identity (for example, comparing two accessories by
- * UUID to verify a routing decision).
+ * The UUID an accessory seeded by `seed` carries, derived through HAP's own generator exactly as production derives each accessory's UUID, so a suite seeds a device's
+ * accessory by the same identity production composes for it: the MAC, the MAC plus a suffix, or the controller's MAC plus an owner's suffix.
  *
- * @param displayName - the accessory's display name. Defaults to "Test Accessory".
- * @param uuid        - the accessory's UUID. Defaults to a stable all-zero value so tests get reproducible identity by default.
+ * @param seed - The identity the accessory's UUID derives from.
  *
- * @returns a fresh TestAccessory pre-populated with an AccessoryInformation service.
+ * @returns The UUID HAP generates for that seed.
  */
-export function makeTestAccessory(displayName = "Test Accessory", uuid = "00000000-0000-0000-0000-000000000000"): TestAccessory {
+export function accessoryUuid(seed: string): string {
 
-  return new TestAccessory(displayName, uuid);
+  return hap.uuid.generate(seed);
+}
+
+/**
+ * Build an accessory through the construction API: Homebridge's own PlatformAccessory, born off the bridge as every new accessory is, with the AccessoryInformation
+ * service HAP gives it at construction and its Name set to the display name.
+ *
+ * @param displayName - The accessory's display name. Defaults to "Test Accessory".
+ * @param seed        - The identity its UUID derives from through {@link accessoryUuid}. Defaults to a seed unique within the process, so accessories a row builds
+ *                      without one never collide.
+ *
+ * @returns A fresh accessory, typed with the plugin's context.
+ */
+export function makeTestAccessory(displayName = "Test Accessory", seed = nextSeed()): TestProtectAccessory {
+
+  return new constructionApi.platformAccessory<ProtectAccessoryContext>(displayName, accessoryUuid(seed));
+}
+
+// The reasons HAP stamps on the changes its event notifications and its update path raise, each checked against the member of HAP's own const enum that names it,
+// the form HBPU's Homebridge double checks HAP's event names by, so a value that drifts from upstream fails the build here. The enum itself is out of reach at runtime
+// under this project's module syntax.
+const EVENT_REASON = "event" satisfies `${ChangeReason.EVENT}`;
+const UPDATE_REASON = "update" satisfies `${ChangeReason.UPDATE}`;
+
+// The new values of the changes one characteristic raised for one reason, in the order HAP raised them. HAP's reason enum is a string enum, so each change's reason
+// widens to the string it carries for the comparison.
+function changeValues(accessory: TestPlatformAccessory, characteristic: Characteristic, reason: string): Nullable<CharacteristicValue>[] {
+
+  const matches = (change: { characteristic: Characteristic; reason: string }): boolean => (change.characteristic === characteristic) && (change.reason === reason);
+
+  return accessory.changes.filter(matches).map((change) => change.newValue);
+}
+
+/**
+ * The values production wrote to one characteristic through HAP's update path (`updateValue` and `updateCharacteristic`), in the order it wrote them. HAP raises a
+ * change for every such write, a write of an unchanged value included, so a row proving production did NOT rewrite a value reads this rather than the final value.
+ * HomeKit's own writes and reads and the event notifications the characteristic sent carry other reasons and stay out, as does any write to another instance of
+ * the same kind elsewhere on the accessory.
+ *
+ * @param accessory      - The accessory whose recorded changes to read.
+ * @param characteristic - The characteristic instance whose writes to select.
+ *
+ * @returns The new value of each update the characteristic raised.
+ */
+export function writesTo(accessory: TestPlatformAccessory, characteristic: Characteristic): Nullable<CharacteristicValue>[] {
+
+  return changeValues(accessory, characteristic, UPDATE_REASON);
+}
+
+/**
+ * The event notifications one characteristic sent HomeKit through HAP's `sendEventNotification`, in the order it sent them. HAP stores each notified value as the
+ * characteristic's value and raises a change for it, so a row reads what HomeKit was told from this rather than from the final value, and a notification on another
+ * instance of the same kind elsewhere on the accessory stays out.
+ *
+ * @param accessory      - The accessory whose recorded changes to read.
+ * @param characteristic - The characteristic instance whose notifications to select.
+ *
+ * @returns The value of each notification the characteristic sent.
+ */
+export function eventsFrom(accessory: TestPlatformAccessory, characteristic: Characteristic): Nullable<CharacteristicValue>[] {
+
+  return changeValues(accessory, characteristic, EVENT_REASON);
+}
+
+/**
+ * One entry of an accessory's controller log: a controller a streaming-delegate stub handed production, configured onto the accessory or removed from it, numbered by
+ * its place in the log.
+ */
+export interface ControllerEvent {
+
+  readonly controller: unknown;
+  readonly kind: "configure" | "remove";
+  readonly seq: number;
+}
+
+// The controller log of every accessory a stand-in controller was configured onto, keyed weakly so an accessory a suite lets go of leaves no entry behind.
+const controllerLogs = new WeakMap<ProtectAccessory, ControllerEvent[]>();
+
+// The live controller log of one accessory, created empty on first reach.
+function controllerLog(accessory: ProtectAccessory): ControllerEvent[] {
+
+  let log = controllerLogs.get(accessory);
+
+  if(!log) {
+
+    log = [];
+    controllerLogs.set(accessory, log);
+  }
+
+  return log;
+}
+
+/**
+ * The ordered log of every configuration and removal of a streaming-delegate stub's controller on an accessory, in the order HAP ran them. HAP runs the controller's
+ * own hooks from inside `configureController` and `removeController`, and only for a removal of the controller it holds, so the log records what HAP did rather than
+ * what production asked of it.
+ *
+ * @param accessory - The accessory whose controller log to read.
+ *
+ * @returns The live log, so a reference taken before the events it will hold still reads them.
+ */
+export function controllerEvents(accessory: ProtectAccessory): readonly ControllerEvent[] {
+
+  return controllerLog(accessory);
+}
+
+// HAP's camera controller option fields, which its declaration marks private and its own methods read at runtime: what the controller was constructed with.
+interface CameraControllerFields {
+
+  readonly delegate: CameraControllerOptions["delegate"];
+  readonly recording?: CameraControllerOptions["recording"];
+  readonly sensorOptions?: CameraControllerOptions["sensors"];
+}
+
+/**
+ * The options a real camera controller was built with, read from the fields HAP keeps them in, which its declaration marks private, so one harness function reads
+ * them rather than each suite reaching into HAP, the way HBPU's handler accessors read HAP's handler fields. HAP clears the recording and sensor options once the
+ * controller initializes its services, so a row reads them before the controller is configured onto an accessory.
+ *
+ * @param controller - The camera controller to read.
+ *
+ * @returns The streaming delegate, the recording arm and the sensor links the controller was constructed with.
+ */
+export function cameraControllerOptions(controller: CameraController): Pick<CameraControllerOptions, "delegate" | "recording" | "sensors"> {
+
+  const fields = controller as unknown as CameraControllerFields;
+
+  return { delegate: fields.delegate, recording: fields.recording, sensors: fields.sensorOptions };
 }
 
 /* A thin facade over unifi-protect's real state store. This double owns no observe, queue, dedup, or reduction mechanics of its own: it constructs the genuine
@@ -1252,7 +317,7 @@ export class TestStateStore {
     this.patchRecord("light", id, { lightDeviceSettings: settings });
   }
 
-  // Patch a sensor record - the carrier the base device-info observers and the whole sensor family ride.
+  // Patch a sensor record - the carrier the base device-info observers and the whole sensor family run on.
   public pushSensorPatch(id: string, patch: Partial<ProtectSensorConfig>): void {
 
     this.requirePresent({ id, label: "sensor", record: this.snapshot().sensors.get(id) });
@@ -1319,9 +384,9 @@ export class TestStateStore {
     this.store.dispatch({ data: this.bootstrapReplacing({ ringtones }), kind: "bootstrapLoaded" });
   }
 
-  // Replace the controller's saved liveviews. This rides the same bootstrap as the ringtone library, for a different reason: replacing a whole collection is ONE atomic
-  // transition, and a bootstrap reconciles every slice in a single dispatch, so one push wakes the collection's observer exactly once. Per-id events would reduce the
-  // same end state through one dispatch per added and removed record, waking that observer once per record.
+  // Replace the controller's saved liveviews. This goes through the same bootstrap as the ringtone library, for a different reason: replacing a whole collection is ONE
+  // atomic transition, and a bootstrap reconciles every slice in a single dispatch, so one push wakes the collection's observer exactly once. Per-id events would reduce
+  // the same end state through one dispatch per added and removed record, waking that observer once per record.
   public pushLiveviews(liveviews: ProtectNvrLiveviewConfig[]): void {
 
     this.store.dispatch({ data: this.bootstrapReplacing({ liveviews }), kind: "bootstrapLoaded" });
@@ -1536,8 +601,63 @@ export function makeTimeshiftSupervisorDouble(): TestTimeshiftSupervisor {
   return supervisor;
 }
 
-/* The stub StreamingDelegate, typed as the abstraction and entirely FFmpeg-free. The controller is a distinct sentinel object tests can identity-match
- * through the accessory's controller-event log; ffmpegOptions is the one documented cast boundary on this class - the camera family reads maxSourcePixels off it (via
+/* The controller a TestStreamingDelegate hands the camera: a stand-in HAP's own configureController and removeController accept, so a camera's controller lifecycle runs
+ * through the real accessory. Its id is the real camera controller's, so HAP's one-controller-per-id rule refuses a second configure on an accessory exactly as it
+ * refuses a second camera controller. It builds no services. HAP calls its configureServices from inside configureController and its handleControllerRemoved from
+ * inside removeController, and each appends to the controller log of the accessory the delegate was built for, so a row reads the configure and remove order across a
+ * rebuild through controllerEvents.
+ */
+class TestStreamingController implements Controller {
+
+  readonly #accessory: Nullable<ProtectAccessory>;
+
+  public constructor(accessory: Nullable<ProtectAccessory>) {
+
+    this.#accessory = accessory;
+  }
+
+  public configureServices(): void {
+
+    this.#record("configure");
+  }
+
+  public constructServices(): ControllerServiceMap {
+
+    return {};
+  }
+
+  public controllerId(): string {
+
+    return "camera";
+  }
+
+  public handleControllerRemoved(): void {
+
+    this.#record("remove");
+  }
+
+  public initWithServices(): void {
+
+    // Nothing to restore: the stand-in builds no services, so HAP holds no saved service map for it.
+  }
+
+  // Append one lifecycle event to the log of the accessory the delegate was built for. A delegate the media suites build for a host takes no accessory, and its
+  // controller is never configured, so a configure reaching one is a rig mistake and says so.
+  #record(kind: ControllerEvent["kind"]): void {
+
+    if(!this.#accessory) {
+
+      throw new Error("A streaming delegate built without an accessory has no controller log to record a " + kind + " in.");
+    }
+
+    const log = controllerLog(this.#accessory);
+
+    log.push({ controller: this, kind, seq: log.length });
+  }
+}
+
+/* The stub StreamingDelegate, typed as the abstraction and entirely FFmpeg-free. The controller is the stand-in above, which tests identity-match through the
+ * accessory's controller log; ffmpegOptions is the one documented cast boundary on this class - the camera family reads maxSourcePixels off it (via
  * selectSubstrateChannel, never at construction) and hardwareEncodes off it (the HKSV acknowledgment marker), with the ceiling injectable and the encoder answer
  * configurable so the substrate-channel pixel cap and the hardware marker are both exercisable; hksv is null, the correct pre-HKSV-configuration state cleanup reads
  * through this.stream?.hksv?.isRecording; shutdown records its calls; and resetProbesizeOverride is a recordable no-op.
@@ -1560,15 +680,24 @@ export class TestStreamingDelegate implements StreamingDelegate {
   public shutdownCalls = 0;
   public timeshift: StreamingDelegate["timeshift"];
 
-  // The default identity, which no host stands behind, is the record with every term false: a delegate built for nothing, so any term a test raises is an appearance.
-  public constructor(builtFor: ControllerIdentity = { hksvCapable: false, isDoorbell: false, twoWayAudio: false },
-    maxSourcePixels = Infinity) {
+  /**
+   * Build a stub delegate.
+   *
+   * @param options                 - Delegate inputs.
+   * @param options.accessory       - The accessory whose controller log the stub's controller records into. Defaults to none, for a host whose controller is never
+   *                                  configured.
+   * @param options.builtFor        - The controller identity the stub was built for. Defaults to the record with every term false: a delegate built for nothing, so
+   *                                  any term a test raises is an appearance.
+   * @param options.maxSourcePixels - The hardware pixel ceiling ffmpegOptions reports. Defaults to no ceiling.
+   */
+  public constructor({ accessory = null, builtFor = { hksvCapable: false, isDoorbell: false, twoWayAudio: false }, maxSourcePixels = Infinity }:
+  { accessory?: Nullable<ProtectAccessory>; builtFor?: ControllerIdentity; maxSourcePixels?: number } = {}) {
 
     this.builtFor = builtFor;
 
-    // The identity sentinel: a plain object the test matches by reference. The double never operates on the controller's innards - HAP's controller is opaque to
-    // the camera beyond registration.
-    this.controller = { hbupTestSentinel: "camera-controller" } as unknown as CameraController;
+    // The stand-in controller, which HAP configures and removes through its own controller registry. The delegate contract types the field as HAP's camera controller,
+    // which the stand-in is not, so the crossing takes this one cast; HAP's configureController and removeController take the stand-in as it is.
+    this.controller = new TestStreamingController(accessory) as unknown as CameraController;
 
     // The confined cast boundary: the camera family reads maxSourcePixels and hardwareEncodes off ffmpegOptions. An Infinity ceiling means "no hardware pixel cap" - the
     // pass-everything-through default - while a finite injected ceiling lets the recording-channel cap path select against a real constraint. The hardwareEncodes closure
@@ -1607,7 +736,7 @@ export class TestStreamingDelegate implements StreamingDelegate {
 // The stub StreamingDelegateFactory satisfying the platform's dependency-inversion interface. Records every create call (the camera identity, the resolutions array,
 // the recording audio format and the probe the derivation handed it, the delegate it returned, and whether the accessory carried a MotionSensor service at that moment)
 // so tests can assert the interface was exercised exactly once with exactly the advertised resolutions, read what the derivation's probe produced, prove a motion
-// sensor stood before the controller that captures it was built, and hand back the recorded delegate's sentinel controller for identity assertions. The
+// sensor stood before the controller that captures it was built, and hand back the recorded delegate's stand-in controller for identity assertions. The
 // maxSourcePixels ceiling is forwarded into every delegate it creates - set it before construction to exercise the recording-channel pixel cap with a finite value.
 export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
 
@@ -1620,8 +749,9 @@ export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
 
     // Capture the camera's controller identity through the same derivation production's ProtectStreamingDelegate reads at its own construction. This makes a
     // construction whose capabilities are present yield a delegate already built for the current identity, so the capability reconcile's staleness check is a no-op
-    // (zero controller churn), and only a genuine late capability - a delegate built before it appeared - rebuilds.
-    const delegate = new TestStreamingDelegate(controllerIdentityOf(camera), this.maxSourcePixels);
+    // (zero controller churn), and only a genuine late capability - a delegate built before it appeared - rebuilds. The camera's own accessory is the one production
+    // configures the delegate's controller onto, so its controller log is the one the stand-in records into.
+    const delegate = new TestStreamingDelegate({ accessory: camera.accessory, builtFor: controllerIdentityOf(camera), maxSourcePixels: this.maxSourcePixels });
 
     // Install the timeshift-supervisor double at create time - before the camera's construction-time activation kick reads it - so the kick and the per-edge availability
     // kicks land on a spy rather than an inert stand-in. Cast at the confined double->production boundary the harness uses throughout.
@@ -1632,12 +762,4 @@ export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
 
     return delegate;
   }
-}
-
-// One recorded homebridge API registration call: which registration verb production invoked and the accessories it carried (snapshotted for the update verb, which
-// receives the whole live array).
-export interface TestApiCall {
-
-  accessories: TestAccessory[];
-  kind: "publishExternal" | "register" | "unregister" | "update";
 }

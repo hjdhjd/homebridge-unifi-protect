@@ -11,7 +11,6 @@ import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.
 import { describe, test } from "node:test";
 import { DEVICE_COLLECTION_KEYS } from "unifi-protect";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
 import { ProtectChime } from "../devices/chime.ts";
 import type { ProtectDevice } from "../devices/device.ts";
@@ -51,10 +50,10 @@ const rows: Row[] = [
       const config = makeCameraConfig({ channels: G2_PRO_CHANNELS });
       const store = new TestStateStore(makeProtectState({ cameras: [config] }));
       const { controller, nvr } = makeTestNvr({ store });
-      const accessory = makeTestAccessory("Descriptor Camera", "uuid:descriptor-camera");
+      const accessory = makeTestAccessory("Descriptor Camera", config.mac);
       const projection = new TestCameraProjection(config.id, store);
 
-      return { controller, device: new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera) };
+      return { controller, device: new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera) };
     },
     category: "camera",
     expected: ProtectCamera
@@ -66,10 +65,10 @@ const rows: Row[] = [
       const config = makeChimeConfig();
       const store = new TestStateStore(makeProtectState({ chimes: [config] }));
       const { controller, nvr } = makeTestNvr({ store });
-      const accessory = makeTestAccessory("Descriptor Chime", "uuid:descriptor-chime");
+      const accessory = makeTestAccessory("Descriptor Chime", config.mac);
       const projection = new TestChimeProjection(config.id, store);
 
-      return { controller, device: new ProtectChime(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Chime) };
+      return { controller, device: new ProtectChime(nvr as unknown as ProtectNvr, accessory, projection as unknown as Chime) };
     },
     category: "chime",
     expected: ProtectChime
@@ -81,10 +80,10 @@ const rows: Row[] = [
       const config = makeFobConfig();
       const store = new TestStateStore(makeProtectState({ fobs: [config] }));
       const { controller, nvr } = makeTestNvr({ store });
-      const accessory = makeTestAccessory("Descriptor Fob", "uuid:descriptor-fob");
+      const accessory = makeTestAccessory("Descriptor Fob", config.mac);
       const projection = new TestFobProjection(config.id, store);
 
-      return { controller, device: new ProtectFob(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Fob) };
+      return { controller, device: new ProtectFob(nvr as unknown as ProtectNvr, accessory, projection as unknown as Fob) };
     },
     category: "fob",
     expected: ProtectFob
@@ -96,10 +95,10 @@ const rows: Row[] = [
       const config = makeLightConfig();
       const store = new TestStateStore(makeProtectState({ lights: [config] }));
       const { controller, nvr } = makeTestNvr({ store });
-      const accessory = makeTestAccessory("Descriptor Light", "uuid:descriptor-light");
+      const accessory = makeTestAccessory("Descriptor Light", config.mac);
       const projection = new TestLightProjection(config.id, store);
 
-      return { controller, device: new ProtectLight(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Light) };
+      return { controller, device: new ProtectLight(nvr as unknown as ProtectNvr, accessory, projection as unknown as Light) };
     },
     category: "light",
     expected: ProtectLight
@@ -111,10 +110,10 @@ const rows: Row[] = [
       const config = makeRelayConfig();
       const store = new TestStateStore(makeProtectState({ relays: [config] }));
       const { controller, nvr } = makeTestNvr({ store });
-      const accessory = makeTestAccessory("Descriptor Relay", "uuid:descriptor-relay");
+      const accessory = makeTestAccessory("Descriptor Relay", config.mac);
       const projection = new TestRelayProjection(config.id, store);
 
-      return { controller, device: new ProtectRelay(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Relay) };
+      return { controller, device: new ProtectRelay(nvr as unknown as ProtectNvr, accessory, projection as unknown as Relay) };
     },
     category: "relay",
     expected: ProtectRelay
@@ -126,10 +125,10 @@ const rows: Row[] = [
       const config = makeSensorConfig();
       const store = new TestStateStore(makeProtectState({ sensors: [config] }));
       const { controller, nvr } = makeTestNvr({ store });
-      const accessory = makeTestAccessory("Descriptor Sensor", "uuid:descriptor-sensor");
+      const accessory = makeTestAccessory("Descriptor Sensor", config.mac);
       const projection = new TestSensorProjection(config.id, store);
 
-      return { controller, device: new ProtectSensor(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Sensor) };
+      return { controller, device: new ProtectSensor(nvr as unknown as ProtectNvr, accessory, projection as unknown as Sensor) };
     },
     category: "sensor",
     expected: ProtectSensor
@@ -141,10 +140,10 @@ const rows: Row[] = [
       const config = makeViewerConfig();
       const store = new TestStateStore(makeProtectState({ viewers: [config] }));
       const { controller, nvr } = makeTestNvr({ store });
-      const accessory = makeTestAccessory("Descriptor Viewer", "uuid:descriptor-viewer");
+      const accessory = makeTestAccessory("Descriptor Viewer", config.mac);
       const projection = new TestViewerProjection(config.id, store);
 
-      return { controller, device: new ProtectViewer(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Viewer) };
+      return { controller, device: new ProtectViewer(nvr as unknown as ProtectNvr, accessory, projection as unknown as Viewer) };
     },
     category: "viewer",
     expected: ProtectViewer

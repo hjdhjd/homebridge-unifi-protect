@@ -19,9 +19,10 @@
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError } from "unifi-protect";
 import type { ProtectCameraConfig, ProtectClient, ProtectNvrConfig } from "unifi-protect";
-import { SAVE_WINDOW_MS, TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr } from "./testing.helpers.ts";
+import { SAVE_WINDOW_MS, TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr,
+  restoreAccessories } from "./testing.helpers.ts";
 import { TestClock, formatLogEntry, logCount, loggedAt, settle, settleUntil } from "homebridge-plugin-utils/testing";
-import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import { TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, countActiveRecordingViews, createConnectRetryPolicy,
   createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption, isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest,
   isWithinRebootRecency, resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
@@ -638,18 +639,18 @@ describe("the controller root's disabled-controller path", () => {
     const disposals: boolean[] = [];
 
     // A cached camera and a cached liveview switch this controller owns, one for each of the disabled path's removal loops.
-    const camera = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
-    const liveview = makeTestAccessory("Test Liveview", "uuid:liveview");
+    const camera = makeTestAccessory("Test Camera", "74ACB9000001");
+    const liveview = makeTestAccessory("Test Liveview", nvrConfig.mac + ".Liveview.TEST");
 
     camera.context = { mac: "74ACB9000001", nvr: nvrConfig.mac };
     liveview.context = { liveview: "Test", nvr: nvrConfig.mac };
-    double.platform.accessories.push(camera, liveview);
+    restoreAccessories(double, [ camera, liveview ]);
 
     const client = {
 
       [Symbol.asyncDispose]: async (): Promise<void> => {
 
-        disposals.push(!double.platform.accessories.some((accessory) => accessory.context["nvr"] === nvrConfig.mac));
+        disposals.push(!double.platform.accessories.some((accessory) => accessory.context.nvr === nvrConfig.mac));
       },
       connection: connection,
       controllerName: "Test Controller",
@@ -699,11 +700,11 @@ describe("the controller root's stability sweep", () => {
     const clock = new TestClock(TEST_CLOCK_EPOCH);
     const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
     const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
-    const { apiCalls, controller, logEntries, nvr: double } = makeTestNvr({ clock, store });
-    const ghost = makeTestAccessory("Security System", "uuid:" + nvrConfig.mac + ".Security");
+    const { api, controller, logEntries, nvr: double } = makeTestNvr({ clock, store });
+    const ghost = makeTestAccessory("Security System", nvrConfig.mac + ".Security");
 
     ghost.context = { liveviewDerived: true, nvr: nvrConfig.mac };
-    double.platform.accessories.push(ghost);
+    restoreAccessories(double, [ghost]);
 
     // The client a connected controller reads, whose store holds no liveview at all.
     const client = makeConnectedClient({ nvrConfig, store });
@@ -732,7 +733,7 @@ describe("the controller root's stability sweep", () => {
       clock.advance(PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL * 1000);
 
       assert.equal(double.platform.accessories.includes(ghost), false, "the security system left when the removal delay ended");
-      assert.ok(apiCalls.some((call) => (call.kind === "unregister") && call.accessories.includes(ghost)), "and it was unregistered from HomeKit");
+      assert.ok(api.calls.some((call) => (call.kind === "unregister") && call.accessories.includes(ghost)), "and it was unregistered from HomeKit");
 
       shutdown();
 
@@ -944,7 +945,7 @@ describe("the controller root's accessory cache saves", () => {
     const bridgedConfig = adopted({ id: "camera-bridged", mac: "74ACB9000101", name: "Bridged Camera" });
     const standaloneConfig = adopted({ id: "camera-standalone", mac: "74ACB9000102", name: "Standalone Camera" });
     const store = new TestStateStore(makeProtectState({ cameras: [ bridgedConfig, standaloneConfig ], nvr: nvrConfig }));
-    const { apiCalls, controller, nvr: double } = makeTestNvr({ clock, store, userOptions: ["Enable.Device.Standalone." + standaloneConfig.mac] });
+    const { api, controller, nvr: double } = makeTestNvr({ clock, store, userOptions: ["Enable.Device.Standalone." + standaloneConfig.mac] });
     const client = makeConnectedClient({ nvrConfig, store });
     const { platform, shutdown } = makeRootPlatform(double);
     const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
@@ -954,17 +955,17 @@ describe("the controller root's accessory cache saves", () => {
       await root.login();
       await settle();
 
-      const bridged = double.platform.accessories.find((accessory) => accessory.UUID === "uuid:" + bridgedConfig.mac);
-      const standalone = double.platform.accessories.find((accessory) => accessory.UUID === "uuid:" + standaloneConfig.mac);
+      const bridged = double.platform.accessories.find((accessory) => accessory.UUID === accessoryUuid(bridgedConfig.mac));
+      const standalone = double.platform.accessories.find((accessory) => accessory.UUID === accessoryUuid(standaloneConfig.mac));
 
       assert.ok(bridged && standalone, "the root added the bridged camera and the standalone one");
-      assert.ok(apiCalls.some((call) => (call.kind === "publishExternal") && call.accessories.includes(standalone)),
+      assert.ok(api.calls.some((call) => (call.kind === "publish") && call.accessories.includes(standalone)),
         "the standalone camera was published outside the bridge");
-      assert.equal(apiCalls.some((call) => call.kind === "update"), false, "nothing is saved while the adoption's window is open");
+      assert.equal(api.calls.some((call) => call.kind === "update"), false, "nothing is saved while the adoption's window is open");
 
       clock.advance(SAVE_WINDOW_MS);
 
-      const saves = apiCalls.filter((call) => call.kind === "update");
+      const saves = api.calls.filter((call) => call.kind === "update");
 
       assert.equal(saves.length, 1, "every mark the adoption made went out in one save");
       assert.ok(saves[0]?.accessories.includes(bridged), "the save names the bridged camera");

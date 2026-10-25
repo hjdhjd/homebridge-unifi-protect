@@ -23,17 +23,16 @@
  * base services are HAP- and MQTT-driven, not observeState-driven, so there is no observer-wake subscription here (unlike the family suites).
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
-import { SAVE_WINDOW_MS, TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
-import type { TestAccessory, TestApiCall } from "../testing.helpers.ts";
+import { SAVE_WINDOW_MS, TestRecordingDispatch, makeTestNvr, restoreAccessories } from "../nvr/testing.helpers.ts";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
-import type { TestClock, TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
+import type { TestClock, TestHomebridgeApi, TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
-import { loggedAt, settle } from "homebridge-plugin-utils/testing";
+import { loggedAt, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../settings.ts";
-import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Sensor } from "unifi-protect";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 
 // Fire the deferred reflects the motion trigger arms outside this.timers, so the revert lands within the test rather than after teardown: settle the set handler,
@@ -60,14 +59,14 @@ const controllers: AbortController[] = [];
 // paths. We drive the wiring a family leaf would: configureHints first (the motion configurators read this.hints), then the base's motion-capability configurators with
 // enabled true. The userOptions thread into the REAL FeatureOptions engine, so the Enable.Motion.* strings - and only those - materialize the services. seedAccessory,
 // when supplied, runs against the fresh accessory before construction, standing in for the services a Homebridge restart restores from the accessory cache.
-function buildMotionDevice(harnessOptions: { seedAccessory?: (accessory: TestAccessory) => void; userOptions?: string[] } = {}): {
-  accessory: TestAccessory; apiCalls: TestApiCall[]; clock: TestClock; device: TestBaseDevice; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient;
+function buildMotionDevice(harnessOptions: { seedAccessory?: (accessory: TestProtectAccessory) => void; userOptions?: string[] } = {}): {
+  accessory: TestProtectAccessory; api: TestHomebridgeApi; clock: TestClock; device: TestBaseDevice; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient;
   recording: TestRecordingDispatch;
 } {
 
   const sensorConfig = makeSensorConfig();
   const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));
-  const { apiCalls, clock, controller, logEntries, mqtt, nvr } = makeTestNvr({
+  const { api, clock, controller, logEntries, mqtt, nvr } = makeTestNvr({
 
     dispatch: (innerNvr: ProtectNvr): TestRecordingDispatch => new TestRecordingDispatch(innerNvr),
     mqtt: true,
@@ -76,16 +75,19 @@ function buildMotionDevice(harnessOptions: { seedAccessory?: (accessory: TestAcc
   controllers.push(controller);
 
   const recording = nvr.events as TestRecordingDispatch;
-  const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
+  const accessory = makeTestAccessory("Test Sensor", sensorConfig.mac);
 
   // The device-leaf mqttId sources the bare MAC from the persisted accessory context, not this.ufp.mac, so seed it to match the projection's MAC for the topic-scope
   // assertions.
-  accessory.context["mac"] = sensorConfig.mac;
+  accessory.context.mac = sensorConfig.mac;
 
   harnessOptions.seedAccessory?.(accessory);
 
+  // The accessory is the cached one Homebridge restores onto the bridge before the platform configures it, so the persistence saves what the device marks.
+  restoreAccessories(nvr, [accessory]);
+
   const projection = new TestSensorProjection(sensorConfig.id, store) as unknown as Sensor;
-  const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
+  const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection);
 
   // makeTestNvr was called with mqtt: true, so the MQTT client double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast (either of which the house lint preset forbids in opposite directions), and fails loudly if the opt-in ever stops installing the double.
@@ -101,7 +103,7 @@ function buildMotionDevice(harnessOptions: { seedAccessory?: (accessory: TestAcc
   device.configureMotionSensorFor({ enabled: true });
   device.configureOccupancySensorFor({ enabled: true });
 
-  return { accessory, apiCalls, clock, device, logEntries, mqtt, recording };
+  return { accessory, api, clock, device, logEntries, mqtt, recording };
 }
 
 describe("base ProtectDevice motion capability (device-motion concern net)", () => {
@@ -141,15 +143,15 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       // detectMotion defaults true (initialized on first configure), so the onGet reads true and the switch initialized to true.
       assert.equal(onChar.value, true, "the switch initialized On to the default detectMotion (true)");
-      assert.equal(await onChar.triggerGet(), true, "the On getter reads context.detectMotion (true by default)");
+      assert.equal(await triggerGet(onChar), true, "the On getter reads context.detectMotion (true by default)");
 
       // onSet false flips detectMotion off and logs the disabled line; onSet true flips it back on and logs the enabled line.
-      await onChar.triggerSet(false);
+      await triggerSet(onChar, false);
 
       assert.equal(built.device.accessory.context.detectMotion, false, "the onSet wrote context.detectMotion false");
       assert.ok(loggedAt(built.logEntries, "info", "Motion detection disabled."), "the disabled-on-change line logged");
 
-      await onChar.triggerSet(true);
+      await triggerSet(onChar, true);
 
       assert.equal(built.device.accessory.context.detectMotion, true, "the onSet wrote context.detectMotion back to true");
       assert.ok(loggedAt(built.logEntries, "info", "Motion detection enabled."), "the enabled-on-change line logged");
@@ -175,7 +177,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
     test("a toggle is saved once its save window closes, carrying the detectMotion it wrote", async () => {
 
       const built = buildMotionDevice({ userOptions: ["Enable.Motion.Switch"] });
-      const saves = (): number => built.apiCalls.filter((call) => (call.kind === "update") && call.accessories.includes(built.accessory)).length;
+      const saves = (): number => built.api.calls.filter((call) => (call.kind === "update") && call.accessories.includes(built.accessory)).length;
 
       device = built.device;
 
@@ -187,7 +189,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       const constructed = saves();
 
-      await motionSwitch.getCharacteristic(Characteristic.On).triggerSet(false);
+      await triggerSet(motionSwitch.getCharacteristic(Characteristic.On), false);
       built.clock.advance(SAVE_WINDOW_MS - 1);
 
       assert.equal(saves(), constructed, "nothing is saved while the toggle's window is open");
@@ -195,14 +197,14 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       built.clock.advance(1);
 
       assert.equal(saves(), constructed + 1, "exactly one update names the accessory once the toggle's window closes");
-      assert.equal(built.accessory.context["detectMotion"], false, "the saved accessory carries the detectMotion the toggle wrote");
+      assert.equal(built.accessory.context.detectMotion, false, "the saved accessory carries the detectMotion the toggle wrote");
     });
 
     // Every mark inside one window goes out in one save, so a burst of toggles costs Homebridge one cache write rather than one per toggle.
     test("a burst of toggles inside one save window is saved in one update", async () => {
 
       const built = buildMotionDevice({ userOptions: ["Enable.Motion.Switch"] });
-      const saves = (): number => built.apiCalls.filter((call) => (call.kind === "update") && call.accessories.includes(built.accessory)).length;
+      const saves = (): number => built.api.calls.filter((call) => (call.kind === "update") && call.accessories.includes(built.accessory)).length;
 
       device = built.device;
 
@@ -215,14 +217,14 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       const constructed = saves();
       const on = motionSwitch.getCharacteristic(Characteristic.On);
 
-      await on.triggerSet(false);
+      await triggerSet(on, false);
       built.clock.advance(SAVE_WINDOW_MS / 2);
-      await on.triggerSet(true);
-      await on.triggerSet(false);
+      await triggerSet(on, true);
+      await triggerSet(on, false);
       built.clock.advance(SAVE_WINDOW_MS / 2);
 
       assert.equal(saves(), constructed + 1, "the toggles inside the window were saved in exactly one update");
-      assert.equal(built.accessory.context["detectMotion"], false, "the one save carries the last toggle's value");
+      assert.equal(built.accessory.context.detectMotion, false, "the one save carries the last toggle's value");
     });
   });
 
@@ -247,7 +249,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       // recorded calls so the assertion measures only this trigger.
       const baseline = built.recording.calls.length;
 
-      await onChar.triggerSet(true);
+      await triggerSet(onChar, true);
 
       assert.equal(built.recording.calls.length - baseline, 1, "a trigger-on with no motion switch routed to motionEventHandler exactly once");
       assert.deepEqual(built.recording.calls[baseline], { id: SENSOR_ID, kind: "motion" }, "the firehose call carried the carrier id and the motion kind");
@@ -271,14 +273,14 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       // Turn motion detection OFF so the trigger's onSet sees switchService.On === false and takes the revert path.
       const motionOn = motionSwitch.getCharacteristic(Characteristic.On);
 
-      await motionOn.triggerSet(false);
+      await triggerSet(motionOn, false);
 
       assert.equal(motionOn.value, false, "the motion switch is now OFF");
 
       const triggerOn = trigger.getCharacteristic(Characteristic.On);
       const baseline = built.recording.calls.length;
 
-      await triggerOn.triggerSet(true);
+      await triggerSet(triggerOn, true);
 
       // Let the deferred reflect to false fire within the test. The revert is outside this.timers, so cleanup() would not clear it.
       await fireDeferredReflect(built.clock);
@@ -305,7 +307,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       const triggerOn = trigger.getCharacteristic(Characteristic.On);
 
-      await triggerOn.triggerSet(false);
+      await triggerSet(triggerOn, false);
       await fireDeferredReflect(built.clock);
 
       assert.equal(triggerOn.value, true, "the off-revert re-armed the trigger to on because the motion sensor still reported motion");
@@ -327,12 +329,13 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       assert.ok(loggedAt(built.logEntries, "info", "Enabling occupancy sensor."), "the enabling line logged (no smart-detect suffix on the base carrier)");
 
       // OccupancyDetected initializes false (the A.5 characteristic the harness carries on the OccupancySensor service).
-      assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, false, "OccupancyDetected initialized to false");
+      assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED,
+        "OccupancyDetected initialized to not detected");
 
       // StatusActive reads isReachable, a non-trivial harness-driven value: the carrier is isConnected: true and CONNECTED and the client connection is healthy, so
       // isReachable is true.
       assert.equal(occupancy.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive initialized to isReachable (true for a reachable carrier)");
-      assert.equal(await occupancy.getCharacteristic(Characteristic.StatusActive).triggerGet(), true, "the StatusActive getter reads isReachable (true)");
+      assert.equal(await triggerGet(occupancy.getCharacteristic(Characteristic.StatusActive)), true, "the StatusActive getter reads isReachable (true)");
     });
 
     test("without the feature, no occupancy service is materialized", () => {
@@ -366,7 +369,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       assert.ok(occupancy, "the reconcile re-created the occupancy service");
       assert.ok(occupancyGets() > baseline, "the reconcile-created service re-registered its occupancy MQTT GET - the init block ran");
-      assert.equal(await occupancy.getCharacteristic(Characteristic.StatusActive).triggerGet(), true,
+      assert.equal(await triggerGet(occupancy.getCharacteristic(Characteristic.StatusActive)), true,
         "StatusActive carries an onGet reading isReachable after the re-creation");
     });
 
@@ -386,12 +389,12 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       controllers.push(controller);
 
-      const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
+      const accessory = makeTestAccessory("Test Sensor", sensorConfig.mac);
 
-      accessory.context["mac"] = sensorConfig.mac;
+      accessory.context.mac = sensorConfig.mac;
 
       const projection = new TestSensorProjection(sensorConfig.id, store) as unknown as Sensor;
-      const built = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
+      const built = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection);
 
       device = built;
 
@@ -478,7 +481,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       device = built.device;
 
-      assert.equal(built.accessory.services.filter((service) => service.type === Service.MotionSensor).length, 1, "the first pass kept the restored motion service");
+      assert.equal(built.accessory.services.filter((service) => service.UUID === Service.MotionSensor.UUID).length, 1, "the first pass kept the restored motion service");
       assert.equal(registrations(built.mqtt, "get", "/motion/get"), 1, "the restored motion service registered its motion MQTT get");
       assert.equal(registrations(built.mqtt, "set", "/motion/set"), 1, "the restored motion service registered its motion MQTT set");
       assert.equal(registrations(built.mqtt, "get", "/occupancy/get"), 1, "the restored occupancy service registered its occupancy MQTT get");
@@ -504,7 +507,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       assert.ok(motion, "the reconcile re-created the motion service");
       assert.equal(registrations(built.mqtt, "get", "/motion/get") - getBaseline, 1, "the re-created service registered its motion MQTT get once");
       assert.equal(registrations(built.mqtt, "set", "/motion/set") - setBaseline, 1, "the re-created service registered its motion MQTT set once");
-      assert.equal(await motion.getCharacteristic(Characteristic.StatusActive).triggerGet(), true,
+      assert.equal(await triggerGet(motion.getCharacteristic(Characteristic.StatusActive)), true,
         "StatusActive carries an onGet reading isReachable after the re-creation");
     });
 

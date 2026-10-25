@@ -8,8 +8,8 @@
  * buffer parses here is what it would parse on the wire, and the controllable livestream double exposes the steering a recovery or discontinuity test needs.
  *
  * Fidelity to the cited contracts, not invention, is the line these doubles hold: the camera-host surface is the plugin's own, and the segment and subscription shapes
- * are unifi-protect's. The cross-cutting core - the HAP double, the state store, and the streaming and timeshift stubs - lives in the root harness every subsystem's
- * testing.helpers.ts imports from.
+ * are unifi-protect's. The cross-cutting core - the Homebridge runtime, the state store, and the streaming and timeshift stubs - lives in the root harness every
+ * subsystem's testing.helpers.ts imports from.
  */
 import type { HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { LivestreamDescription, LivestreamInit, LivestreamSubscriptionState, ProtectCameraConfig, Segment, SnapshotOptions, TalkbackSession } from "unifi-protect";
@@ -27,7 +27,7 @@ import type { ProtectCameraHints } from "../devices/cameras/camera.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
 import type { StreamingDelegate } from "./stream-delegate.ts";
-import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import { makeCameraConfig } from "../devices/testing.helpers.ts";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
@@ -43,12 +43,12 @@ import { makeTestNvr } from "../nvr/testing.helpers.ts";
  * invoked), and settable interface returns (snapshotResult is the Buffer snapshotFromController resolves, the value the two-sided snapshot test threads through the
  * delegate).
  *
- * The context half composes the EXISTING harness doubles rather than reinventing them: accessory is a real TestAccessory, and nvr/platform/api/log all flow from a
- * real makeTestNvr context (so the very next behavior step, which reads platform.codecSupport and nvr.mqtt, finds real doubles there, not sentinels that would
- * throw). The four context handles (accessory/api/nvr/platform) plus ufp are typed as their production types by the interface, which the intentionally-partial
- * doubles do not structurally satisfy, so each is bridged with a confined `as unknown as <ProductionType>` boundary cast - the same honest harness pattern the
- * construction suites use at their own construction-arg boundaries. The casts bridge the deliberate double->production gap only; tsc still verifies every member is
- * present and interface-typed, so the completeness proof holds.
+ * The context half composes the EXISTING harness doubles rather than reinventing them: accessory is Homebridge's own accessory from makeTestAccessory, which is the
+ * production accessory type as it stands, and nvr/platform/api/log all flow from a real makeTestNvr context (so the very next behavior step, which reads
+ * platform.codecSupport and nvr.mqtt, finds real doubles there, not sentinels that would throw). The api, nvr and platform handles plus ufp are typed as their
+ * production types by the interface, which the intentionally-partial doubles do not structurally satisfy, so each is bridged with a confined
+ * `as unknown as <ProductionType>` boundary cast - the same honest harness pattern the construction suites use at their own construction-arg boundaries. The casts
+ * bridge the deliberate double->production gap only; tsc still verifies every member is present and interface-typed, so the completeness proof holds.
  *
  * Member order mirrors TestStreamingDelegate: the fields group alphabetized (except where a boundary's return value is kept adjacent to its own call log), then the
  * methods group alphabetized (not one global run). The settable interface predicates hasFeature / selectChannel / selectSubstrateChannel are public arrow-function fields
@@ -161,10 +161,9 @@ export class TestCameraHost implements ProtectCameraHost {
   public videoCodecName = "h264";
 
   // Compose the context half from real harness doubles, bridging each to its interface-required production type at the confined boundary.
-  public constructor(init: { accessory: TestAccessory; nvr: TestProtectNvr }) {
+  public constructor(init: { accessory: ProtectAccessory; nvr: TestProtectNvr }) {
 
-    // The double is a partial TestAccessory; the interface requires the production ProtectAccessory. The confined boundary cast bridges the deliberate gap.
-    this.accessory = init.accessory as unknown as ProtectAccessory;
+    this.accessory = init.accessory;
 
     // The api/log/platform/nvr handles all flow from the real makeTestNvr context. Each is a partial double the interface types as a production handle, so each
     // takes the same confined boundary cast.
@@ -557,9 +556,9 @@ export function makeControllableLivestreamDouble(options: { deferEstablishment?:
 
 /**
  * Build a TestCameraHost wired to a real makeTestNvr context, returning the host plus its test-side handles. This is the media-delegate counterpart to makeTestNvr: it
- * composes the existing doubles (a TestStateStore-backed makeTestNvr context and a TestAccessory) into the camera-host interface every media-delegate test constructs
- * against, so a delegate is unit-constructed with no real camera. The single boundary casts live inside TestCameraHost's constructor (the doubles are not the production
- * handle types); the host returned here is the production-interface-typed double.
+ * composes the existing doubles (a TestStateStore-backed makeTestNvr context and an accessory from makeTestAccessory) into the camera-host interface every
+ * media-delegate test constructs against, so a delegate is unit-constructed with no real camera. The single boundary casts live inside TestCameraHost's constructor
+ * (the doubles are not the production handle types); the host returned here is the production-interface-typed double.
  *
  * @param options - clock: an optional controllable TestClock forwarded into the makeTestNvr platform double's clock interface and re-returned, so a test holds the one
  *                  clock every delegate built against this host reads through platform.clock - the recording delegate's transmit pacing and the streaming delegate's
@@ -569,13 +568,13 @@ export function makeControllableLivestreamDouble(options: { deferEstablishment?:
  *                  feature-option config strings forwarded to the makeTestNvr context's REAL FeatureOptions engine (for a later behavior test that steers a feature-gated
  *                  delegate path); the default empty context is the quiet-default host.
  *
- * @returns accessory: the TestAccessory backing the host; clock: the controllable TestClock installed on the platform double (the one clock every delegate built against
+ * @returns accessory: the accessory backing the host; clock: the controllable TestClock installed on the platform double (the one clock every delegate built against
  *          this host reads, so a test advances it to release the recording delegate's transmit pacing or to fire the streaming delegate's probesize reset); controller:
  *          the AbortController behind the context's signal (abort it in suite teardown); host: the TestCameraHost double under test; logEntries: every line the
  *          construction and transmit paths logged (so a transmit test can assert on captured telemetry); nvr: the NVR double backing the context.
  */
 export function makeTestCameraHost(options: { clock?: TestClock; recordingProcessFactory?: RecordingProcessFactory; userOptions?: string[] } = {}):
-{ accessory: TestAccessory; clock: TestClock; controller: AbortController; host: TestCameraHost; logEntries: readonly TestLogEntry[]; nvr: TestProtectNvr } {
+{ accessory: TestProtectAccessory; clock: TestClock; controller: AbortController; host: TestCameraHost; logEntries: readonly TestLogEntry[]; nvr: TestProtectNvr } {
 
   const store = new TestStateStore(makeProtectState());
   const { clock, controller, logEntries, nvr } = makeTestNvr({ clock: options.clock, recordingProcessFactory: options.recordingProcessFactory, store,

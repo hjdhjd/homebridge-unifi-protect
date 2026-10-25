@@ -14,14 +14,15 @@
  * capability the interface unlocked - not a coincidental null.
  *
  * The streaming delegate constructs here too, and it is the one member of the group that composes rather than field-copies: it builds a real FfmpegOptions (inert
- * under the harness's default hints, which turn every acceleration and crop knob off) and hands a fully-composed options object to the hap namespace's camera-controller
- * marker. That makes its construction test the suite's second real-behavior anchor - the capability arms it decides, and the probesize self-tuning its shutdown ends.
+ * under the harness's default hints, which turn every acceleration and crop knob off) and hands a fully-composed options object to HAP's own camera controller, whose
+ * construction-time options the root harness reads back. That makes its construction test the suite's second real-behavior anchor - the capability arms it decides,
+ * and the probesize self-tuning its shutdown ends.
  */
 import { AudioRecordingCodecType, AudioRecordingSamplerate } from "homebridge-plugin-utils";
 import { PROTECT_PROBESIZE_OVERRIDE_MAX, PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS,
   PROTECT_SEGMENT_RESOLUTION } from "../settings.ts";
 import { RECORDING_AUDIO_STAND_IN, controllerIdentityOf } from "./stream-delegate.ts";
-import { Service, TestCameraController } from "../testing.helpers.ts";
+import { Service, cameraControllerOptions, hap } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { formatLogEntry, logCount } from "homebridge-plugin-utils/testing";
 import { makeChannelProfile, makeControllableLivestreamDouble, makeTestCameraHost } from "./testing.helpers.ts";
@@ -122,8 +123,8 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
     const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]);
     const cameraController = stream.controller;
 
-    assert.ok(cameraController instanceof TestCameraController, "the delegate constructed the hap camera controller");
-    assert.equal(cameraController.options.delegate, stream, "the composed controller options carry the delegate itself");
+    assert.ok(cameraController instanceof hap.CameraController, "the delegate constructed HAP's camera controller");
+    assert.equal(cameraControllerOptions(cameraController).delegate, stream, "the composed controller options carry the delegate itself");
     assert.notEqual(stream.timeshift, null, "the buffer-backed supervisor constructed, as it does for every camera");
     assert.equal(stream.hksv, null, "no recording delegate constructed for a host that is not HKSV-capable");
 
@@ -162,11 +163,14 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
     const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]);
     const cameraController = stream.controller;
 
-    assert.ok(cameraController instanceof TestCameraController, "the delegate constructed the hap camera controller");
+    assert.ok(cameraController instanceof hap.CameraController, "the delegate constructed HAP's camera controller");
     assert.ok(stream.hksv instanceof ProtectRecordingDelegate, "a recording delegate constructed for a host that can back HKSV");
-    assert.equal(cameraController.options.recording?.delegate, stream.hksv, "the controller's recording arm is driven by that recording delegate");
-    assert.ok(cameraController.options.recording.options, "the controller's recording arm carries its recording options");
-    assert.equal(cameraController.options.sensors?.motion, motionSensor, "the controller's motion link is the accessory's own motion sensor");
+
+    const options = cameraControllerOptions(cameraController);
+
+    assert.equal(options.recording?.delegate, stream.hksv, "the controller's recording arm is driven by that recording delegate");
+    assert.ok(options.recording.options, "the controller's recording arm carries its recording options");
+    assert.equal(options.sensors?.motion, motionSensor, "the controller's motion link is the accessory's own motion sensor");
   });
 
   /* The advertised recording audio format is the camera's own, read from its livestream by the derivation, in one channel, or the whole stand-in when the stream was not
@@ -185,7 +189,7 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
       host.ufp = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { isDoorbell: options.isDoorbell ?? false } });
 
       const stream = new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]], { audioFormat: options.audioFormat, probe: null });
-      const codecs = (stream.controller as unknown as TestCameraController).options.recording?.options.audio.codecs;
+      const codecs = cameraControllerOptions(stream.controller).recording?.options.audio.codecs;
 
       assert.equal(stream.builtFor.hksvCapable, true, "the vacuity guard: the delegate built its recording arm");
       assert.deepEqual(stream.builtFor, controllerIdentityOf(host), "the identity is the derivation over the host, whatever the audio format");

@@ -25,14 +25,13 @@
  */
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
-import type { TestAccessory, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
+import type { TestProtectAccessory, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
-import { loggedAt, settle } from "homebridge-plugin-utils/testing";
+import { loggedAt, settle, triggerSet } from "homebridge-plugin-utils/testing";
 import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
 import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../../settings.ts";
-import type { ProtectAccessory } from "../../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
@@ -53,7 +52,7 @@ function cameraPatch(patch: Record<string, unknown>): Partial<ProtectCameraConfi
 // camera-reactions interface) because the failure-path drives assert the runDeviceCommand error lines.
 interface BuiltCamera {
 
-  accessory: TestAccessory;
+  accessory: TestProtectAccessory;
   camera: ProtectCamera;
   cameraConfig: ProtectCameraConfig;
   clock: TestClock;
@@ -74,9 +73,9 @@ async function buildCamera(options: { featureFlags?: Partial<ProtectCameraConfig
   const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, ...(options.featureFlags ? { featureFlags: options.featureFlags } : {}) });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
   const { clock, controller, factory, logEntries, nvr } = makeTestNvr({ store, userOptions: options.userOptions });
-  const accessory = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+  const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
   const projection = new TestCameraProjection(cameraConfig.id, store);
-  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection as unknown as Camera);
+  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
 
   // Settle the floating configure IIFE and the observe loops' lazy registration before any drive so the camera is fully wired when the onSet is triggered.
   await settle();
@@ -114,14 +113,14 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
       // Brightness 10 directly (updateCharacteristic writes the value without firing the Brightness onSet), so the mode resolves deterministically to "auto".
       dimmer.updateCharacteristic(Characteristic.Brightness, 10);
 
-      await onChar.triggerSet(true);
+      await triggerSet(onChar, true);
 
       // The command: value true with Brightness 10 issues irLedMode "auto" (value ? mode : "off"). The projection records it and does not fold the store.
       assert.deepEqual(built.projection.updateCalls, [{ payload: { ispSettings: { irLedMode: "auto" } } }],
         "the On set issued the ispSettings irLedMode auto write picked from the seeded Brightness 10");
 
-      // NON-VACUITY: triggerSet caches On true unconditionally and the success path schedules no revert timer, so reading On without advancing proves nothing. Advance
-      // the clock through the 50ms window and assert On is STILL true - no !value revert fired.
+      // NON-VACUITY: HAP stores the written On true unconditionally and the success path schedules no revert timer, so reading On without advancing proves nothing.
+      // Advance the clock through the 50ms window and assert On is STILL true - no !value revert fired.
       built.clock.advance(PROTECT_HOMEKIT_REFLECT_DELAY);
 
       assert.equal(onChar.value, true, "a successful On set schedules no revert - On stays true through the 50ms window");
@@ -138,7 +137,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
       // Seed Brightness 100 - the mode picker quantizes it and turns night vision ON, the arm that keeps a 100 setting from falling through to the custom branch.
       dimmer.updateCharacteristic(Characteristic.Brightness, 100);
 
-      await dimmer.getCharacteristic(Characteristic.On).triggerSet(true);
+      await triggerSet(dimmer.getCharacteristic(Characteristic.On), true);
 
       assert.deepEqual(built.projection.updateCalls, [{ payload: { ispSettings: { irLedMode: "on" } } }],
         "the On set at Brightness 100 issued the irLedMode on write rather than a custom-arm downgrade");
@@ -153,7 +152,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
       assert.ok(dimmer, "the night-vision dimmer exists");
 
       // value false short-circuits the mode picker (value ? mode : "off"), so the payload is irLedMode "off" regardless of the seeded Brightness.
-      await dimmer.getCharacteristic(Characteristic.On).triggerSet(false);
+      await triggerSet(dimmer.getCharacteristic(Characteristic.On), false);
 
       assert.deepEqual(built.projection.updateCalls, [{ payload: { ispSettings: { irLedMode: "off" } } }], "the Off set issued the irLedMode off write");
     });
@@ -174,7 +173,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
       // The settable rejection drives runDeviceCommand's plain-error branch (the trailing period is stripped before the format string supplies the terminal one).
       built.projection.updateRejection = new Error("The camera is unreachable.");
 
-      await onChar.triggerSet(true);
+      await triggerSet(onChar, true);
 
       // The command was attempted, then the failed command bare-returned and armed the 50ms revert. Before the advance the cached value is still the set true.
       assert.equal(built.projection.updateCalls.length, 1, "the rejecting On set still attempted the command");
@@ -199,7 +198,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
       built.projection.updateRejection = new ProtectAuthorizationError("forbidden");
 
-      await onChar.triggerSet(true);
+      await triggerSet(onChar, true);
 
       built.clock.advance(PROTECT_HOMEKIT_REFLECT_DELAY);
 
@@ -223,7 +222,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
       // Level 50 falls through every snap guard (not <5, not 5-10, not 10-20, not >90), so it hits the default branch: icrCustomValue = Math.round((50-20)/7) = 4, and
       // the seeded irLedMode "off" is not in [autoFilterOnly, customFilterOnly], so irLedMode resolves to "custom".
-      await brightnessChar.triggerSet(50);
+      await triggerSet(brightnessChar, 50);
 
       assert.deepEqual(built.projection.updateCalls, [{ payload: { ispSettings: { icrCustomValue: 4, irLedMode: "custom" } } }],
         "the Brightness 50 set issued icrCustomValue 4 (Math.round((50-20)/7)) with irLedMode custom");
@@ -243,7 +242,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
       assert.ok(dimmer, "the night-vision dimmer exists");
 
       // Level 3 is below the <5 guard, so it snaps to 0 -> the off branch.
-      await dimmer.getCharacteristic(Characteristic.Brightness).triggerSet(3);
+      await triggerSet(dimmer.getCharacteristic(Characteristic.Brightness), 3);
 
       assert.deepEqual(built.projection.updateCalls, [{ payload: { ispSettings: { irLedMode: "off" } } }], "the Brightness 3 set snapped to 0 and issued irLedMode off");
     });
@@ -263,10 +262,10 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
       built.projection.updateRejection = new Error("The camera is unreachable.");
 
-      await brightnessChar.triggerSet(50);
+      await triggerSet(brightnessChar, 50);
 
       // The command was attempted and the failure logged; production bare-returns BEFORE arming the reflect timer, so the no-revert contract holds: advancing the clock
-      // through the window fires nothing and Brightness stays at the value triggerSet cached (50), never the snapped 48 a successful reflect would have written.
+      // through the window fires nothing and Brightness stays at the value HAP stored for the write (50), never the snapped 48 a successful reflect would have written.
       assert.equal(built.projection.updateCalls.length, 1, "the rejecting Brightness set still attempted the command");
       assert.ok(loggedAt(built.logEntries, "error", "Unable to adjust the night vision settings: The camera is unreachable."),
         "the plain-error branch reported the failure");
@@ -301,7 +300,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
       assert.equal(detections.getCharacteristic(Characteristic.On).value, true, "the detections-mode push drove the DETECTIONS switch On");
 
-      await always.getCharacteristic(Characteristic.On).triggerSet(true);
+      await triggerSet(always.getCharacteristic(Characteristic.On), true);
 
       // The command spreads the live recordingSettings with mode overridden to always; the surviving prePaddingSecs proves the immutable spread preserved the wire shape.
       assert.deepEqual(built.projection.updateCalls, [{ payload: { recordingSettings: { mode: "always", prePaddingSecs: 5 } } }],
@@ -332,7 +331,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
       built.projection.updateRejection = new Error("The camera is unreachable.");
 
-      await always.getCharacteristic(Characteristic.On).triggerSet(true);
+      await triggerSet(always.getCharacteristic(Characteristic.On), true);
 
       // The command was attempted and failed; production bare-returns, so no sibling is flipped and no success line is logged - only the error line.
       assert.equal(built.projection.updateCalls.length, 1, "the rejecting activation still attempted the command");
@@ -352,7 +351,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
       // makeCameraConfig seeds mode "always", so ALWAYS starts On. Turning it Off hits the !value branch: a deferred updateDevice re-sync, then return - no command
       // issued. The re-sync is armed on this test's own clock, which nothing advances, so it never fires past the test; it is not under assertion here.
-      await always.getCharacteristic(Characteristic.On).triggerSet(false);
+      await triggerSet(always.getCharacteristic(Characteristic.On), false);
 
       assert.equal(built.projection.updateCalls.length, 0, "turning a recording switch Off issues no device.update - it is an undefined state, not a command");
     });
@@ -372,7 +371,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
       // WIRING only: the camera modelKey routes statusLedCommand to device.update({ ledSettings: { isEnabled } }) (device.ts); we assert the camera issued the
       // ledSettings write, NOT the statusLedCommand internals (device-statusled.test.ts owns those, the two-layer architecture).
-      await statusLedSwitch.getCharacteristic(Characteristic.On).triggerSet(true);
+      await triggerSet(statusLedSwitch.getCharacteristic(Characteristic.On), true);
 
       assert.deepEqual(built.projection.updateCalls, [{ payload: { ledSettings: { isEnabled: true } } }],
         "the camera status-LED On set routed through statusLedCommand to the ledSettings isEnabled true write");
@@ -390,7 +389,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
       built.projection.updateRejection = new ProtectAuthorizationError("forbidden");
 
-      await onChar.triggerSet(true);
+      await triggerSet(onChar, true);
 
       // setStatusLed's onSet routes through runDeviceCommand and does not revert the characteristic (the observer re-reflects on the next push), so the cached set value
       // stays and only the shared error line fires - the admin-role guidance for the authorization branch.

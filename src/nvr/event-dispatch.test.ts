@@ -11,19 +11,18 @@
  * suites already established; the instance under test is the production class.
  */
 import type { AuthMethod, Camera, ProtectEventMetadata, TypedEvent } from "unifi-protect";
-import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, eventsFrom, hap, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { PROTECT_DOORBELL_AUTHSENSOR_DURATION, PROTECT_DOORBELL_TRIGGER_DURATION } from "../settings.ts";
 import { ProtectReservedNames, packageCameraId } from "../types.ts";
 import { TestCameraProjection, makeCameraConfig } from "../devices/testing.helpers.ts";
 import { TestClock, settle } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
 import type { ProtectDevice } from "../devices/device.ts";
 import { ProtectEventDispatch } from "./event-dispatch.ts";
 import type { ProtectNvr } from "./nvr.ts";
-import type { TestAccessory } from "../testing.helpers.ts";
+import type { TestProtectAccessory } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
@@ -153,7 +152,7 @@ const makeDispatch = (options: DispatchOptions = {}): { dispatch: RecordingDispa
     hasFeature,
     log,
     mqtt: { publishGuarded },
-    platform: { api: { hap: {} }, clock: new TestClock(), config: {} },
+    platform: { api: { hap }, clock: new TestClock(), config: {} },
     ufp: { mac: "AA:BB:CC:DD:EE:FF" }
   };
 
@@ -478,7 +477,7 @@ describe("access door_bell delivery (real ProtectEventDispatch.accessEventHandle
     // all the routing needs.
     const noop = (): void => { /* swallow log output in tests */ };
     const log = { debug: noop, error: noop, info: noop, warn: noop };
-    const nvr = { log, platform: { api: { hap: {} }, clock: new TestClock(), config: {} } };
+    const nvr = { log, platform: { api: { hap }, clock: new TestClock(), config: {} } };
     const dispatch = new DoorbellRoutingDispatch(nvr as unknown as ProtectNvr);
     const camera = { id: "cam-access" } as unknown as ProtectCamera;
 
@@ -494,14 +493,13 @@ describe("access door_bell delivery (real ProtectEventDispatch.accessEventHandle
   });
 });
 
-// Build a real ProtectEventDispatch wired to the StatusTampered HAP double, plus a camera stand-in carrying the supplied TestAccessory and a mutable isTampered flag. The
-// tamper delivery latches the camera tampered, so these drive the real method against real HAP-double services rather than recording the routing. Only the surface
-// tamperEventHandler touches is mocked: the MotionSensor / StatusTampered identities on hap, and the camera's id, isTampered, log, and accessory.
-const makeTamperDispatch = (accessory: TestAccessory): { camera: ProtectCamera; dispatch: ProtectEventDispatch } => {
+// Build a real ProtectEventDispatch over the runtime's HAP, plus a camera stand-in carrying the supplied accessory and a mutable isTampered flag. The tamper delivery
+// latches the camera tampered, so these drive the real method against real HAP services rather than recording the routing. Only the camera is mocked, down to the
+// surface tamperEventHandler touches: its id, isTampered, log, and accessory.
+const makeTamperDispatch = (accessory: TestProtectAccessory): { camera: ProtectCamera; dispatch: ProtectEventDispatch } => {
 
   const noop = (): void => { /* swallow log output in tests */ };
   const log = { debug: noop, error: noop, info: noop, warn: noop };
-  const hap = { Characteristic: { StatusTampered: Characteristic.StatusTampered }, Service: { MotionSensor: Service.MotionSensor } };
   const nvr = { log, platform: { api: { hap }, clock: new TestClock(), config: {} } };
   const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
   const camera = { accessory, id: "cam-tamper", isTampered: false, log };
@@ -523,7 +521,8 @@ describe("camera tamper delivery (real ProtectEventDispatch.tamperEventHandler)"
     dispatch.tamperEventHandler(camera);
 
     assert.equal(camera.isTampered, true, "the camera latches tampered");
-    assert.equal(motion.getCharacteristic(Characteristic.StatusTampered).value, true, "the motion sensor's StatusTampered trips on the tamper occurrence");
+    assert.equal(motion.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.TAMPERED,
+      "the motion sensor's StatusTampered trips on the tamper occurrence");
   });
 
   test("the tamper latch is one-way: a repeat occurrence does not re-trip once latched", () => {
@@ -539,7 +538,8 @@ describe("camera tamper delivery (real ProtectEventDispatch.tamperEventHandler)"
     motion.updateCharacteristic(Characteristic.StatusTampered, false);
     dispatch.tamperEventHandler(camera);
 
-    assert.equal(motion.getCharacteristic(Characteristic.StatusTampered).value, false, "the latched camera does not re-trip StatusTampered on a repeat occurrence");
+    assert.equal(motion.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
+      "the latched camera does not re-trip StatusTampered on a repeat occurrence");
   });
 
   test("latches the camera even when it has no motion sensor to display the state", () => {
@@ -553,17 +553,16 @@ describe("camera tamper delivery (real ProtectEventDispatch.tamperEventHandler)"
   });
 });
 
-// Build a real ProtectEventDispatch wired to the ContactSensor / ContactSensorState HAP double and an mqtt publish spy, plus a camera stand-in carrying the supplied
-// TestAccessory. The auth delivery trips the doorbell's authentication contact sensor, so these drive the real method against real HAP-double services rather than
-// recording the routing. Only the surface authEventHandler touches is mocked: the ContactSensor / ContactSensorState identities on hap, the camera's accessory / id / log
-// / ufp.mac, an mqtt.publishGuarded spy whose calls land in `published`, and the test clock the reset timer arms on.
-const makeAuthDispatch = (accessory: TestAccessory): { camera: ProtectCamera; clock: TestClock; dispatch: ProtectEventDispatch; published: unknown[][] } => {
+// Build a real ProtectEventDispatch over the runtime's HAP with an mqtt publish spy, plus a camera stand-in carrying the supplied accessory. The auth delivery trips the
+// doorbell's authentication contact sensor, so these drive the real method against real HAP services rather than recording the routing. Only the surface
+// authEventHandler touches beyond HAP is mocked: the camera's accessory / id / log / ufp.mac, an mqtt.publishGuarded spy whose calls land in `published`, and the test
+// clock the reset timer arms on.
+const makeAuthDispatch = (accessory: TestProtectAccessory): { camera: ProtectCamera; clock: TestClock; dispatch: ProtectEventDispatch; published: unknown[][] } => {
 
   const clock = new TestClock();
   const published: unknown[][] = [];
   const noop = (): void => { /* swallow log output in tests */ };
   const log = { debug: noop, error: noop, info: noop, warn: noop };
-  const hap = { Characteristic: { ContactSensorState: Characteristic.ContactSensorState }, Service: { ContactSensor: Service.ContactSensor } };
   const publishGuarded = (...args: unknown[]): void => { published.push(args); };
   const nvr = { log, mqtt: { publishGuarded }, platform: { api: { hap }, clock, config: {} } };
   const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
@@ -672,25 +671,19 @@ describe("doorbell auth delivery (real ProtectEventDispatch.authEventHandler)", 
   });
 });
 
-// Build a real ProtectEventDispatch wired to the HAP doubles motionEventDelivery touches, plus a camera stand-in carrying the supplied TestAccessory and the motion
-// hints the delivery reads. The info log is captured (formatted through util.format, as the real Homebridge logger renders its printf-style calls) so the assertions
-// can pin the coalescing of simultaneous types and the strictly-grows enrichment dedup; mqtt.publishGuarded calls land in `published`. Smart detection and motion
-// logging are enabled by default so a test names only the axis it varies. Every delivery arms a motionDuration reset timer on the returned test clock, which a test
-// advances to close a window and otherwise leaves unfired.
-const makeMotionDispatch = (accessory: TestAccessory, hints: Record<string, unknown> = {}): { camera: ProtectCamera; clock: TestClock; dispatch: ProtectEventDispatch;
-  logged: string[]; published: unknown[][]; } => {
+// Build a real ProtectEventDispatch over the runtime's HAP, plus a camera stand-in carrying the supplied accessory and the motion hints the delivery reads. The info
+// log is captured (formatted through util.format, as the real Homebridge logger renders its printf-style calls) so the assertions can hold fixed the coalescing of
+// simultaneous types and the strictly-grows enrichment dedup; mqtt.publishGuarded calls land in `published`. Smart detection and motion logging are enabled by
+// default so a test names only the axis it varies. Every delivery arms a motionDuration reset timer on the returned test clock, which a test advances to close a
+// window and otherwise leaves unfired.
+const makeMotionDispatch = (accessory: TestProtectAccessory, hints: Record<string, unknown> = {}): { camera: ProtectCamera; clock: TestClock;
+  dispatch: ProtectEventDispatch; logged: string[]; published: unknown[][]; } => {
 
   const clock = new TestClock();
   const logged: string[] = [];
   const published: unknown[][] = [];
   const noop = (): void => { /* swallow non-info log output in tests */ };
   const log = { debug: noop, error: noop, info: (message: string, ...parameters: unknown[]): void => { logged.push(format(message, ...parameters)); }, warn: noop };
-  const hap = {
-
-    Characteristic: { ContactSensorState: Characteristic.ContactSensorState, MotionDetected: Characteristic.MotionDetected,
-      OccupancyDetected: Characteristic.OccupancyDetected, On: Characteristic.On },
-    Service: { ContactSensor: Service.ContactSensor, MotionSensor: Service.MotionSensor, OccupancySensor: Service.OccupancySensor, Switch: Service.Switch }
-  };
   const publishGuarded = (...args: unknown[]): void => { published.push(args); };
   const nvr = { log, mqtt: { publishGuarded }, platform: { api: { hap }, clock, config: {} } };
   const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
@@ -964,7 +957,8 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     // rather than the unified smart-event list.
     dispatch.motionEventHandler(camera, [], { detectedThumbnails: [{ type: "person" }] });
 
-    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "a thumbnail-only person detection trips occupancy");
+    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, Characteristic.OccupancyDetected.OCCUPANCY_DETECTED,
+      "a thumbnail-only person detection trips occupancy");
     assert.ok(published.some(entry => (String(entry[0]) === "AA:BB:CC:DD:EE:FF/occupancy") && (entry[1] === "true")), "the occupancy MQTT topic publishes \"true\"");
     assert.ok(logged.includes("Occupancy detected: Person."), "the occupancy log names the thumbnail-derived type rather than rendering an empty list");
   });
@@ -981,7 +975,8 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     // A vehicle thumbnail is a genuine smart detection, but the user's occupancy set is person-only, so occupancy stays clear - the widened gate does not widen the set.
     dispatch.motionEventHandler(camera, [], { detectedThumbnails: [{ type: "vehicle" }] });
 
-    assert.notEqual(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "a detection outside the occupancy set leaves occupancy clear");
+    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED,
+      "a detection outside the occupancy set leaves occupancy clear");
   });
 
   test("with smart detection off, bare motion still trips occupancy", () => {
@@ -996,7 +991,8 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     // The parity case: with smart detection disabled the first gate disjunct still trips occupancy on bare motion, unchanged by the unified-list rewrite.
     dispatch.motionEventHandler(camera, []);
 
-    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "bare motion trips occupancy when smart detection is disabled");
+    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, Characteristic.OccupancyDetected.OCCUPANCY_DETECTED,
+      "bare motion trips occupancy when smart detection is disabled");
   });
 
   test("resets occupancy, publishes its MQTT reset, and logs it when the occupancy window ends", () => {
@@ -1012,18 +1008,20 @@ describe("smart-detection delivery (real ProtectEventDispatch.motionEventHandler
     // The occupancy window outlasts the motion window here, so the motion reset that fires along the way leaves occupancy held.
     dispatch.motionEventHandler(camera, []);
 
-    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "bare motion trips occupancy");
+    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, Characteristic.OccupancyDetected.OCCUPANCY_DETECTED, "bare motion trips occupancy");
     assert.deepEqual(occupancyPublishes(), ["true"], "the occupancy topic publishes \"true\" when the window opens");
 
     // The window is bounded on both sides: one tick short of the occupancy duration the sensor still holds, and the tick that completes it resets the sensor.
     clock.advance((30 * 1000) - 1);
 
-    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "occupancy holds until its window ends");
+    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, Characteristic.OccupancyDetected.OCCUPANCY_DETECTED,
+      "occupancy holds until its window ends");
     assert.deepEqual(occupancyPublishes(), ["true"], "the occupancy topic publishes no reset while its window is open");
 
     clock.advance(1);
 
-    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, false, "occupancy resets when its window ends");
+    assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED,
+      "occupancy resets when its window ends");
     assert.deepEqual(occupancyPublishes(), [ "true", "false" ], "the occupancy topic publishes \"false\" once when its window ends");
     assert.equal(logged.at(-1), "Occupancy no longer detected.", "the occupancy reset is logged");
   });
@@ -1086,12 +1084,6 @@ const makeRetireDispatch = (): { clock: TestClock; dispatch: ProtectEventDispatc
   const published: unknown[][] = [];
   const noop = (): void => { /* swallow log output in tests */ };
   const log = { debug: noop, error: noop, info: noop, warn: noop };
-  const hap = {
-
-    Characteristic: { ContactSensorState: Characteristic.ContactSensorState, MotionDetected: Characteristic.MotionDetected,
-      OccupancyDetected: Characteristic.OccupancyDetected, On: Characteristic.On },
-    Service: { ContactSensor: Service.ContactSensor, MotionSensor: Service.MotionSensor, OccupancySensor: Service.OccupancySensor, Switch: Service.Switch }
-  };
   const publishGuarded = (...args: unknown[]): void => { published.push(args); };
   const nvr = { log, mqtt: { publishGuarded }, platform: { api: { hap }, clock, config: {} } };
   const dispatch = new ProtectEventDispatch(nvr as unknown as ProtectNvr);
@@ -1244,7 +1236,7 @@ function buildDoorbell(options: { id: string; mac: string; mqtt?: boolean; name:
   const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { isDoorbell: true }, id: options.id, mac: options.mac, name: options.name });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
   const { clock, controller, nvr } = makeTestNvr({ mqtt: options.mqtt ?? false, store, userOptions: options.userOptions ?? [] });
-  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory(options.name) as unknown as ProtectAccessory,
+  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory(options.name, options.mac),
     new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
 
   return { camera, clock, controller, nvr };
@@ -1263,14 +1255,15 @@ describe("the doorbell ring-suppression window (Doorbell.Ring.Delay resolution)"
   // it was delivered. The service is hard-asserted first so an absent Doorbell service throws rather than letting the count pass vacuously.
   function ringTwice(camera: ProtectCamera, nvr: TestProtectNvr): number {
 
-    const doorbellService = (camera.accessory as unknown as TestAccessory).getService(Service.Doorbell);
+    const accessory = camera.accessory as unknown as TestProtectAccessory;
+    const doorbellService = accessory.getService(Service.Doorbell);
 
     assert.ok(doorbellService, "the doorbell service exists");
 
     nvr.events.doorbellEventHandler(camera);
     nvr.events.doorbellEventHandler(camera);
 
-    return doorbellService.getCharacteristic(Characteristic.ProgrammableSwitchEvent).events.length;
+    return eventsFrom(accessory, doorbellService.getCharacteristic(Characteristic.ProgrammableSwitchEvent)).length;
   }
 
   test("a device-suffixed entry suppresses that doorbell's rapid second ring while its sibling keeps ringing", async () => {
@@ -1342,11 +1335,12 @@ describe("the doorbell ring-suppression window (Doorbell.Ring.Delay resolution)"
 
     await settle();
 
-    const doorbellService = (camera.accessory as unknown as TestAccessory).getService(Service.Doorbell);
+    const accessory = camera.accessory as unknown as TestProtectAccessory;
+    const doorbellService = accessory.getService(Service.Doorbell);
 
     assert.ok(doorbellService, "the doorbell service exists");
 
-    const dings = (): number => doorbellService.getCharacteristic(Characteristic.ProgrammableSwitchEvent).events.length;
+    const dings = (): number => eventsFrom(accessory, doorbellService.getCharacteristic(Characteristic.ProgrammableSwitchEvent)).length;
 
     // The first ring opens the window. The window is bounded on both sides: a ring one tick short of the delay is suppressed, and a ring on the tick that completes
     // it is delivered.
@@ -1383,7 +1377,7 @@ describe("doorbell ring resets (real ProtectEventDispatch.doorbellEventHandler)"
 
     await settle();
 
-    const triggerSwitch = (camera.accessory as unknown as TestAccessory).getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
+    const triggerSwitch = (camera.accessory as unknown as TestProtectAccessory).getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_TRIGGER);
 
     assert.ok(triggerSwitch, "Enable.Doorbell.Trigger materializes the doorbell-trigger switch");
 
