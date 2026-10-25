@@ -129,13 +129,23 @@ export class RebootScheduler {
   }
 
   /**
-   * Enter the reboot schedule. The interval is clamped to the configured minimum so a misconfigured option cannot put the controller into a reboot loop, and the first
-   * fire is anchored to the controller's own uptime so restarting the plugin does not reset the cadence.
+   * Enter the reboot schedule, or arm nothing when the requested interval is not a finite number of hours, the same as the option being off. The interval is clamped
+   * to the configured minimum so a misconfigured option cannot put the controller into a reboot loop, and the first fire is anchored to the controller's own uptime so
+   * restarting the plugin does not reset the cadence.
    *
    * @param options - requestedIntervalHours: the user's configured interval in hours, absent when the feature is enabled without an explicit value; upSince: the
    *                  controller's self-reported boot time.
    */
   public schedule(options: { requestedIntervalHours?: number; upSince: number }): void {
+
+    // An interval that is not a finite number of hours names no schedule, the same as the option being off, so we warn and arm nothing. The check runs ahead of the
+    // clamp, which would otherwise turn negative infinity into the minimum interval and reboot the controller every hour.
+    if((options.requestedIntervalHours !== undefined) && !Number.isFinite(options.requestedIntervalHours)) {
+
+      this.#log.warn("The scheduled reboot interval is not a number of hours, so no scheduled controller reboot will be set.");
+
+      return;
+    }
 
     // Apply the reboot interval, defaulting to the configured default if the option is enabled without an explicit value. We enforce a minimum interval to prevent the
     // controller from entering a reboot loop.
@@ -159,9 +169,9 @@ export class RebootScheduler {
    * fire and carries the timestamp of the first reschedule - a deferral or a post-failure retry - on every subsequent call. That makes the deferral ceiling a pure
    * function of the call chain rather than separate mutable state, and it lets a failure retry accumulate cycle time exactly as a deferral does.
    *
-   * The reboot rides the unifi-protect client's reboot command and its surviving connection layer: we POST the reboot and let the connection monitor, store, and
-   * livestream pool ride the outage and auto-recover without recreating the client. The return to running is driven by the connection's recovery edge, which the root
-   * observes and reports through {@link RebootScheduler.noteRebootConfirmed}, with the no-op confirmation below as the only other exit.
+   * The reboot goes through the unifi-protect client's reboot command and its surviving connection layer: we POST the reboot and let the connection monitor, store, and
+   * livestream pool stay up through the outage and auto-recover without recreating the client. The return to running is driven by the connection's recovery edge,
+   * which the root observes and reports through {@link RebootScheduler.noteRebootConfirmed}, with the no-op confirmation below as the only other exit.
    *
    * @param options - cycleStart: when this reboot cycle first rescheduled; intervalHours: the cadence the next full cycle arms at.
    */
@@ -225,7 +235,7 @@ export class RebootScheduler {
     try {
 
       // Reboot the controller through the unifi-protect client. It POSTs the UniFi-OS reboot and throws a classified error on a non-2xx response; the surviving
-      // connection monitor and store ride the outage and auto-recover without recreating the client, so we do NOT tear anything down here.
+      // connection monitor and store stay up through the outage and auto-recover without recreating the client, so we do NOT tear anything down here.
       await this.#actions.reboot();
     } catch(error) {
 

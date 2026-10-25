@@ -12,8 +12,8 @@
  * The reboot command is awaited, so an advance is followed by a settle - the advance runs the timer callback, and the settle lets the continuation past that await
  * run before anything is asserted.
  *
- * The pure arithmetic these decisions rest on (classifyRebootAttempt, computeInitialRebootDelay, countActiveRecordingViews) is pinned as arithmetic in nvr.test.ts; this
- * suite pins the stateful class those functions serve and deliberately does not restate them. Honest coverage note: what the actions DO in production - commanding the
+ * The pure arithmetic these decisions rest on (classifyRebootAttempt, computeInitialRebootDelay, countActiveRecordingViews) is proven as arithmetic in nvr.test.ts; this
+ * suite tests the stateful class those functions serve and deliberately does not restate them. Honest coverage note: what the actions DO in production - commanding the
  * unifi-protect client and moving the controller's lifecycle phase - is the root's territory and stays untested here; the recorders prove only that the scheduler runs
  * them, in which order, and at which instants.
  */
@@ -34,6 +34,13 @@ const DEFAULT_INTERVAL_MS = PROTECT_NVR_REBOOT_INTERVAL * 60 * 60 * 1000;
 // The minimum cadence, in milliseconds - what an explicit interval below the floor clamps to.
 const MINIMUM_INTERVAL_MS = PROTECT_NVR_REBOOT_MIN_INTERVAL * 60 * 60 * 1000;
 
+// The span a row waits for a reboot that must never arm: past the default and the clamped minimum cadence, so a reboot armed at the default or at the minimum would
+// have fired within it. The span is derived rather than written out, so a change to the default or the minimum carries the rows with it.
+const NO_SCHEDULE_SPAN_MS = Math.max(DEFAULT_INTERVAL_MS, MINIMUM_INTERVAL_MS) + 1;
+
+// The warning a requested interval that is not a finite number of hours logs in place of the enabled line.
+const NO_SCHEDULE_WARNING = "The scheduled reboot interval is not a number of hours, so no scheduled controller reboot will be set.";
+
 // The cumulative deferral ceiling, in milliseconds, and how many re-checks at the check cadence it spans. The span is derived rather than written out, so a change to
 // either constant carries the arms with it.
 const DEFERRAL_CEILING_MS = PROTECT_NVR_REBOOT_DEFERRAL_MAX * 1000;
@@ -43,7 +50,7 @@ const CHECKS_TO_CEILING = DEFERRAL_CEILING_MS / PROTECT_NVR_REBOOT_CHECK_INTERVA
 // recorder.rebootCalls or moves recorder.recordings directly, and the scheduler's own suppliers see that on their next pull.
 interface SchedulerRecorder {
 
-  // Every action the scheduler ran, in order, so an arm can pin the choreography's sequence rather than only its effects.
+  // Every action the scheduler ran, in order, so an arm can assert the choreography's sequence rather than only its effects.
   actions: string[];
   // The connection-health fact the confirmation's guard pulls.
   healthy: boolean;
@@ -232,6 +239,44 @@ describe("the reboot scheduler: entering the schedule", () => {
       await advance(1);
 
       assert.equal(recorder.rebootCalls, 1, "the default interval is when it fired");
+    } finally {
+
+      controller.abort();
+    }
+  });
+
+  test("an infinite interval arms no reboot and warns once in place of the enabled line", async () => {
+
+    const { advance, controller, recorder, scheduler } = buildScheduler();
+
+    try {
+
+      scheduler.schedule({ requestedIntervalHours: Infinity, upSince: TEST_CLOCK_EPOCH });
+
+      assert.deepEqual(recorder.logLines, [NO_SCHEDULE_WARNING], "the user is told once that no reboot was set, and no enabled line claims a schedule");
+
+      await advance(NO_SCHEDULE_SPAN_MS);
+
+      assert.equal(recorder.rebootCalls, 0, "past the no-schedule span, nothing has fired");
+    } finally {
+
+      controller.abort();
+    }
+  });
+
+  test("a negative infinite interval arms no reboot rather than clamping to the minimum, and warns once in place of the enabled line", async () => {
+
+    const { advance, controller, recorder, scheduler } = buildScheduler();
+
+    try {
+
+      scheduler.schedule({ requestedIntervalHours: -Infinity, upSince: TEST_CLOCK_EPOCH });
+
+      assert.deepEqual(recorder.logLines, [NO_SCHEDULE_WARNING], "the user is told once that no reboot was set, and no enabled line claims the clamped minimum");
+
+      await advance(NO_SCHEDULE_SPAN_MS);
+
+      assert.equal(recorder.rebootCalls, 0, "past the no-schedule span, nothing has fired, so no hourly cadence was armed at the clamped minimum");
     } finally {
 
       controller.abort();

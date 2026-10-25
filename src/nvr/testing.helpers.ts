@@ -8,12 +8,15 @@
  * REAL production objects rather than stubs of them: the ProtectEventDispatch behind its events member, the DiagnosticsHealthBridge behind health, the
  * RemovalStabilityGate behind removals, and the RebootScheduler behind reboot. So a routed event, a removal decision, and a reboot attempt alike travel the production
  * path. makeTestNvr is the composition root of the harness: it wires a store, a platform, a dispatch, and the streaming-delegate
- * factory into a controller a real device class can be constructed against end to end, with no FFmpeg and no live HAP.
+ * factory into a controller a real device class can be constructed against end to end, with no FFmpeg and no live HAP. A row that runs the real controller root
+ * itself builds it over the same double's platform through makeRootPlatform, with a client double answering its connect port and TestConnection as its connection
+ * monitor.
  *
  * Fidelity to the cited contracts, not invention, is the line these doubles hold: the removal decision IS ProtectNvr's own gate class and the MQTT surface is
  * homebridge-plugin-utils'. The cross-cutting core - the HAP double, the state store, and the streaming-delegate stub - lives in the root harness this file imports
  * from.
  */
+import { APIEvent, FeatureOptions } from "homebridge-plugin-utils";
 import type { Camera, Chime, ProtectCameraConfig, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig } from "unifi-protect";
 import { Characteristic, Service, TestAccessory, TestCameraController, TestStreamingDelegateFactory } from "../testing.helpers.ts";
 import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
@@ -29,13 +32,13 @@ import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
 import { FIXTURE_RTSPS_PORT } from "../camera.fixtures.ts";
-import { FeatureOptions } from "homebridge-plugin-utils";
 import type { HAP } from "homebridge";
 import type { LegacyFeatureOptions } from "../options-legacy.ts";
 import type { ProtectCamera } from "../devices/cameras/camera.ts";
 import { ProtectCameraPackage } from "../devices/cameras/camera-package.ts";
 import type { ProtectDevice } from "../devices/device.ts";
 import { ProtectEventDispatch } from "./event-dispatch.ts";
+import type { ProtectPlatform } from "../platform.ts";
 import { RebootScheduler } from "./nvr-reboot.ts";
 import { RemovalStabilityGate } from "./nvr-removal.ts";
 import { StreamingCapability } from "../devices/cameras/streaming.ts";
@@ -744,4 +747,76 @@ export function makeTestAccessoryFamily(options: { mac?: string; name?: string; 
   options.nvr.platform.accessories.push(parentAccessory, packageAccessory);
 
   return { packageAccessory, parentAccessory };
+}
+
+/* The connection monitor a client double hands a real controller root: healthy, with each subscription kept under its event until the disposable handed back for it is
+ * disposed, so a row reads how many of the root's subscriptions are still attached and delivers an event exactly as a live monitor would. The monitor makes no state
+ * transition of its own, so the transitions a connected root observes are none.
+ */
+export class TestConnection {
+
+  public readonly isHealthy = true;
+  readonly #listeners = new Map<string, Set<() => void>>();
+
+  public get listenerCount(): number {
+
+    return [...this.#listeners.values()].reduce((count, listeners) => count + listeners.size, 0);
+  }
+
+  public emit(event: string): void {
+
+    for(const listener of [...(this.#listeners.get(event) ?? [])]) {
+
+      listener();
+    }
+  }
+
+  // The state transitions the root's connection loop reads.
+  public async *observe(): AsyncGenerator<never> {
+
+    // None: this monitor holds healthy, so the loop finds no transition and ends.
+  }
+
+  public on(event: string, listener: () => void): Disposable {
+
+    const listeners = this.#listeners.get(event) ?? new Set<() => void>();
+
+    listeners.add(listener);
+    this.#listeners.set(event, listeners);
+
+    return { [Symbol.dispose]: (): void => void listeners.delete(listener) };
+  }
+}
+
+/**
+ * Build the platform a real controller root is constructed over: the controller double's own, with the Homebridge API's event registration the root's constructor
+ * adds to what a device reads. The root registers its shutdown there, and the platform keeps each listener, so a row ends the root's run the way Homebridge's exit
+ * does and no process-global diagnostics subscription the root attached outlives the row.
+ *
+ * @param double - The controller double whose platform the root is built over.
+ *
+ * @returns platform: the platform to construct the root with; shutdown: runs every shutdown listener the root registered, each once, so a second call does nothing.
+ */
+export function makeRootPlatform(double: TestProtectNvr): { platform: ProtectPlatform; shutdown: () => void } {
+
+  const listeners: (() => void)[] = [];
+  const platform = { ...double.platform, api: { ...double.platform.api, on: (event: APIEvent, listener: () => void): void => {
+
+    if(event === APIEvent.SHUTDOWN) {
+
+      listeners.push(listener);
+    }
+  } } };
+
+  return {
+
+    platform: platform as unknown as ProtectPlatform,
+    shutdown: (): void => {
+
+      for(const listener of listeners.splice(0)) {
+
+        listener();
+      }
+    }
+  };
 }

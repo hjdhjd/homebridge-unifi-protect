@@ -13,12 +13,11 @@
  * logging gates, the FFmpeg path, the RTSP host override, and the MQTT pair - before and after the patch applies, which is what proves a migrated configuration runs
  * on the same effective values the legacy one did.
  */
-import { FeatureOptions, mqttConnectionSettings } from "homebridge-plugin-utils";
+import { FeatureOptions, addressListedElsewhere, addressListingForm, mqttConnectionSettings } from "homebridge-plugin-utils";
 import { PROTECT_DOORBELL_RING_DELAY, PROTECT_MQTT_TOPIC } from "./settings.ts";
 import type { ProtectConfig, ProtectConfigPatch, ProtectControllerConfig } from "../homebridge-ui/public/protect-config.mjs";
-import { controllerListedElsewhere, controllers, controllersAwaitingMigration, deviceListResult, hasValidCredentials, makeProtectConfig, primaryListedElsewhere,
-  readDeviceListAnswer, staleSelectionVerdict, withControllerRemoved, withControllerSaved, withPrimaryCredentials } from "../homebridge-ui/public/protect-config.mjs";
 import { describe, test } from "node:test";
+import { deviceListResult, makeControllerList, makeProtectConfig, readDeviceListAnswer, staleSelectionVerdict } from "../homebridge-ui/public/protect-config.mjs";
 import { featureOptionCategories, featureOptions } from "./options.ts";
 import assert from "node:assert/strict";
 
@@ -42,8 +41,11 @@ const LEGACY_VIDEO_PROCESSOR = "/usr/local/bin/ffmpeg";
 const RESOLVED = new Map([[ ADDRESS, CONTROLLER_MAC ]]);
 const UNRESOLVED = new Map<string, string>();
 
-// The migration under test, built exactly the way the webUI builds it: the real engine class and the real served catalog.
-const protectConfig = makeProtectConfig({ FeatureOptions, catalog: { categories: featureOptionCategories, options: featureOptions } });
+// The controller list's interpreters and the migration under test, built exactly the way the webUI builds them: over HBPU's listed-address rule, imported here from
+// the package root that is compiled from the same source as the page's browser copy, the real engine class, and the real served catalog.
+const { controllerListedElsewhere, controllers, controllersAwaitingMigration, hasValidCredentials, primaryListedElsewhere, withControllerRemoved, withControllerSaved,
+  withPrimaryCredentials } = makeControllerList({ addressListedElsewhere, addressListingForm });
+const protectConfig = makeProtectConfig({ FeatureOptions, catalog: { categories: featureOptionCategories, options: featureOptions }, controllers });
 
 /* The configuration shapes these pins build. The module's own declaration types every legacy property as unknown, which is the honest shape of a hand-editable
  * config.json...narrowing the two fields the pins read back keeps the assertions free of casts without weakening anything the migration is handed.
@@ -388,19 +390,22 @@ describe("protect webUI controller writers, the listed-address rule", () => {
       [ CREDENTIALS, { ...LOGIN, address: "10.0.0.9" } ], "and it appends, because an original address that names no item is an add");
   });
 
-  test("the comparison folds letter case and surrounding space, and an address differing in any other character is accepted and stored as typed", () => {
+  test("the comparison folds every spelling of a held console, and an address naming another host or another port is accepted and stored as typed", () => {
 
     const config: TestConfig = { controllers: [ { ...LOGIN, address: "unifi.local" }, { ...LOGIN, address: "fe80::1" } ] };
 
-    for(const address of [ "UNIFI.LOCAL", " unifi.local", "unifi.local\t", "  Unifi.Local  ", "FE80::1" ]) {
+    // Letter case, surrounding space, a trailing dot on the host, the default HTTPS port, and an IPv6 literal with or without its brackets, compressed or written
+    // out, each name a held console, so each is refused.
+    for(const address of [ "UNIFI.LOCAL", " unifi.local", "unifi.local\t", "  Unifi.Local  ", "unifi.local.", "unifi.local:443", "FE80::1", "[fe80::1]",
+      "[FE80:0:0:0:0:0:0:1]" ]) {
 
-      assertRefused(config, { ...LOGIN, address }, "an add at " + JSON.stringify(address) + " names a held address in another case or with surrounding space");
+      assertRefused(config, { ...LOGIN, address }, "an add at " + JSON.stringify(address) + " names a held address in another spelling");
     }
 
-    // Each of these names the same machine in some readings, and each is accepted, because the comparison folds letter case and surrounding space and nothing else.
-    for(const address of [ "unifi.local.", "unifi.local:443", "[fe80::1]" ]) {
+    // A port other than the default and a host differing in a character the form keeps each name another console as far as the rule can see, so each is accepted.
+    for(const address of [ "unifi.local:8443", "unifi.lan", "[fe80::2]" ]) {
 
-      assert.deepEqual(accepted(config, { ...LOGIN, address }, "an add at " + JSON.stringify(address) + " differs in a character the form keeps").at(-1),
+      assert.deepEqual(accepted(config, { ...LOGIN, address }, "an add at " + JSON.stringify(address) + " differs in what the form keeps").at(-1),
         { ...LOGIN, address }, "and it appends exactly as typed");
     }
 
@@ -535,7 +540,8 @@ describe("protect webUI configured controllers, one entry per listed address", (
     const first = { ...LOGIN, address: "unifi.local" };
 
     for(const [ repeat, label ] of [ [ "unifi.local", "the exact address" ], [ "UNIFI.Local", "the address in another case" ],
-      [ "  unifi.local\t", "the address with surrounding space" ] ] as [ string, string ][]) {
+      [ "  unifi.local\t", "the address with surrounding space" ], [ "unifi.local.", "the address with a trailing dot" ],
+      [ "UniFi.local:443", "the address with the default port" ] ] as [ string, string ][]) {
 
       const read = controllers({ controllers: [ first, { ...LOGIN, address: repeat } ] });
 
@@ -544,11 +550,12 @@ describe("protect webUI configured controllers, one entry per listed address", (
     }
 
     // An entry whose address has no form never repeats another, so every one of these is kept, an absent address and an empty one each appearing more than once.
-    const distinct: ProtectControllerConfig[] = [ { ...LOGIN, address: "10.0.0.2" }, { ...LOGIN, address: "10.0.0.1" }, { ...LOGIN, address: "unifi.local." } ];
+    const distinct: ProtectControllerConfig[] = [ { ...LOGIN, address: "10.0.0.2" }, { ...LOGIN, address: "10.0.0.1" }, { ...LOGIN, address: "unifi.local." },
+      { ...LOGIN, address: "unifi.local:8443" } ];
     const formless: ProtectControllerConfig[] = [ { ...LOGIN }, { ...LOGIN, address: "" }, { ...LOGIN, address: "   " }, { ...LOGIN, address: 42 }, { ...LOGIN },
       { ...LOGIN, address: "" } ];
 
-    assert.deepEqual(controllers({ controllers: distinct }).map((item) => distinct.indexOf(item)), [ 0, 1, 2 ],
+    assert.deepEqual(controllers({ controllers: distinct }).map((item) => distinct.indexOf(item)), [ 0, 1, 2, 3 ],
       "entries at different addresses are each kept as the stored object, in their stored order");
     assert.deepEqual(controllers({ controllers: formless }).map((item) => formless.indexOf(item)), [ 0, 1, 2, 3, 4, 5 ],
       "and every entry whose address has no form is kept as the stored object, in its stored order");

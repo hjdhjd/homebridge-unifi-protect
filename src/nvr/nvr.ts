@@ -3,9 +3,9 @@
  * nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP } from "homebridge";
-import { APIEvent, createMqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, membershipDelta, mqttConnectionSettings, prefixedLog,
-  retry, sanitizeName, superviseLoop } from "homebridge-plugin-utils";
-import type { Camera, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
+import { APIEvent, createMqttClient, debugGatedLog, formatSeconds, loopFaultReporter, membershipDelta, mqttConnectionSettings, prefixedLog, retry, sanitizeName,
+  superviseLoop } from "homebridge-plugin-utils";
+import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
   ProtectDeviceConfig, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, MqttClient, Nullable } from "homebridge-plugin-utils";
@@ -65,15 +65,32 @@ interface DeviceDescriptor<K extends DeviceCollectionKey> {
   projection: (client: ProtectClient, id: string) => ProtectProjectionMap[K] | undefined;
 }
 
+/**
+ * The connect port: how a controller root reaches its Protect controller.
+ *
+ * This is the root's one external boundary, and it is named here rather than reached for inline so that standing a controller root up does not require a network.
+ * The root transitively owns the whole accessory graph, its observe loops, and its connection lifecycle, and none of that can be exercised at all if the one call
+ * that establishes a client cannot be answered.
+ *
+ * The port only decides WHAT connect is called. Everything around it - the startup-resilient retry, the shutdown checks, the version gate - is the root's own and is
+ * unaffected by which implementation answers.
+ */
+export type ProtectNvrConnect = (options: ConnectOptions) => Promise<ProtectClient>;
+
+// The default port: the real client. Wrapped rather than referenced so the static's own this binding stays with its class.
+const defaultConnect: ProtectNvrConnect = async (options) => ProtectClient.connect(options);
+
 export class ProtectNvr {
 
   private api: API;
-  // The unifi-protect client - the single owner of protocol truth (reduced state, realtime decode, refresh failsafe, connection health). Established by connect() via
-  // ProtectClient.connect() and torn down through its Symbol.asyncDispose. Definite-assignment typed for the connected lifetime; it is genuinely undefined only in the
-  // narrow window before the first connect() (guarded where that window is reachable, e.g. disconnect()).
+  // The unifi-protect client - the single owner of protocol truth (reduced state, realtime decode, refresh failsafe, connection health). Established by connect()
+  // through the connect port and torn down through its Symbol.asyncDispose. Definite-assignment typed for the connected lifetime; it is genuinely undefined only in
+  // the narrow window before the first connect() (guarded where that window is reachable, e.g. disconnect()).
   public client!: ProtectClient;
   public readonly config: ProtectNvrOptions;
   public readonly configuredDevices: Map<string, ProtectDevices>;
+  // How this root reaches its Protect controller. The real client answers it in every configuration the plugin builds.
+  readonly #connectClient: ProtectNvrConnect;
   // Every per-client connection subscription in one array: the health bridge's two throttle rails, joined with the controller-lost/rebooted/recovered lifecycle
   // listeners this root keeps. Re-wired on every connect() against the live client and disposed on disconnect(), so they never outlive the client whose connection
   // monitor they observe - and one home for all of them is what leaves that rule impossible to half-apply.
@@ -130,11 +147,12 @@ export class ProtectNvr {
     viewer: { construct: (accessory, viewer) => new ProtectViewer(this, accessory, viewer), projection: (client, id) => client.viewer(id) }
   };
 
-  constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions) {
+  constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions, connect: ProtectNvrConnect = defaultConnect) {
 
     this.api = platform.api;
     this.config = nvrOptions;
     this.configuredDevices = new Map();
+    this.#connectClient = connect;
     this.connectionSubscriptions = [];
     this.featureLog = {};
     this.hap = this.api.hap;
@@ -524,32 +542,43 @@ export class ProtectNvr {
     }
   }
 
-  // Establish a connection to the Protect controller. The unifi-protect library's ProtectClient.connect() is atomic - it logs in, fetches the initial bootstrap, seeds
-  // the reducer, and brings up the realtime events channel as one ready-or-throws operation, owning retry/backoff and the periodic refresh failsafe internally. We wrap
-  // it in a startup-resilient retry: authentication faults get a small consecutive budget so a controller still sorting out its own auth recovers, but genuinely-wrong
-  // credentials fail fast rather than looping forever; any non-auth fault resets the budget and retries unbounded until the controller appears or the shutdown signal
-  // aborts. Safe to call multiple times - each call establishes a fresh client.
+  /* Establish a connection to the Protect controller. The unifi-protect library's ProtectClient.connect() is atomic - it logs in, fetches the initial bootstrap, seeds
+   * the reducer, and brings up the realtime events channel as one ready-or-throws operation, owning retry/backoff and the periodic refresh failsafe internally. We
+   * wrap it in a startup-resilient retry that waits by the policy's schedules: the slow refusal schedule while the controller refuses our sign-in, and the library's
+   * own recovery schedule for every other fault. The retry never gives up...it runs until the controller accepts us or we shut down, so a sign-in the controller
+   * starts accepting again is picked up by a later attempt rather than by a restart. The waits run on the platform's clock, so a suite walks the whole ladder on
+   * virtual time. Safe to call more than once - each call establishes a fresh client under a fresh policy.
+   *
+   * The policy tells us why a retried attempt failed when a run of failures begins and whenever its reason changes, and we say so at error level: an unbounded
+   * retry that reports nothing leaves a user with no way to tell a controller that is slow to appear from one that refuses us on every attempt. An attempt torn down
+   * by our own shutdown is an orderly teardown rather than a reason to report.
+   */
   private async connect(): Promise<boolean> {
 
-    const { shouldRetry } = createConnectRetryPolicy();
+    const { backoff, shouldRetry } = createConnectRetryPolicy({
+
+      onFailure: (reason: string): void => {
+
+        if(this.#isShuttingDown()) {
+
+          return;
+        }
+
+        this.log.error("Unable to connect to the Protect controller, and will keep trying: %s.", reason);
+      }
+    });
 
     try {
 
-      this.client = await retry((signal) => ProtectClient.connect({ host: this.config.address, log: this.clientLog, password: this.config.password,
+      this.client = await retry((signal) => this.#connectClient({ host: this.config.address, log: this.clientLog, password: this.config.password,
         recoveryPolicy: (context) => livestreamRecoveryDecision(context,
           { healthState: this.health.state, isHealthy: this.client.connection.isHealthy, isThrottled: this.client.connection.isThrottled, phase: this.phase },
           this.episodeCameraReachable(context.cameraId)), signal,
-        username: this.config.username }), { attempts: Infinity, clock: this.platform.clock, shouldRetry, signal: this.signal });
-    } catch(error) {
+        username: this.config.username }), { attempts: Infinity, backoff, clock: this.platform.clock, shouldRetry, signal: this.signal });
+    } catch {
 
-      // The shutdown signal aborting the retry is an orderly teardown, not a failure to report. A genuine auth budget exhaustion (wrong credentials) surfaces here.
-      if(this.#isShuttingDown()) {
-
-        return false;
-      }
-
-      this.log.error("Unable to connect to the Protect controller: %s.", formatErrorMessage(error));
-
+      // The retry rejects only on the shutdown abort, because the policy never vetoes an attempt and the attempts are unbounded. That is an orderly teardown, not a
+      // failure to report.
       return false;
     }
 
@@ -619,7 +648,7 @@ export class ProtectNvr {
   }
 
   // React to a controller reboot detection, whether we induced it or it happened organically. This handler records the observation (our own-clock recency anchor),
-  // publishes the lifecycle milestone (the unifi-protect library already logs the detection at warn, so we do not duplicate it), and resets each camera's probesize
+  // publishes the lifecycle milestone (the unifi-protect library already logs the detection at info, so we do not duplicate it), and resets each camera's probesize
   // self-tuning; the induced-reboot resume is driven separately by the connection's recovery edge in startConnectionObserver, so it is not this handler's concern.
   private onControllerRebooted(): void {
 
@@ -754,6 +783,11 @@ export class ProtectNvr {
         this.log.info("%s: Removing from HomeKit.", accessory.displayName);
         this.removeAccessoryFromHomeKit(accessory);
       }
+
+      // A controller disabled in HomeKit serves nothing, so it holds no console session either. The sweep above needed the live client to know which accessories are
+      // ours; once it is done, disconnecting disposes the client and detaches its connection-health subscriptions, so the controller neither keeps an idle
+      // authenticated session open nor narrates its connection health for the life of the process.
+      await this.disconnect();
 
       return;
     }
@@ -924,7 +958,7 @@ export class ProtectNvr {
 
     for(const accessory of this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac)) {
 
-      if(accessory.context.systemInfo || accessory.context.liveview || accessory.getService(this.hap.Service.SecuritySystem)) {
+      if(accessory.context.systemInfo || accessory.context.liveviewDerived) {
 
         continue;
       }
@@ -992,6 +1026,13 @@ export class ProtectNvr {
         device.doorbell?.reconcilePackageCamera();
       }
     }
+
+    // The liveviews pass, re-armed the way the package-camera pass is: a liveview switch or the security system whose liveviews are gone, and whose removal the gate
+    // refused or dropped while the controller was unsettled, is scheduled again now that stability has returned. On a controller still settling when the plugin starts,
+    // that includes an accessory whose liveviews were deleted while the plugin was down: the gate refused the removal the startup reconcile asked for, and with no
+    // liveview change to reconcile again, this pass is what schedules it at the first stability. A controller already up past the window is stable at login, where the
+    // startup reconcile schedules that removal itself.
+    this.liveviews?.configureLiveviews();
   }
 
   // Spawn the connection-state observe loop - the single consumer of connection.observe(), carrying two controller-wide duties on each transition. First it concludes an
@@ -1211,8 +1252,8 @@ export class ProtectNvr {
       return;
     }
 
-    // Liveview-centric accessories are handled elsewhere.
-    if(accessory.context.liveview || accessory.getService(this.hap.Service.SecuritySystem)) {
+    // The accessories the liveviews owner derives - the liveview switches and the security system - are handled elsewhere.
+    if(accessory.context.liveviewDerived) {
 
       return;
     }

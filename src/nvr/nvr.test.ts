@@ -2,23 +2,35 @@
  *
  * nvr.test.ts: Unit tests for the controller root's pure decision logic - the startup-resilient connect retry policy, the request-outcome classifier, the
  * removal-stability arithmetic, the disruption-expectation gating (the classification, its induced and recency halves, and the episode-latch), the induced-reboot resume
- * decision, and the scheduled-reboot arithmetic with the recording-count rule behind its deferral - plus the NvrHealth connection-input mapping those drive.
+ * decision, and the scheduled-reboot arithmetic with the recording-count rule behind its deferral - plus the NvrHealth connection-input mapping those drive, and the
+ * real controller root's disabled-controller path, its stability sweep's liveviews pass, and its connect retry.
  *
- * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively imports the entire device and
- * media graph, so it is neither unit-constructable nor cheaply loadable. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and
- * assert those here, exercising the controller's real behavior (auth-budget exhaustion, request-outcome-to-symptom mapping) without mocking a client.
- * The connection-input mapping is verified against the real NvrHealth with an injected clock, so the test proves both the mapping and the reducer/window behavior it
- * feeds.
+ * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively owns the entire device and
+ * media graph. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and assert those here, exercising the controller's real
+ * behavior (the connect retry's schedules and reports, request-outcome-to-symptom mapping) without mocking a client. The connect retry's schedules are walked through
+ * HBPU's own retry on a test clock, so the rows read the waits the retry actually asked for. The connection-input mapping is verified against the real NvrHealth
+ * with an injected clock, so the test proves both the mapping and the reducer/window behavior it feeds.
+ *
+ * The root's one external boundary is its connect port, so a path that is the root's own rather than a decision it delegates runs through the real root: it is built
+ * over the controller double's platform with a client double answering the port, and the platform's shutdown registration is run at the end of each row so no
+ * process-global diagnostics subscription outlives it.
  */
+import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
+import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError } from "unifi-protect";
+import type { ProtectClient, ProtectNvrConfig, ProtectNvrLiveviewConfig } from "unifi-protect";
+import { TEST_CLOCK_EPOCH, TestConnection, makeNvrConfig, makeRootPlatform, makeTestNvr } from "./testing.helpers.ts";
+import { TestClock, formatLogEntry, logCount, loggedAt, settle, settleUntil } from "homebridge-plugin-utils/testing";
+import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, countActiveRecordingViews, createConnectRetryPolicy,
   createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption, isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest,
   isWithinRebootRecency, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describe, test } from "node:test";
 import { NvrHealth } from "./nvr-health.ts";
 import type { NvrPhase } from "./nvr.ts";
-import { ProtectAuthError } from "unifi-protect";
-import { TestClock } from "homebridge-plugin-utils/testing";
+import { ProtectNvr } from "./nvr.ts";
 import assert from "node:assert/strict";
+import { once } from "node:events";
+import { retry } from "homebridge-plugin-utils";
 
 // The instant each health observer's test clock starts at, so the sliding window is driven by the test rather than wall time. Any nonzero epoch serves: the rows stamp
 // every symptom from the same clock the observer reads, so only the window's arithmetic reaches an assertion.
@@ -28,55 +40,121 @@ const HEALTH_CLOCK_EPOCH = 1000000;
 // a plain Error is the clearest representative of "network / transient".
 const networkError = new Error("connection refused");
 
+// A refused sign-in, in the library's authentication error, which is the class the retry policy reads a refusal by.
+const refusalError = new ProtectAuthError("bad credentials");
+
+// The wait between connect attempts while the controller refuses the sign-in, transcribed rather than read from the plugin's settings, so a schedule that drifts
+// toward a pace that could lock the account reddens a row.
+const REFUSAL_WAIT_MS = 5 * 60 * 1000;
+
+/* Walk HBPU's retry over a fresh connect retry policy on a test clock: each attempt fails with the next of the given errors, and the attempt after the last of them
+ * connects. Each pass lets the failed attempt reach the wait the retry asks the clock for, then steps the clock to that wait's deadline, so the run walks the
+ * policy's schedules on virtual time as the controller root's retry walks them.
+ *
+ * @param failures - The error each attempt fails with, in attempt order.
+ *
+ * @returns Every wait the retry asked the clock for, in order, and every reason the policy reported.
+ */
+async function walkConnectRetry(failures: readonly Error[]): Promise<{ reports: string[]; waits: number[] }> {
+
+  const clock = new TestClock();
+  const reports: string[] = [];
+  const { backoff, shouldRetry } = createConnectRetryPolicy({ onFailure: (reason: string): void => void reports.push(reason) });
+
+  let attempt = 0;
+
+  const run = retry(async (): Promise<string> => {
+
+    const failure = failures[attempt++];
+
+    if(failure) {
+
+      throw failure;
+    }
+
+    return "connected";
+  }, { attempts: Infinity, backoff, clock, shouldRetry });
+
+  for(const [index] of failures.entries()) {
+
+    // eslint-disable-next-line no-await-in-loop -- Each failed attempt has to reach its wait before the clock can step to that wait's deadline.
+    await settleUntil(() => clock.pending > 0, { description: "the wait after failure " + (index + 1).toString() });
+    clock.advanceToNext();
+  }
+
+  assert.equal(await run, "connected", "the attempt after the last failure connects, so the run ends on the controller accepting it");
+
+  return { reports, waits: [...clock.requested] };
+}
+
 describe("connect retry policy", () => {
 
-  test("fails fast after the consecutive-auth budget is exhausted", () => {
+  test("a fault other than a refusal waits out the library's recovery schedule, then holds at its steady floor", async () => {
 
-    const { shouldRetry } = createConnectRetryPolicy(3);
-    const authError = new ProtectAuthError("bad credentials");
+    // More than one failure past the last staged delay, so the floor is shown to hold rather than to be one more rung.
+    const failures = Array.from({ length: PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.length + 2 }, () => networkError);
 
-    // The first two consecutive auth faults are retried (the controller may still be sorting out its own auth); the third exhausts the budget and stops.
-    assert.equal(shouldRetry(authError), true);
-    assert.equal(shouldRetry(authError), true);
-    assert.equal(shouldRetry(authError), false);
+    assert.deepEqual((await walkConnectRetry(failures)).waits, [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS,
+      PROTECT_RECOVERY_STEADY_INTERVAL_MS ]);
   });
 
-  test("retries a non-auth fault without consuming the auth budget", () => {
+  test("a refused sign-in waits five minutes before every retry, however many times it is refused", async () => {
 
-    const { shouldRetry } = createConnectRetryPolicy(3);
+    // A run of refusals, so a policy that stopped retrying a refusal would end the walk rejected rather than connected.
+    const failures = Array.from({ length: PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.length + 2 }, () => refusalError);
 
-    // Any number of network faults are retried - the budget only ever counts authentication failures.
-    for(let attempt = 0; attempt < 10; attempt++) {
+    assert.deepEqual((await walkConnectRetry(failures)).waits, failures.map(() => REFUSAL_WAIT_MS), "every retry after a refusal waits five minutes");
+  });
 
-      assert.equal(shouldRetry(networkError), true);
+  test("a change of class restarts the new class's schedule at its first rung, whichever way the class changes", async () => {
+
+    const [ firstRecovery, secondRecovery, thirdRecovery ] = PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS;
+
+    /* A run of ordinary faults, then refusals, then ordinary faults again. The retry hands each wait its own attempt number, which counts the whole run, so a wait
+     * that read it would land each change partway down the new schedule rather than on its first rung.
+     */
+    const { waits } = await walkConnectRetry([ networkError, networkError, networkError, refusalError, refusalError, networkError, networkError ]);
+
+    assert.deepEqual(waits, [ firstRecovery, secondRecovery, thirdRecovery, REFUSAL_WAIT_MS, REFUSAL_WAIT_MS, firstRecovery, secondRecovery ]);
+  });
+
+  test("every class of fault is retried at every rung of its schedule, its steady floor included", () => {
+
+    // More than one failure past the recovery schedule's last staged delay, so each class is asked about on its floor as well as on each of its rungs.
+    const run = PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.length + 2;
+
+    for(const failure of [ networkError, refusalError, new TypeError("Cannot read properties of undefined (reading 'nvr')") ]) {
+
+      const { shouldRetry } = createConnectRetryPolicy();
+
+      for(let attempt = 1; attempt <= run; attempt++) {
+
+        assert.equal(shouldRetry(failure), true, "nothing gives up, so every failure of every class is retried");
+      }
     }
   });
 
-  test("a non-auth fault resets the consecutive-auth counter", () => {
+  test("a run reports its first failure, and a repeat of the same reason stays silent", async () => {
 
-    const { shouldRetry } = createConnectRetryPolicy(3);
-    const authError = new ProtectAuthError("bad credentials");
+    /* Distinct error instances that read identically, which is the shape a refusal takes when each attempt throws afresh. A comparison by identity would report each
+     * of them, and one that remembered nothing would too.
+     */
+    const { reports } = await walkConnectRetry(Array.from({ length: 3 }, () => new ProtectAuthError("bad credentials")));
 
-    // Two auth faults, then a network fault, must reset the run - so the budget is not exhausted by non-consecutive auth failures interleaved with recovery signals.
-    assert.equal(shouldRetry(authError), true);
-    assert.equal(shouldRetry(authError), true);
-    assert.equal(shouldRetry(networkError), true);
+    assert.deepEqual(reports, ["bad credentials"], "the run reports its reason once, as the text a user reads");
 
-    // The counter is back to zero, so two more auth faults are again retried and only the third would stop.
-    assert.equal(shouldRetry(authError), true);
-    assert.equal(shouldRetry(authError), true);
-    assert.equal(shouldRetry(authError), false);
+    // The same policy with no callback retries identically, so reporting is an addition to the verdict and never a change to it.
+    assert.equal(createConnectRetryPolicy().shouldRetry(refusalError), true);
   });
 
-  test("defaults its budget to the shared auth-failure limit", () => {
+  test("a run reports again whenever the reason changes, a return to an earlier reason included", async () => {
 
-    const { shouldRetry } = createConnectRetryPolicy();
-    const authError = new ProtectAuthError("bad credentials");
+    /* An unreachable controller that starts refusing the sign-in, then becomes unreachable again. The return is what tells a comparison against the last reason
+     * apart from one against every reason ever seen...the latter would stay silent when the first fault returns and hide from the user that the fault moved again.
+     */
+    const { reports } = await walkConnectRetry([ networkError, networkError, refusalError, refusalError, networkError ]);
 
-    // The default ceiling is PROTECT_AUTH_FAILURE_LIMIT (3): two retried, the third stops.
-    assert.equal(shouldRetry(authError), true);
-    assert.equal(shouldRetry(authError), true);
-    assert.equal(shouldRetry(authError), false);
+    assert.deepEqual(reports, [ "connection refused", "bad credentials", "connection refused" ]);
   });
 });
 
@@ -503,5 +581,224 @@ describe("the active-recording count", () => {
       {} ]), 1);
 
     assert.equal(countActiveRecordingViews([ { streaming: { isRecordingTransmitting: true } }, { streaming: { isRecordingTransmitting: true } } ]), 2);
+  });
+});
+
+describe("the controller root's disabled-controller path", () => {
+
+  /* A controller the user disabled in HomeKit at its own scope connects, removes every accessory it owns, and then lets go of its console session. The client double
+   * records its dispose and whether this controller's accessories were already gone when it ran, so the order is part of the assertion: a dispose ahead of the sweep
+   * would leave the sweep reading a disposed client. What a live client would go on delivering to a root still wired to it - the library entering its throttle, which
+   * the health bridge narrates at warn, and the controller dropping off and coming back - is then delivered through the connection, and nothing may be logged.
+   */
+  test("a controller disabled in HomeKit disconnects from the Protect controller after removing its accessories", async () => {
+
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", version: "6.1.79" };
+    const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
+    const { controller, logEntries, nvr: double } = makeTestNvr({ store, userOptions: ["Disable.Device." + nvrConfig.mac] });
+    const connection = new TestConnection();
+    const disposals: boolean[] = [];
+
+    // A cached camera and a cached liveview switch this controller owns, one for each of the disabled path's removal loops.
+    const camera = makeTestAccessory("Test Camera", "uuid:74ACB9000001");
+    const liveview = makeTestAccessory("Test Liveview", "uuid:liveview");
+
+    camera.context = { mac: "74ACB9000001", nvr: nvrConfig.mac };
+    liveview.context = { liveview: "Test", nvr: nvrConfig.mac };
+    double.platform.accessories.push(camera, liveview);
+
+    const client = {
+
+      [Symbol.asyncDispose]: async (): Promise<void> => {
+
+        disposals.push(!double.platform.accessories.some((accessory) => accessory.context["nvr"] === nvrConfig.mac));
+      },
+      connection: connection,
+      controllerName: "Test Controller",
+      nvr: { config: nvrConfig },
+      state: store
+    };
+
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client as unknown as ProtectClient);
+
+    try {
+
+      await root.login();
+
+      assert.ok(loggedAt(logEntries, "info", "Disabling this UniFi Protect controller in HomeKit."), "the controller took its disabled path");
+      assert.deepEqual(disposals, [true], "the client was disposed once, after every accessory this controller owns was removed");
+      assert.equal(connection.listenerCount, 0, "no connection subscription outlives the client");
+
+      const settled = logEntries.length;
+
+      connection.emit("throttleEntered");
+      connection.emit("controllerLost");
+      connection.emit("controllerRebooted");
+
+      await settle();
+
+      assert.deepEqual(logEntries.slice(settled).map(formatLogEntry), [], "nothing is logged after the sweep");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
+  });
+});
+
+describe("the controller root's stability sweep", () => {
+
+  /* A controller that boots as the plugin starts is unsettled at login, so the removal gate refuses what the startup liveviews reconcile asks for: the removal of a
+   * security system accessory Homebridge restored from its cache after its liveviews were deleted while the plugin was down. Nothing else asks again, because the
+   * liveviews only change when the user edits them. The root's stability sweep runs once the stability window has passed, and its liveviews pass schedules the
+   * removal, which lands when the removal delay ends. The clock stops a millisecond short of the window first, so a removal scheduled before the sweep reddens the row.
+   */
+  test("a security system left by liveviews deleted while the plugin was down is removed by the stability sweep's liveviews pass", async () => {
+
+    const clock = new TestClock(TEST_CLOCK_EPOCH);
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+    const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
+    const { apiCalls, controller, logEntries, nvr: double } = makeTestNvr({ clock, store });
+    const ghost = makeTestAccessory("Security System", "uuid:" + nvrConfig.mac + ".Security");
+
+    ghost.context = { liveviewDerived: true, nvr: nvrConfig.mac };
+    double.platform.accessories.push(ghost);
+
+    // The client a connected controller reads: the controller record, the store, and the liveview collection read through it, which holds no liveview at all.
+    const client = {
+
+      [Symbol.asyncDispose]: async (): Promise<void> => {
+
+        // No-op: the double owns no resources to release.
+      },
+      connection: new TestConnection(),
+      controllerName: "Test Controller",
+      async *events(): AsyncGenerator<never> {
+
+        // None: the activity stream carries no event, so the root's router finds none and ends.
+      },
+      get liveviews(): readonly ProtectNvrLiveviewConfig[] {
+
+        return [...store.snapshot().liveviews.values()];
+      },
+      nvr: { config: nvrConfig },
+      state: store
+    };
+
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client as unknown as ProtectClient);
+    const removalReason = "No plugin-specific liveviews found. Disabling the security system accessory associated with this UniFi Protect controller.";
+
+    try {
+
+      await root.login();
+      await settle();
+
+      assert.ok(loggedAt(logEntries, "info", "Connected to nvr.test (UniFi Protect 6.1.79 running on UniFi OS 4.3.6)."),
+        "the controller connected and took its enabled path");
+
+      clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW - 1);
+
+      assert.ok(double.platform.accessories.includes(ghost), "the security system stays while the controller settles");
+      assert.equal(loggedAt(logEntries, "info", removalReason), false, "and the startup reconcile's removal was refused");
+
+      clock.advance(1);
+
+      assert.ok(loggedAt(logEntries, "info", removalReason), "the stability sweep's liveviews pass scheduled the removal");
+      assert.ok(double.platform.accessories.includes(ghost), "the security system stays through the removal delay");
+
+      clock.advance(PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL * 1000);
+
+      assert.equal(double.platform.accessories.includes(ghost), false, "the security system left when the removal delay ended");
+      assert.ok(apiCalls.some((call) => (call.kind === "unregister") && call.accessories.includes(ghost)), "and it was unregistered from HomeKit");
+
+      shutdown();
+
+      await settle();
+
+      assert.equal(store.observerCount, 0, "every observe loop the root started ended with its shutdown");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
+  });
+});
+
+describe("the controller root's connect retry", () => {
+
+  /* A controller that refuses the configured sign-in at startup is retried for as long as the plugin runs, five minutes between attempts, and the user is told why
+   * once rather than on every attempt. The connect port refuses every attempt and records the platform clock's time at each, so the spacing is read from the
+   * attempts themselves, and the clock stops a millisecond short of each wait first, so a retry that came early reddens the row. The run is walked to its fourth
+   * attempt, which a policy that stopped retrying after a few refusals would never reach. That attempt is still in flight when the plugin shuts down, and fails with
+   * the abort it is handed, as a sign-in torn down mid-request does. Shutdown is the only end of the run, and an orderly one: the login returns and the aborted
+   * attempt is not reported.
+   */
+  test("a refused sign-in is reported once at error and retried five minutes apart until shutdown ends the run", async () => {
+
+    const { clock, controller, logEntries, nvr: double } = makeTestNvr({ store: new TestStateStore(makeProtectState({ nvr: makeNvrConfig() })) });
+    const attempts: number[] = [];
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, double.config, async ({ signal }): Promise<ProtectClient> => {
+
+      attempts.push(clock.now());
+
+      if((attempts.length === 4) && signal) {
+
+        await once(signal, "abort");
+
+        signal.throwIfAborted();
+      }
+
+      throw refusalError;
+    });
+
+    try {
+
+      const login = root.login();
+
+      await settleUntil(() => attempts.length === 1, { description: "the first sign-in attempt" });
+
+      for(let attempt = 2; attempt <= 4; attempt++) {
+
+        clock.advance(REFUSAL_WAIT_MS - 1);
+
+        // eslint-disable-next-line no-await-in-loop -- Each step reads the attempts the previous one let run, so the steps are serial by intent.
+        await settle();
+
+        assert.equal(attempts.length, attempt - 1, "no attempt runs before five minutes have passed since the last refusal");
+
+        clock.advance(1);
+
+        // eslint-disable-next-line no-await-in-loop -- Each step reads the attempts the previous one let run, so the steps are serial by intent.
+        await settleUntil(() => attempts.length === attempt, { description: "sign-in attempt " + attempt.toString() });
+      }
+
+      assert.deepEqual(attempts.map((at) => at - (attempts[0] ?? 0)), [ 0, REFUSAL_WAIT_MS, 2 * REFUSAL_WAIT_MS, 3 * REFUSAL_WAIT_MS ],
+        "each attempt after a refusal runs five minutes after the one before it");
+      assert.equal(logCount(logEntries, "error", "Unable to connect to the Protect controller, and will keep trying: bad credentials."), 1,
+        "the refusal is reported once at error, and its repeats are not");
+
+      const reported = logEntries.length;
+
+      shutdown();
+
+      await login;
+
+      assert.equal(attempts.length, 4, "shutdown ends the run without another attempt");
+      assert.deepEqual(logEntries.slice(reported).filter((entry) => entry.level === "error").map(formatLogEntry), [],
+        "and the attempt the shutdown aborted is not reported, so the run ends with nothing at error");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
   });
 });

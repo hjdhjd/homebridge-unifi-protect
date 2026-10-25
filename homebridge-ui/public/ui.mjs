@@ -4,15 +4,19 @@
  */
 "use strict";
 
-import { CONTROLLER_LISTED_WARNING, controllerListedElsewhere, controllers, controllersAwaitingMigration, deviceListResult, hasValidCredentials, makeProtectConfig,
-  primaryController, primaryListedElsewhere, readDeviceListAnswer, staleSelectionVerdict, withControllerRemoved, withControllerSaved, withPrimaryCredentials }
-  from "./protect-config.mjs";
+import { CONTROLLER_LISTED_WARNING, deviceListResult, makeControllerList, makeProtectConfig, readDeviceListAnswer, staleSelectionVerdict } from "./protect-config.mjs";
+import { addressListedElsewhere, addressListingForm } from "homebridge-plugin-utils/webui/address.js";
 import { createActionGuard, withDeadline } from "homebridge-plugin-utils/webUi-liveness.mjs";
 import { makeControllerActions, makeControllerLogin } from "./controller-actions.mjs";
 import { FeatureOptions } from "homebridge-plugin-utils/featureOptions.js";
 import { PluginConfigSession } from "homebridge-plugin-utils/pluginConfigSession.mjs";
 import { createSaveFlow } from "homebridge-plugin-utils/webui/saveflow.js";
 import { webUi } from "homebridge-plugin-utils/webUi.mjs";
+
+// The configured controller list's interpreters, bound once over HBPU's listed-address rule, which is the rule the plugin skips a repeated controller by, so the
+// page lists, refuses, and writes controllers by the same reading of an address the plugin starts them by.
+const { controllerListedElsewhere, controllers, controllersAwaitingMigration, hasValidCredentials, primaryController, primaryListedElsewhere, withControllerRemoved,
+  withControllerSaved, withPrimaryCredentials } = makeControllerList({ addressListedElsewhere, addressListingForm });
 
 /* The bound in seconds on each individual controller probe. This is not a worst-case bound and does not pretend to be one: the Protect transport caps each HTTP call
  * at three and a half seconds, and a probe's first-ever login runs up to four calls in sequence - a login attempt, a token fetch, the login retry, and then the
@@ -1147,7 +1151,7 @@ const wireProtectConfig = async () => {
    * the migration read every option as unconfigured and compose entries against a catalog that never described them. A malformed answer, a missed deadline, and a
    * failed request each decline the wiring here, before the session opens, so nothing is written and the page loads as it otherwise would.
    */
-  const protectConfig = makeProtectConfig({ FeatureOptions, catalog: await ui.featureOptions.catalog() });
+  const protectConfig = makeProtectConfig({ FeatureOptions, catalog: await ui.featureOptions.catalog(), controllers });
 
   // The library's session is the single conduit the framework's own writes use, so the patch merges onto a replica synced just now rather than onto a snapshot taken
   // before the page opened. The name seeds the primary platform entry, and it is read from the same constant the framework is configured with so the two cannot drift.

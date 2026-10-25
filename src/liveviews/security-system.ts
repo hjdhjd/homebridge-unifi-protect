@@ -34,18 +34,22 @@ export class ProtectSecuritySystem extends ProtectBase {
   // Configure a security system accessory for HomeKit.
   private configureDevice(): boolean {
 
-    let securityState: CharacteristicValue = this.hap.Characteristic.SecuritySystemCurrentState.STAY_ARM;
+    // The scene the user last set this security system to, which the accessory carries across a restart. The saved state is the user's choice alone: only a set
+    // writes it, and the plugin writes none of its own, so an accessory the user has never set carries none.
+    const savedState = this.accessory.context.securityState;
 
-    // Save the security system state before we wipe out the context.
-    if(this.accessory.context.securityState !== undefined) {
+    // Clean out the context object in case it's been polluted somehow, carrying a saved scene through the wipe. The accessory is marked as one the liveviews owner
+    // derives, so the controller's device removal passes leave it to that owner, and the context is saved.
+    this.accessory.context = {};
+    this.accessory.context.liveviewDerived = true;
+    this.accessory.context.nvr = this.nvr.ufp.mac;
 
-      securityState = this.accessory.context.securityState;
+    if(savedState !== undefined) {
+
+      this.accessory.context.securityState = savedState;
     }
 
-    // Clean out the context object in case it's been polluted somehow.
-    this.accessory.context = {};
-    this.accessory.context.nvr = this.nvr.ufp.mac;
-    this.accessory.context.securityState = securityState;
+    this.api.updatePlatformAccessories([this.accessory]);
 
     this.configureInfo();
 
@@ -176,7 +180,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     return true;
   }
 
-  // Configure the security system for HomeKit.
+  // Configure the security system for HomeKit. It shows the saved scene, the user's last choice, or Off when none is saved, and applies nothing to the cameras.
   private configureSecuritySystem(): void {
 
     // Acquire (find or create) the security system service.
@@ -224,10 +228,14 @@ export class ProtectSecuritySystem extends ProtectBase {
       });
 
     // Handlers for triggering a change in the security system state.
-    this.accessory.getService(this.hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemTargetState).onSet(this.setSecurityState.bind(this));
+    this.accessory.getService(this.hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemTargetState).onSet((value: CharacteristicValue) => {
 
-    // Set the initial state after we have setup our handlers above. This way, when we startup, we
-    // automatically restore the scene we've been set to, if any.
+      this.setSecurityState(value);
+    });
+
+    // Show the saved scene as the target state, or Off when none is saved. This is a status update, which runs no set handler, so nothing is applied to the cameras.
+    // Each camera persists its own motion detection setting and is the source of truth for it, so applying the scene here would override any choice the user made
+    // on a camera after setting the scene.
     this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemTargetState, targetSecurityState);
   }
 
@@ -390,6 +398,7 @@ export class ProtectSecuritySystem extends ProtectBase {
       this.log.info("No liveview configured for this security system state. Create a liveview named %s in the Protect webUI to use this feature.", viewScene);
 
       this.accessory.context.securityState = newState;
+      this.api.updatePlatformAccessories([this.accessory]);
       this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
 
       return;
@@ -445,8 +454,9 @@ export class ProtectSecuritySystem extends ProtectBase {
       }
     }
 
-    // Inform the user of our new state.
+    // Save and show our new state.
     this.accessory.context.securityState = newState;
+    this.api.updatePlatformAccessories([this.accessory]);
     this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
 
     // Reset our alarm state and update our alarm switch.

@@ -3,7 +3,7 @@
  * controller-actions.d.mts: Type declarations for the settings page's controller login check, its kept controller answers, and the controller save and removal.
  */
 import type { CommitConfig, SaveFlow } from "homebridge-plugin-utils";
-import type { ProtectConfig, controllerListedElsewhere, readDeviceListAnswer, withControllerRemoved, withControllerSaved } from "./protect-config.mjs";
+import type { ProtectConfig, ProtectControllerList, readDeviceListAnswer } from "./protect-config.mjs";
 
 /** The host's toast surface, one function per severity a delivery can name. */
 export interface HostToast {
@@ -83,14 +83,14 @@ export interface ControllerActions {
  */
 export declare const makeControllerActions: (injected: {
   commitConfig: CommitConfig<ProtectConfig>;
-  controllerListedElsewhere: typeof controllerListedElsewhere;
+  controllerListedElsewhere: ProtectControllerList["controllerListedElsewhere"];
   controllerListedWarning: string;
   platformConfig: () => ProtectConfig | null;
   processDeviceList: (list: { address: string; devices: Record<string, unknown>[] }) => Record<string, unknown>[];
   requestControllerLogin: ControllerLoginRequest;
   toast: Pick<HostToast, "error" | "success" | "warning">;
-  withControllerRemoved: typeof withControllerRemoved;
-  withControllerSaved: typeof withControllerSaved; }) => ControllerActions;
+  withControllerRemoved: ProtectControllerList["withControllerRemoved"];
+  withControllerSaved: ProtectControllerList["withControllerSaved"]; }) => ControllerActions;
 
 /**
  * Build the controller login check over the UI-server bridge's request and the framework's deadline. A check that outlasts the deadline answers as the UI server's

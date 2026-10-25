@@ -79,12 +79,13 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 
 // The reusable construction helper: build a REAL ProtectSecuritySystem against the harness doubles. makeProtectState seeds the Protect-* liveviews (DISTINCT ids per the
 // makeLiveviewConfig distinct-id discipline) and the nvr record carrying the opt-in hardwareRevision so configureInfo's HardwareRevision write reads a real value; the
-// casts are confined to construction exactly as the family suites do. The owner RECEIVES its accessory (it does not self-create), so the test supplies one. The
-// returned controller is the AbortController behind nvr.signal, aborted in teardown: the fixture tears down through the controller it built, the scope that owns every
-// registration the test created.
+// casts are confined to construction exactly as the family suites do. The owner RECEIVES its accessory (it does not self-create), so the test supplies one. The seed
+// hook runs against the controller double before the owner is built, standing in for the cameras a restart has already constructed when the security system shows
+// its saved scene. The returned controller is the AbortController behind nvr.signal, aborted in teardown: the fixture tears down through the controller it built, the
+// scope that owns every registration the test created.
 function buildSecuritySystem(
   harnessOptions: { accessory?: TestAccessory; disconnected?: boolean; hardwareRevision?: string; liveviews?: ProtectNvrLiveviewConfig[];
-    userOptions?: string[]; } = {}): {
+    seed?: (nvr: TestProtectNvr) => void; userOptions?: string[]; } = {}): {
   accessory: TestAccessory; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr; owner: ProtectSecuritySystem;
   store: TestStateStore;
 } {
@@ -103,6 +104,8 @@ function buildSecuritySystem(
 
   // A disconnected double is the production startup shape: the security system is built before the broker acknowledges the first session.
   mqtt.connected = !(harnessOptions.disconnected ?? false);
+
+  harnessOptions.seed?.(nvr);
 
   const owner = new ProtectSecuritySystem(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory);
 
@@ -134,12 +137,12 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     assert.ok(security, "the SecuritySystem service was acquired at construction");
 
-    // The default saved state is STAY_ARM (configureDevice seeds it when context.securityState is undefined), so current initializes to STAY_ARM and target to STAY_ARM.
-    assert.equal(security.getCharacteristic(CurrentState).value, CurrentState.STAY_ARM, "CurrentState initialized to the saved STAY_ARM default");
-    assert.equal(security.getCharacteristic(TargetState).value, TargetState.STAY_ARM, "TargetState initialized to the saved STAY_ARM default");
+    // An accessory the user has never set carries no saved state, so current initializes to DISARMED and target to DISARM: the security system shows Off.
+    assert.equal(security.getCharacteristic(CurrentState).value, CurrentState.DISARMED, "CurrentState initialized to DISARMED with no saved state");
+    assert.equal(security.getCharacteristic(TargetState).value, TargetState.DISARM, "TargetState initialized to DISARM with no saved state");
 
-    // The current-state onGet reads through the saved state (alarm-aware); with no alarm it returns the saved STAY_ARM.
-    assert.equal(await security.getCharacteristic(CurrentState).triggerGet(), CurrentState.STAY_ARM, "the CurrentState onGet reads through the saved securityState");
+    // The current-state onGet reads through the saved state (alarm-aware); with no alarm and no saved state it returns DISARMED.
+    assert.equal(await security.getCharacteristic(CurrentState).triggerGet(), CurrentState.DISARMED, "the CurrentState onGet reads Off with no saved securityState");
 
     // The bespoke configureInfo wrote the controller-branded identity; HardwareRevision is non-vacuous via the opt-in hardwareRevision.
     const info = built.accessory.getService(Service.AccessoryInformation);
@@ -149,8 +152,9 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.equal(info.getCharacteristic(Characteristic.SerialNumber).value, CONTROLLER_MAC + ".Security", "configureInfo wrote the mac+.Security SerialNumber");
     assert.equal(info.getCharacteristic(Characteristic.HardwareRevision).value, "1.0.0", "configureInfo wrote the controller hardwareRevision unconditionally");
 
-    // The context was reset to carry the controller MAC and the saved state, and the owner registers ZERO self-observers (it is owner-driven).
+    // The context was reset to carry the controller MAC and no state of the plugin's own, and the owner registers ZERO self-observers (it is owner-driven).
     assert.equal(built.accessory.context["nvr"], CONTROLLER_MAC, "configureDevice reset the context to carry the controller MAC");
+    assert.equal(built.accessory.context["securityState"], undefined, "configureDevice stores no security state the user has not set");
     assert.equal(built.store.observerCount, 0, "the security-system owner registers no self-observers - it is driven by the liveviews owner, HomeKit onSet, and MQTT");
   });
 
@@ -327,9 +331,9 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     assert.ok(subscription, "the securitysystem GET subscription composed the controller-MAC topic and captured a getValue handler");
 
-    // The default saved state is STAY_ARM, which currentSecuritySystemState maps to "Home".
-    assert.equal(await built.mqtt.invokeGet(CONTROLLER_MAC + "/securitysystem/get"), "Home",
-      "the GET handler returns the human-readable state string for the saved STAY_ARM state");
+    // With no saved state, currentSecuritySystemState maps the absent state to "Off".
+    assert.equal(await built.mqtt.invokeGet(CONTROLLER_MAC + "/securitysystem/get"), "Off",
+      "the GET handler returns the human-readable state string for a security system with no saved state");
 
     // The GET registration binds the owner-lifetime signal, not nvr.signal: it is live at rest, and cleanup() aborts it while the controller-lifetime nvr.signal stays
     // live - the security system unwinds independently of the plugin.
@@ -361,8 +365,8 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.AWAY_ARM,
       "the away MQTT value drove setSecurityState to AWAY_ARM");
-    assert.ok(built.mqtt.published.some((published) => (published.topic === CONTROLLER_MAC + "/securitysystem") && (published.payload === "Away")),
-      "the away set published the Away state");
+    assert.deepEqual(built.mqtt.publishedTo(CONTROLLER_MAC + "/securitysystem").map((entry) => entry.payload), [ "Off", "Away" ],
+      "the build stated the Off state once and the away set stated the Away state once");
 
     // "off" maps to DISARM and disarms.
     await built.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "off");
@@ -391,9 +395,9 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
       await disabled.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "AlarmOn");
 
-      assert.equal(disabled.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.STAY_ARM,
-        "an AlarmOn with the feature off leaves the held STAY_ARM state");
-      assert.equal(await disabled.mqtt.invokeGet(CONTROLLER_MAC + "/securitysystem/get"), "Home", "the GET still answers the held state, never Alarm");
+      assert.equal(disabled.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.DISARMED,
+        "an AlarmOn with the feature off leaves the held Off state");
+      assert.equal(await disabled.mqtt.invokeGet(CONTROLLER_MAC + "/securitysystem/get"), "Off", "the GET still answers the held state, never Alarm");
       assert.ok(loggedAt(disabled.logEntries, "error", "Unable to process MQTT security system setting: alarmon."),
         "the refused AlarmOn is logged as an unknown value is");
 
@@ -401,7 +405,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
       assert.ok(loggedAt(disabled.logEntries, "error", "Unable to process MQTT security system setting: alarmoff."),
         "the refused AlarmOff is logged as an unknown value is");
-      assert.deepEqual(disabled.mqtt.publishedTo("/securitysystem").slice(publishedBefore).map((entry) => entry.payload), ["Home"],
+      assert.deepEqual(disabled.mqtt.publishedTo("/securitysystem").slice(publishedBefore).map((entry) => entry.payload), ["Off"],
         "the refused alarm values publish nothing, so the one statement after them is the GET's answer");
 
       await enabled.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "AlarmOn");
@@ -531,8 +535,8 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     // With no liveviews the setSecurityState early-returns before any state write or publish.
     await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.AWAY_ARM);
 
-    assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.STAY_ARM,
-      "with no liveviews CurrentState stays at the saved default - the early return fired");
+    assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.DISARMED,
+      "with no liveviews CurrentState stays Off - the early return fired");
     assert.equal(built.mqtt.published.length, publishedBefore, "the no-liveviews early return published nothing");
   });
 
@@ -555,7 +559,12 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
   test("setSecurityAlarm triggers the ALARM_TRIGGERED current state and the alarm Switch, and a reset returns to the held state", async () => {
 
-    const built = buildSecuritySystem({ userOptions: ["Enable.SecuritySystem.Alarm"] });
+    // A saved STAY_ARM is the held state, so the reset is told apart from the Off a security system with no saved state shows.
+    const accessory = makeTestAccessory("Security System", "uuid:" + CONTROLLER_MAC + ".Security");
+
+    accessory.context["securityState"] = CurrentState.STAY_ARM;
+
+    const built = buildSecuritySystem({ accessory, userOptions: ["Enable.SecuritySystem.Alarm"] });
 
     activeController = built.controller;
 
@@ -574,7 +583,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.ok(built.mqtt.published.some((published) => (published.topic === CONTROLLER_MAC + "/securitysystem") && (published.payload === "Alarm")),
       "the alarm published the Alarm state");
 
-    // Reset returns to the held securityState (STAY_ARM by default).
+    // Reset returns to the held securityState, the saved STAY_ARM.
     await alarm.getCharacteristic(Characteristic.On).triggerSet(false);
 
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.STAY_ARM,
@@ -666,6 +675,76 @@ describe("the security system's state stated as it is built and restated per bro
       await settle();
 
       assert.deepEqual(built.mqtt.publishedTo("/securitysystem").slice(1).map((entry) => entry.payload), ["Home"], "the returning session hears the current state once");
+    } finally {
+
+      built.controller.abort();
+    }
+  });
+});
+
+describe("the security system's saved scene shown as it is built", () => {
+
+  /* A restart constructs every camera before the liveviews owner builds the security system, and each camera persists its own motion detection setting, which is the
+   * source of truth for it. The saved scene is shown as the security system is built and nothing is applied, so a camera the user changed after setting the scene
+   * keeps that choice: here the saved scene is armed away, its liveview names one camera, and every camera starts with motion detection on, the one the scene leaves
+   * out included.
+   */
+  test("a saved scene is shown as the security system is built, nothing is applied to the cameras, and the build states its state once", async () => {
+
+    const accessory = makeTestAccessory("Security System", "uuid:" + CONTROLLER_MAC + ".Security");
+    const cameras: ReturnType<typeof seedMember>[] = [];
+
+    accessory.context["securityState"] = CurrentState.AWAY_ARM;
+
+    const built = buildSecuritySystem({ accessory, liveviews: [makeLiveviewConfig({ cameras: ["camera-away"], id: "lv-away", name: "Protect-Away" })],
+      seed: (nvr) => void cameras.push(seedMember(nvr, { detectMotion: true, id: "camera-away", name: "Away Camera", uuid: "uuid:away-camera" }),
+        seedMember(nvr, { detectMotion: true, id: "camera-other", name: "Other Camera", uuid: "uuid:other-camera" })) });
+
+    try {
+
+      await settle();
+
+      const [ member, nonMember ] = cameras;
+      const security = built.accessory.getService(Service.SecuritySystem);
+
+      assert.ok(member && nonMember, "the cameras were constructed before the security system was built");
+      assert.equal(security?.getCharacteristic(CurrentState).value, CurrentState.AWAY_ARM, "the security system shows the saved scene");
+      assert.equal(security.getCharacteristic(TargetState).value, TargetState.AWAY_ARM, "and its target state shows the saved scene");
+      assert.equal(member.accessory.context["detectMotion"], true, "the camera the scene names keeps motion detection on");
+      assert.equal(nonMember.accessory.context["detectMotion"], true, "the camera the scene leaves out keeps the motion detection setting it persists itself");
+      assert.equal(nonMember.motionSwitch.getCharacteristic(Characteristic.On).value, true, "and its motion switch still shows motion detection on");
+      assert.ok(!loggedAt(built.logEntries, "info", "Setting the liveview scene"), "no scene was applied");
+      assert.deepEqual(built.mqtt.publishedTo("/securitysystem").map((entry) => entry.payload), ["Away"], "the build states the saved state once and only once");
+    } finally {
+
+      built.controller.abort();
+    }
+  });
+
+  /* An accessory the user has never set carries no saved scene. It shows Off, stores no state of the plugin's own, and applies nothing to the cameras: applying Off,
+   * or any default scene, would turn off motion detection on the camera here, which no Protect-Home slot names.
+   */
+  test("a security system the user has never set shows Off, stores no state, and applies no scene", async () => {
+
+    const cameras: ReturnType<typeof seedMember>[] = [];
+    const built = buildSecuritySystem({ liveviews: [makeLiveviewConfig({ cameras: ["camera-home"], id: "lv-home", name: "Protect-Home" })],
+      seed: (nvr) => void cameras.push(seedMember(nvr, { detectMotion: true, id: "camera-other", name: "Other Camera", uuid: "uuid:other-camera" })) });
+
+    try {
+
+      await settle();
+
+      const [nonMember] = cameras;
+      const security = built.accessory.getService(Service.SecuritySystem);
+
+      assert.ok(nonMember, "the camera was constructed before the security system was built");
+      assert.equal(security?.getCharacteristic(CurrentState).value, CurrentState.DISARMED, "the security system shows Off");
+      assert.equal(security.getCharacteristic(TargetState).value, TargetState.DISARM, "and its target state shows Off");
+      assert.deepEqual(built.mqtt.publishedTo("/securitysystem").map((entry) => entry.payload), ["Off"], "the build states Off once and only once");
+      assert.equal(built.accessory.context["securityState"], undefined, "no security state is stored until the user sets one");
+      assert.equal(nonMember.accessory.context["detectMotion"], true, "a camera no scene names keeps motion detection on");
+      assert.ok(!loggedAt(built.logEntries, "info", "Setting the liveview scene"), "no scene was applied");
+      assert.ok(!loggedAt(built.logEntries, "info", "No liveview configured for this security system state."), "no scene was attempted");
     } finally {
 
       built.controller.abort();

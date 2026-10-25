@@ -2,7 +2,7 @@
  *
  * protect-config.d.mts: Type declarations for the pure Protect platform-configuration interpreters.
  */
-import type { FeatureCategoryEntry, FeatureOptionEntry, FeatureOptions } from "homebridge-plugin-utils";
+import type { FeatureCategoryEntry, FeatureOptionEntry, FeatureOptions, addressListedElsewhere, addressListingForm } from "homebridge-plugin-utils";
 
 /**
  * One configured controller, as it actually arrives from the Homebridge UI. Every property is declared as an unknown-valued optional because that is the honest shape
@@ -83,24 +83,65 @@ export interface ProtectConfigInterpreter {
   migrate(config?: ProtectConfig, macByAddress?: ReadonlyMap<string, string>): ProtectConfigPatch | null;
 }
 
+/**
+ * The interpreters of the configured controller list, which makeControllerList builds over HBPU's listed-address rule. Each is declared as a property carrying a
+ * function, which is what the factory builds, so a consumer is free to read one off the object and call it on its own.
+ */
+export interface ProtectControllerList {
+
+  /**
+   * Whether a controller save would be refused because another configured controller already holds the address it writes, compared in HBPU's listing form. A save
+   * that writes its own item's address, in any spelling, is never refused. An address the rule gives no form is never listed.
+   */
+  controllerListedElsewhere: (config: ProtectConfig | null | undefined, save: { address?: unknown; originalAddress?: unknown }) => boolean;
+
+  /**
+   * The configured controllers, one entry per listed address: the stored entries themselves in their stored order, keeping the first entry at each address and
+   * every entry whose address has no form, and leaving out every later entry at an address and every entry that is not an object, or an empty list when the
+   * configuration holds no list.
+   */
+  controllers: (config?: ProtectConfig) => ProtectControllerConfig[];
+
+  /** The configured controllers still carrying a per-controller legacy property, each reduced to the connection triple needed to reach it. */
+  controllersAwaitingMigration: (config?: ProtectConfig) => ProtectControllerCredentials[];
+
+  /** Whether valid Protect login credentials exist for the primary controller. */
+  hasValidCredentials: (config?: ProtectConfig) => boolean;
+
+  /** The primary controller entry (the first), or undefined on a fresh configuration. */
+  primaryController: (config?: ProtectConfig) => ProtectControllerConfig | undefined;
+
+  /**
+   * Whether the first-run save would be refused because a controller after the primary already holds the address it writes, by the rule a controller save is
+   * refused under, with the primary as the save's target.
+   */
+  primaryListedElsewhere: (config: ProtectConfig | null | undefined, credentials: { address?: unknown }) => boolean;
+
+  /**
+   * The patch that removes one controller, and - when a MAC set is supplied - strips every configured entry scoped to one of those MAC addresses. An empty or
+   * absent MAC set carries no `options` array at all, which is what leaves the configured entries untouched rather than rewriting them to themselves.
+   */
+  withControllerRemoved: (config: ProtectConfig | undefined, removal: { address: string; macs?: readonly string[] }) =>
+    { controllers: ProtectControllerConfig[]; options?: string[] };
+
+  /**
+   * The controllers patch that writes one controller's connection triple. An `originalAddress` naming a configured item replaces that item's credentials while
+   * carrying every other key it holds; an absent or unmatched one appends a new item instead. Null means the address is already listed and nothing is to be
+   * written.
+   */
+  withControllerSaved: (config: ProtectConfig | undefined, controller: { address: string; originalAddress?: string; password: string; username: string }) =>
+    { controllers: ProtectControllerConfig[] } | null;
+
+  /**
+   * The controllers patch that writes the supplied credentials into the primary controller, preserving the additional controllers the configured list holds, one
+   * entry per listed address, and the primary's other fields. Null means a controller after the primary already holds the address.
+   */
+  withPrimaryCredentials: (config: ProtectConfig | undefined, credentials: { address: string; password: string; username: string }) =>
+    { controllers: ProtectControllerConfig[] } | null;
+}
+
 /** What a save says when the address it writes is one another configured controller already holds. */
 export declare const CONTROLLER_LISTED_WARNING: string;
-
-/**
- * Whether a controller save would be refused because another configured controller already holds the address it writes, compared with surrounding space removed
- * and letters lowercased. A save that writes its own item's address, in any spelling, is never refused. An address that is absent, empty once trimmed,
- * or not a string is never listed.
- */
-export declare const controllerListedElsewhere: (config: ProtectConfig | null | undefined, save: { address?: unknown; originalAddress?: unknown }) => boolean;
-
-/**
- * The configured controllers, one entry per listed address: the stored entries themselves in their stored order, keeping the first entry at each address and every
- * entry with no address, and leaving out every later entry at an address and every entry that is not an object, or an empty list when the configuration holds no list.
- */
-export declare const controllers: (config?: ProtectConfig) => ProtectControllerConfig[];
-
-/** The configured controllers still carrying a per-controller legacy property, each reduced to the connection triple needed to reach it. */
-export declare const controllersAwaitingMigration: (config?: ProtectConfig) => ProtectControllerCredentials[];
 
 /**
  * One reading of the UI server's device-list answer: the list itself, the controller the server could not reach with the reason it captured, the UI server's own
@@ -122,52 +163,31 @@ export interface DeviceListResult {
 /** Map a device-list verdict onto the result the framework's device-list hook answers, writing only the copy the outcome carries. */
 export declare const deviceListResult: (verdict: DeviceListVerdict) => DeviceListResult;
 
-/** Whether valid Protect login credentials exist for the primary controller. */
-export declare const hasValidCredentials: (config?: ProtectConfig) => boolean;
+/**
+ * Build the interpreters of the configured controller list over HBPU's listed-address rule, handed in so the module stays import-free.
+ *
+ * @param injected.addressListedElsewhere - HBPU's check of whether an address being saved is already listed at another position.
+ * @param injected.addressListingForm     - HBPU's listing form of an address.
+ *
+ * @returns The interpreters of the configured controller list.
+ */
+export declare const makeControllerList: ({ addressListedElsewhere, addressListingForm }: { addressListedElsewhere: typeof addressListedElsewhere;
+  addressListingForm: typeof addressListingForm }) => ProtectControllerList;
 
 /**
- * Build the migration over an injected feature-option engine class and the served option catalog.
+ * Build the migration over an injected feature-option engine class, the served option catalog, and the configured controller list's reader.
  *
  * @param injected.FeatureOptions - The feature-option engine class.
  * @param injected.catalog        - The served catalog.
+ * @param injected.controllers    - The configured controllers, one entry per listed address, as makeControllerList reads them.
  *
  * @returns The migration.
  */
-export declare const makeProtectConfig: ({ FeatureOptions, catalog }: { FeatureOptions: typeof FeatureOptions; catalog: ProtectConfigCatalog }) =>
-  ProtectConfigInterpreter;
-
-/** The primary controller entry (the first), or undefined on a fresh configuration. */
-export declare const primaryController: (config?: ProtectConfig) => ProtectControllerConfig | undefined;
-
-/**
- * Whether the first-run save would be refused because a controller after the primary already holds the address it writes, by the rule a controller save is
- * refused under, with the primary as the save's target.
- */
-export declare const primaryListedElsewhere: (config: ProtectConfig | null | undefined, credentials: { address?: unknown }) => boolean;
+export declare const makeProtectConfig: ({ FeatureOptions, catalog, controllers }: { FeatureOptions: typeof FeatureOptions; catalog: ProtectConfigCatalog;
+  controllers: ProtectControllerList["controllers"] }) => ProtectConfigInterpreter;
 
 /** Read the UI server's answer to a device-list request, or the rejection the request settled with, into the one verdict every reader of it shares. */
 export declare const readDeviceListAnswer: (settlement: PromiseSettledResult<unknown>) => DeviceListVerdict;
 
 /** The verdict of a sidebar entry whose controller left the configuration after the sidebar was built. */
 export declare const staleSelectionVerdict: () => DeviceListVerdict;
-
-/**
- * The patch that removes one controller, and - when a MAC set is supplied - strips every configured entry scoped to one of those MAC addresses. An empty or absent
- * MAC set carries no `options` array at all, which is what leaves the configured entries untouched rather than rewriting them to themselves.
- */
-export declare const withControllerRemoved: (config: ProtectConfig | undefined, removal: { address: string; macs?: readonly string[] }) =>
-  { controllers: ProtectControllerConfig[]; options?: string[] };
-
-/**
- * The controllers patch that writes one controller's connection triple. An `originalAddress` naming a configured item replaces that item's credentials while
- * carrying every other key it holds; an absent or unmatched one appends a new item instead. Null means the address is already listed and nothing is to be written.
- */
-export declare const withControllerSaved: (config: ProtectConfig | undefined,
-  controller: { address: string; originalAddress?: string; password: string; username: string }) => { controllers: ProtectControllerConfig[] } | null;
-
-/**
- * The controllers patch that writes the supplied credentials into the primary controller, preserving the additional controllers the configured list holds, one
- * entry per listed address, and the primary's other fields. Null means a controller after the primary already holds the address.
- */
-export declare const withPrimaryCredentials: (config: ProtectConfig | undefined, credentials: { address: string; password: string; username: string }) =>
-  { controllers: ProtectControllerConfig[] } | null;

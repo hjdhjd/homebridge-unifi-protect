@@ -73,17 +73,20 @@ type IdentityKeys = "id" | "mac" | "modelKey";
 export type WithoutIdentity<T> = T extends unknown ? { [K in keyof T as K extends IdentityKeys ? never : K]: T[K] } : never;
 
 // The typed view of a Protect accessory's persisted HomeKit context. All keys are optional: the context is reset to {} and repopulated per accessory type (a camera
-// carries mac + detectMotion, a liveview switch carries liveview + liveviewState + nvr, the controller's system-info accessory carries systemInfo + nvr, and so on), so
-// presence is itself meaningful and several code paths test it with the `in` operator. This interface replaces homebridge's UnknownContext (Record<string, any>) index
-// signature so every context.<key> access is a declared-property read, satisfying noPropertyAccessFromIndexSignature without a single cast. The `mac` and
-// `packageCamera` keys are the two mutually exclusive identity forms - a real device carries `mac`, a package camera carries its parent's MAC in `packageCamera`,
-// never both - and isPackageCameraContext is the single predicate that branches on that distinction.
+// carries mac + detectMotion, a liveview switch carries liveview + liveviewDerived + liveviewState + nvr, the security system carries liveviewDerived + nvr, and
+// securityState once the user has set one, the controller's system-info accessory carries systemInfo + nvr, and so on), so presence is itself meaningful and several code
+// paths test it with the `in` operator. This interface replaces homebridge's UnknownContext (Record<string, any>) index signature so every context.<key> access is a
+// declared-property read, satisfying noPropertyAccessFromIndexSignature without a single cast. The `mac` and `packageCamera` keys are the two mutually exclusive identity
+// forms - a real device carries `mac`, a package camera carries its parent's MAC in `packageCamera`, never both - and isPackageCameraContext is the single predicate that
+// branches on that distinction. The `liveviewDerived` key marks every accessory the liveviews owner derives from the controller's liveviews, so the controller's device
+// removal passes leave those accessories to that owner.
 export interface ProtectAccessoryContext {
 
   detectMotion?: boolean;
   doorbellMuted?: boolean;
   hksvRecordingDisabled?: boolean;
   liveview?: string;
+  liveviewDerived?: boolean;
   liveviewState?: boolean;
   mac?: string;
   nvr?: string;
@@ -93,9 +96,9 @@ export interface ProtectAccessoryContext {
 }
 
 // The user-state context keys that survive a context reset. These are the ONLY keys resetAccessoryContext preserves - identity and owner-bookkeeping keys (mac, nvr,
-// packageCamera, liveview, securityState, systemInfo) are re-derived every configure, never carried across. Naming the set as a narrowed, homogeneous (all-boolean) type
-// is also what lets the preserve helper write each key directly: over the wide, heterogeneous ProtectAccessoryContext the same per-key write fails strict tsc with a
-// correlated-union error, but over this narrowed type it compiles clean.
+// packageCamera, liveview, liveviewDerived, systemInfo) are re-derived every configure, never carried across. Naming the set as a narrowed, homogeneous
+// (all-boolean) type is also what lets the preserve helper write each key directly: over the wide, heterogeneous ProtectAccessoryContext the same per-key write fails
+// strict tsc with a correlated-union error, but over this narrowed type it compiles clean.
 export type ProtectPersistedContextState = Partial<Pick<ProtectAccessoryContext, "detectMotion" | "doorbellMuted" | "hksvRecordingDisabled">>;
 
 // A Protect accessory: a homebridge PlatformAccessory whose context is our typed ProtectAccessoryContext. This alias is the single name threaded through every accessory

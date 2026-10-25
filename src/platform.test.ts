@@ -123,15 +123,26 @@ describe("platform construction and the legacy feature-option translation", () =
 
 describe("platform construction and the configured controllers", () => {
 
-  /* One address in every spelling the settings page reads as one controller. The first repeat is a spelling the first entry does not store, so a warning that named
-   * the repeated spelling rather than the first entry's would redden the row, and the single credentials line is the walk reading the first entry alone.
+  /* One address in spellings the settings page reads as one controller, by the listed-address rule the page and the walk share. The first repeat is a spelling the
+   * first entry does not store, so a warning that named the repeated spelling rather than the first entry's would redden the row, and the single credentials line is
+   * the walk reading the first entry alone.
    */
-  test("entries at one address in its exact, case-varied, and space-padded spellings warn once, naming the first entry's address", () => {
+  test("entries at one address in its exact, case-varied, space-padded, dotted, and default-port spellings warn once, naming the first entry's address", () => {
 
-    const { lines } = buildPlatform([], [ { address: "UniFi.local" }, { address: "UNIFI.LOCAL" }, { address: "  unifi.local\t" }, { address: "UniFi.local" } ]);
+    const { lines } = buildPlatform([], [ { address: "UniFi.local" }, { address: "UNIFI.LOCAL" }, { address: "  unifi.local\t" }, { address: "unifi.local." },
+      { address: "UniFi.local:443" }, { address: "UniFi.local" } ]);
 
     assert.deepEqual(lines, [ NO_CREDENTIALS, listedAgain("UniFi.local") ],
       "the first entry is read, and the first repeat warns once with the address as the first entry stores it while every repeat is skipped");
+  });
+
+  // An IPv6 literal names one console with or without its brackets, and a port other than the default names another console, so only the bracketed repeat warns.
+  test("an IPv6 address repeated in its bracketed spelling warns once, and the same host on another port is read as its own controller", () => {
+
+    const { lines } = buildPlatform([], [ { address: "fe80::1" }, { address: "[FE80::1]" }, { address: "unifi.local" }, { address: "unifi.local:8443" } ]);
+
+    assert.deepEqual(lines, [ NO_CREDENTIALS, listedAgain("fe80::1"), NO_CREDENTIALS, NO_CREDENTIALS ],
+      "the bracketed repeat is skipped with one warning naming the first entry's address, and the entry on another port is read beside the bare host");
   });
 
   // However many entries repeat an address, the warning is about the address, so it is logged once for it, naming the address as the first entry stores it.

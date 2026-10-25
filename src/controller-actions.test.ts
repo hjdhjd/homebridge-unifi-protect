@@ -14,15 +14,17 @@
  * of its queue, so a rename built from a value that is no sidebar key fails the save it reaches rather than recording as though the page had accepted it. The
  * addresses differ and each kept answer is a list of its own, so a put-back that restores the wrong thing cannot coincide with one that restores the right thing.
  */
-import { CONTROLLER_LISTED_WARNING, controllerListedElsewhere, readDeviceListAnswer, withControllerRemoved, withControllerSaved }
-  from "../homebridge-ui/public/protect-config.mjs";
+import { CONTROLLER_LISTED_WARNING, makeControllerList, readDeviceListAnswer } from "../homebridge-ui/public/protect-config.mjs";
 import type { CommitConfig, CommitConfigResult, SaveAction } from "homebridge-plugin-utils";
 import type { ControllerActions, ControllerCard, ControllerLogin, ControllerLoginRequest } from "../homebridge-ui/public/controller-actions.mjs";
+import { addressListedElsewhere, addressListingForm, createSaveFlow } from "homebridge-plugin-utils";
 import { describe, test } from "node:test";
 import { makeControllerActions, makeControllerLogin } from "../homebridge-ui/public/controller-actions.mjs";
 import type { ProtectConfig } from "../homebridge-ui/public/protect-config.mjs";
 import assert from "node:assert/strict";
-import { createSaveFlow } from "homebridge-plugin-utils";
+
+// The listed-address rule and the writers a save and a removal compose through, bound over HBPU's rule from the package root exactly as the page binds them.
+const { controllerListedElsewhere, withControllerRemoved, withControllerSaved } = makeControllerList({ addressListedElsewhere, addressListingForm });
 
 // The address a save writes and a removal drops, the address an address-changing edit replaces, and a third address no save here touches.
 const ADDRESS = "10.0.0.1";

@@ -3,7 +3,7 @@
  * platform.ts: homebridge-unifi-protect platform class.
  */
 import type { API, DynamicPlatformPlugin, Logging } from "homebridge";
-import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator, debugGatedLog, livestreamProcessFactory, recordingProcessFactory,
+import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator, addressListingForm, debugGatedLog, livestreamProcessFactory, recordingProcessFactory,
   systemClock } from "homebridge-plugin-utils";
 import type { Clock, HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
@@ -15,22 +15,6 @@ import type { StreamingDelegateFactory } from "./media/stream-delegate.ts";
 import { analyzeLegacyFeatureOptions } from "./options-legacy.ts";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import { streamingDelegateFactory } from "./media/stream.ts";
-
-/* The form an address is compared in to tell whether two configured entries name one controller: surrounding space removed and letters lowercased. An address
- * that is absent, not a string, or empty once trimmed has no form and never repeats another. It is the settings page's listed-address form, so the page and the
- * plugin agree on which entry at an address is the first.
- */
-function listingForm(address: unknown): Nullable<string> {
-
-  if(typeof address !== "string") {
-
-    return null;
-  }
-
-  const trimmed = address.trim();
-
-  return trimmed.length ? trimmed.toLowerCase() : null;
-}
 
 // Whether a configured entry is an object, which an entry has to be before anything in it can be read. A hand edit can leave anything in the list, and the type the
 // configuration is read through cannot say so, so the check takes the entry as unknown.
@@ -128,7 +112,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     /* The first entry at each listed address, keyed by its listing form, and whether a later entry repeating it has been reported. A controller is reached by its
      * address, so the first entry at an address is the one we read, and every later entry there is skipped ahead of the checks below, with one warning per address
-     * however many entries repeat it.
+     * however many entries repeat it. The listing form is HBPU's listed-address rule, the one the settings page reads its controller list through, so the page and
+     * the plugin agree on which entry at an address is the first. An address the rule gives no form never repeats another.
      */
     const firstEntries = new Map<string, { address: string; warned: boolean }>();
 
@@ -141,7 +126,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
         continue;
       }
 
-      const form = listingForm(controllerConfig.address);
+      const form = addressListingForm(controllerConfig.address);
 
       if(form !== null) {
 

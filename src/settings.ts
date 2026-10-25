@@ -8,12 +8,13 @@ export const PLUGIN_NAME = "homebridge-unifi-protect";
 // The platform the plugin creates.
 export const PLATFORM_NAME = "UniFi Protect";
 
-// Maximum number of consecutive authentication failures tolerated while establishing the initial connection before we stop retrying. A controller that is still sorting
-// out its own authentication state at startup recovers within this budget, while genuinely-incorrect credentials fail fast instead of looping forever. Any non-
-// authentication fault (network, transient) resets the budget, so a slow-to-appear controller is retried without bound until it answers. The unifi-protect client owns
-// the periodic device refresh through its StateStore refresh failsafe. The plugin's own connect() method orchestrates the initial connection's retry and backoff through
-// createConnectRetryPolicy and the homebridge-plugin-utils retry() utility, using this constant to bound the authentication-failure budget.
-export const PROTECT_AUTH_FAILURE_LIMIT = 3;
+// The waits, in milliseconds, between attempts to connect while the controller refuses the configured sign-in: no staged delays, and one steady interval between
+// every attempt for as long as the refusal lasts. A refusal is a fact about the credentials rather than the network - the controller answered, and asking again
+// moments later cannot change its answer - and UniFi OS locks an account after repeated failed sign-ins, so a wrong password retried at the network schedule's pace
+// could lock the owner out of the controller's own interface. The attempts stay this far apart for that reason, and no further, so a sign-in the controller starts
+// accepting again is picked up within one interval. The shape is the library's recovery schedule's, staged delays and a steady floor, so the connect retry holds
+// each schedule the same way.
+export const PROTECT_CONNECT_REFUSAL_SCHEDULE_MS = { backoff: [], steady: 300000 } as const;
 
 // Default delay, in seconds, before removing Protect devices that no longer exist.
 export const PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL = 60;

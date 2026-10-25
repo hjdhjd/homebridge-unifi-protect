@@ -29,8 +29,9 @@ import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAcce
 import type { TestAccessory, TestService } from "../testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
-import { loggedAt, settle } from "homebridge-plugin-utils/testing";
+import { logCount, loggedAt, settle } from "homebridge-plugin-utils/testing";
 import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
+import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL } from "../settings.ts";
 import type { ProtectDevices } from "../types.ts";
 import { ProtectLiveviews } from "./liveviews.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
@@ -47,6 +48,10 @@ const CONTROLLER_MAC = "74ACB9FFFFFF";
 // The deterministic UUIDs the owner composes: hap.uuid.generate(mac + ".Security") for the security accessory and hap.uuid.generate(mac + ".Liveview." + NAME) for a
 // switch, run through the (seed) => "uuid:" + seed generator. A literal / composer rather than free-form derivations so a drift in the UUID composition breaks loudly.
 const SECURITY_UUID = "uuid:" + CONTROLLER_MAC + ".Security";
+
+// The removal delay a liveview-derived accessory waits out once the removal gate schedules it: the user's DelayDeviceRemoval interval at its default, in milliseconds
+// on the controller double's test clock.
+const REMOVAL_GRACE_MS = PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL * 1000;
 
 // The deterministic liveview-switch UUID for a given view name (the owner uppercases the name into the UUID seed). Reused across the switch-create / orphan / reserved
 // tests so the assertions read the same composition the owner does.
@@ -89,10 +94,11 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 // The reusable construction helper: build a REAL ProtectLiveviews against the harness doubles and drive the initial reconcile by calling configureLiveviews() on the
 // CONSTRUCTED instance (NOT nvr.liveviews - the double has no liveviews member). makeProtectState seeds the liveviews with DISTINCT ids per the makeLiveviewConfig
 // distinct-id discipline; the casts are confined to the construction boundary exactly as the family suites do. Optional cachedAccessories are pushed onto the array
-// BEFORE construction (orphan-removal / pre-seeded-switch-state fixtures). The returned controller is aborted in teardown: the fixture tears down through the controller
-// it built, the scope that owns every registration the test created.
+// BEFORE construction (orphan-removal / pre-seeded-switch-state fixtures), and an unstable controller leaves good state before the initial reconcile, the posture of a
+// controller that has only just come up. The returned controller is aborted in teardown: the fixture tears down through the controller it built, the scope that owns
+// every registration the test created.
 function buildLiveviews(harnessOptions: { cachedAccessories?: TestAccessory[]; disconnected?: boolean; liveviews?: ProtectNvrLiveviewConfig[]; mac?: string;
-  sharedPlatform?: { accessories: TestAccessory[]; apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"] }; userOptions?: string[]; } = {}): {
+  sharedPlatform?: { accessories: TestAccessory[]; apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"] }; unstable?: boolean; userOptions?: string[]; } = {}): {
   apiCalls: ReturnType<typeof makeTestNvr>["apiCalls"]; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr;
   owner: ProtectLiveviews; store: TestStateStore;
 } {
@@ -115,6 +121,11 @@ function buildLiveviews(harnessOptions: { cachedAccessories?: TestAccessory[]; d
 
   // A disconnected double is the production startup shape: the liveviews owner is built before the broker acknowledges the first session.
   mqtt.connected = !(harnessOptions.disconnected ?? false);
+
+  if(harnessOptions.unstable) {
+
+    nvr.pushControllerStability(false);
+  }
 
   const owner = new ProtectLiveviews(nvr as unknown as ProtectNvr);
 
@@ -170,7 +181,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     assert.ok(validValues && (validValues.length >= 2), "updateDevice ran on the sibling - the TargetState validValues narrowed to the available arm states");
   });
 
-  test("removing the last Protect liveview unregisters the security accessory and logs the disable", async () => {
+  test("removing the last Protect liveview logs the disable and unregisters the security accessory once the removal delay has passed", async () => {
 
     const built = buildLiveviews({ liveviews: [makeLiveviewConfig({ id: "lv-away", name: "Protect-Away" })] });
 
@@ -184,6 +195,11 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     built.store.pushLiveviews([makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })]);
 
     await settle();
+
+    // The removal gate scheduled the removal: the accessory stays through the removal delay and leaves when it ends.
+    assert.ok(built.nvr.platform.accessories.some((accessory) => accessory.UUID === SECURITY_UUID), "the security accessory stays through the removal delay");
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
 
     assert.equal(built.nvr.platform.accessories.some((accessory) => accessory.UUID === SECURITY_UUID), false,
       "the security accessory was spliced out when no Protect arm/off liveview remained");
@@ -209,11 +225,16 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     assert.equal(setSubscription.init.signal.aborted, false, "the set registration is live before removal");
 
     // Remove the security system through the OWNER's removal branch: replacing the last arm liveview with a non-arm one drives the observer into configureSecuritySystem,
-    // which calls securitySystem.cleanup(). The captured handlers' owner-lifetime signal must abort while the controller-lifetime nvr.signal stays live. An isolated
-    // cleanup() call would not exercise this path - the fix is the removal branch invoking it.
+    // which schedules the removal whose action calls securitySystem.cleanup(). The handlers keep answering through the removal delay, and once it ends the captured
+    // handlers' owner-lifetime signal must abort while the controller-lifetime nvr.signal stays live. An isolated cleanup() call would not exercise this path - the fix
+    // is the removal branch invoking it.
     built.store.pushLiveviews([makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })]);
 
     await settle();
+
+    assert.equal(getSubscription.init.signal.aborted, false, "the security get registration still answers through the removal delay");
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
 
     assert.equal(getSubscription.init.signal.aborted, true, "removing the last arm liveview aborted the security get registration through the owner's cleanup()");
     assert.equal(setSubscription.init.signal.aborted, true, "removing the last arm liveview aborted the security set registration through the owner's cleanup()");
@@ -279,6 +300,11 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     activeController = built.controller;
 
     await settle();
+
+    // The removal gate scheduled the orphan's removal, which lands once the removal delay ends.
+    assert.ok(built.nvr.platform.accessories.includes(orphan), "the orphan switch stays through the removal delay");
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
 
     assert.equal(built.nvr.platform.accessories.includes(orphan), false, "the orphan switch accessory was spliced out of the platform array");
     assert.ok(built.apiCalls.some((call) => (call.kind === "unregister") && call.accessories.includes(orphan)),
@@ -510,16 +536,272 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     ghostTwo.context["nvr"] = CONTROLLER_MAC;
     ghostTwo.addService(new Service.Switch("Ghost Two"));
 
-    // One reconcile pass must remove BOTH orphans. The filtered-snapshot iteration is what proves it: an in-place splice over the live array (the mutation this test
-    // forbids) shifts the second orphan into the just-vacated slot, which is exactly what this test would catch.
+    // One reconcile pass must schedule BOTH orphans, and one removal delay remove them. The filtered-snapshot iteration is what proves it: an in-place splice over the
+    // live array (the mutation this test forbids) shifts the second orphan into the just-vacated slot, which is exactly what this test would catch.
     const built = buildLiveviews({ cachedAccessories: [ ghostOne, ghostTwo ], liveviews: [] });
 
     activeController = built.controller;
 
     await settle();
 
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
+
     assert.equal(built.nvr.platform.accessories.includes(ghostOne), false, "the first adjacent orphan was swept");
     assert.equal(built.nvr.platform.accessories.includes(ghostTwo), false, "the second adjacent orphan was swept in the SAME pass - not skipped by an index shift");
+  });
+});
+
+describe("the liveviews reconcile through the membership delta and the removal gate", () => {
+
+  // The per-test controller, tracked so afterEach aborts whichever build the test made.
+  let activeController: AbortController | undefined;
+
+  afterEach(() => {
+
+    activeController?.abort();
+    activeController = undefined;
+  });
+
+  // A switch whose liveview is removed leaves through the removal gate rather than at once: it stays through the user's removal delay with its MQTT get and set still
+  // answering, and leaves when the delay ends with its liveview still gone. Its name leaves with it, so the liveview's return builds the switch anew.
+  test("a switch whose liveview is removed keeps answering MQTT through the removal delay and leaves when it ends", async () => {
+
+    const built = buildLiveviews({ liveviews: [makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const sceneSwitch = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"));
+
+    assert.ok(sceneSwitch, "the Scene switch exists");
+
+    built.store.pushLiveviews([makeLiveviewConfig({ id: "lv-garden", name: "Protect-Garden" })]);
+
+    await settle();
+
+    assert.ok(loggedAt(built.logEntries, "info", "Removing plugin-specific liveview switch: Scene."), "the removal is narrated as it is scheduled");
+    assert.ok(built.nvr.platform.accessories.includes(sceneSwitch), "the switch stays through the removal delay");
+
+    const payload = JSON.parse(await built.mqtt.invokeGet(CONTROLLER_MAC + "/liveviews/get") ?? "[]") as { name: string }[];
+
+    assert.ok(payload.some((entry) => entry.name === "Scene"), "the MQTT get still answers for the switch through the removal delay");
+
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "Scene", state: true }]));
+    await settle();
+
+    assert.ok(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT: Scene."), "the MQTT set still reaches the switch through the removal delay");
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
+
+    assert.equal(built.nvr.platform.accessories.includes(sceneSwitch), false, "the switch left when the removal delay ended with its liveview still gone");
+
+    built.store.pushLiveviews([ makeLiveviewConfig({ id: "lv-garden", name: "Protect-Garden" }), makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" }) ]);
+
+    await settle();
+
+    assert.ok(built.nvr.platform.accessories.some((accessory) => accessory.UUID === liveviewUuid("Scene")), "the returning liveview built its switch anew");
+  });
+
+  // The removal gate holds every removal until the controller has been settled for its stability window, so a liveview removed while the controller is unsettled
+  // schedules nothing. The controller's stability sweep re-runs this reconcile once the window has passed, and that pass schedules the removal.
+  test("a removal the gate refuses while the controller is unsettled is scheduled by the reconcile the stability sweep re-runs", async () => {
+
+    const built = buildLiveviews({ liveviews: [makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const sceneSwitch = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"));
+
+    assert.ok(sceneSwitch, "the Scene switch exists");
+
+    built.nvr.pushControllerStability(false);
+    built.store.pushLiveviews([]);
+
+    await settle();
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
+
+    assert.ok(built.nvr.platform.accessories.includes(sceneSwitch), "nothing is removed while the controller is unsettled");
+    assert.equal(loggedAt(built.logEntries, "info", "Removing plugin-specific liveview switch: Scene."), false, "and nothing is scheduled");
+
+    // Stability returns, and the controller's sweep re-runs the reconcile.
+    built.nvr.restabilizeController();
+    built.owner.configureLiveviews();
+
+    assert.ok(loggedAt(built.logEntries, "info", "Removing plugin-specific liveview switch: Scene."), "the re-run reconcile scheduled the removal");
+    assert.ok(built.nvr.platform.accessories.includes(sceneSwitch), "the switch stays through the removal delay");
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
+
+    assert.equal(built.nvr.platform.accessories.includes(sceneSwitch), false, "the switch left when the removal delay ended");
+  });
+
+  /* A liveview that returns during the removal delay cancels the pending removal, so its switch stays the configured switch it was, never rebuilt. The cancel is what
+   * lets a later removal wait a full delay of its own: the gate keeps the first deadline an accessory was given, so a removal left pending would fire at its original
+   * deadline once the liveview was gone again.
+   */
+  test("a liveview that returns during the removal delay keeps its switch, and a later removal waits a full delay of its own", async () => {
+
+    const built = buildLiveviews({ liveviews: [makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const sceneSwitch = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"));
+
+    assert.ok(sceneSwitch, "the Scene switch exists");
+
+    built.store.pushLiveviews([]);
+
+    await settle();
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS / 2);
+    built.store.pushLiveviews([makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })]);
+
+    await settle();
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
+
+    assert.ok(built.nvr.platform.accessories.includes(sceneSwitch), "the switch whose liveview returned stayed past the removal delay");
+    assert.equal(logCount(built.logEntries, "info", "Configuring plugin-specific liveview switch: Scene."), 1, "the switch was never rebuilt");
+
+    // The liveview leaves, returns a quarter of the delay later, and leaves again a quarter after that. The second departure's removal waits a full delay from
+    // then, so the switch is still here at the first departure's deadline and leaves at the second's.
+    built.store.pushLiveviews([]);
+
+    await settle();
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS / 4);
+    built.store.pushLiveviews([makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })]);
+
+    await settle();
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS / 4);
+    built.store.pushLiveviews([]);
+
+    await settle();
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS / 2);
+
+    assert.ok(built.nvr.platform.accessories.includes(sceneSwitch), "the later removal waits a full delay of its own, past the earlier deadline");
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS / 2);
+
+    assert.equal(built.nvr.platform.accessories.includes(sceneSwitch), false, "and the switch leaves when that delay ends");
+  });
+
+  /* A plugin-specific liveview that returns during the security system's removal delay cancels the pending removal, so the security system stays the one it was, never
+   * rebuilt. The cancel is what lets a later removal wait a full delay of its own, exactly as it is for a switch: the gate keeps the first deadline an accessory was
+   * given, so a removal left pending would fire at its original deadline once the liveviews were gone again.
+   */
+  test("a security liveview that returns during the removal delay keeps the security system, and a later removal waits a full delay of its own", async () => {
+
+    const built = buildLiveviews({ liveviews: [makeLiveviewConfig({ id: "lv-away", name: "Protect-Away" })] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const security = built.nvr.platform.accessories.find((accessory) => accessory.UUID === SECURITY_UUID);
+
+    assert.ok(security, "the security system exists");
+
+    built.store.pushLiveviews([]);
+
+    await settle();
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS / 2);
+    built.store.pushLiveviews([makeLiveviewConfig({ id: "lv-away", name: "Protect-Away" })]);
+
+    await settle();
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
+
+    assert.ok(built.nvr.platform.accessories.includes(security), "the security system whose liveview returned stayed past the removal delay");
+    assert.equal(logCount(built.logEntries, "info", "Plugin-specific liveviews have been detected. Enabling the security system accessory."), 1,
+      "the security system was never rebuilt");
+
+    // The liveview leaves, returns a quarter of the delay later, and leaves again a quarter after that. The second departure's removal waits a full delay from
+    // then, so the security system is still here at the first departure's deadline and leaves at the second's.
+    built.store.pushLiveviews([]);
+
+    await settle();
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS / 4);
+    built.store.pushLiveviews([makeLiveviewConfig({ id: "lv-away", name: "Protect-Away" })]);
+
+    await settle();
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS / 4);
+    built.store.pushLiveviews([]);
+
+    await settle();
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS / 2);
+
+    assert.ok(built.nvr.platform.accessories.includes(security), "the later removal waits a full delay of its own, past the earlier deadline");
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS / 2);
+
+    assert.equal(built.nvr.platform.accessories.includes(security), false, "and the security system leaves when that delay ends");
+  });
+
+  // A security system accessory Homebridge restores from its cache after its liveviews were deleted while Homebridge was down has no security system to remove it.
+  // The reconcile finds it through the membership delta and removes it under the gate: nothing is scheduled while the controller is still unsettled from its start,
+  // and the reconcile the stability sweep re-runs schedules it at the first stability.
+  test("a security system accessory left by liveviews deleted while Homebridge was down is removed at the first stability", async () => {
+
+    const ghost = makeTestAccessory("Security System", SECURITY_UUID);
+
+    ghost.context["nvr"] = CONTROLLER_MAC;
+    ghost.context["securityState"] = Characteristic.SecuritySystemCurrentState.AWAY_ARM;
+    ghost.addService(new Service.SecuritySystem("Security System"));
+
+    const built = buildLiveviews({ cachedAccessories: [ghost], liveviews: [makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })], unstable: true });
+
+    activeController = built.controller;
+
+    await settle();
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
+
+    assert.ok(built.nvr.platform.accessories.includes(ghost), "the ghost stays while the controller is unsettled");
+
+    built.nvr.restabilizeController();
+    built.owner.configureLiveviews();
+
+    assert.ok(loggedAt(built.logEntries, "info", "No plugin-specific liveviews found. Disabling the security system accessory"),
+      "the first stability scheduled its removal");
+
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
+
+    assert.equal(built.nvr.platform.accessories.includes(ghost), false, "the ghost left when the removal delay ended");
+    assert.ok(built.apiCalls.some((call) => (call.kind === "unregister") && call.accessories.includes(ghost)), "and it was unregistered from HomeKit");
+  });
+
+  // Each kind of accessory the liveviews owner derives carries the one marker the controller's device removal passes read, and each context write is saved.
+  test("the switches and the security system carry the liveview-derived marker, and each context write is saved", async () => {
+
+    const built = buildLiveviews({ liveviews: [ makeLiveviewConfig({ id: "lv-away", name: "Protect-Away" }),
+      makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" }) ] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const security = built.nvr.platform.accessories.find((accessory) => accessory.UUID === SECURITY_UUID);
+    const sceneSwitch = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"));
+    const saved = (accessory: TestAccessory): boolean => built.apiCalls.some((call) => (call.kind === "update") && call.accessories.includes(accessory));
+
+    assert.ok(security && sceneSwitch, "the security system and the Scene switch exist");
+    assert.equal(security.context["liveviewDerived"], true, "the security system carries the marker");
+    assert.equal(sceneSwitch.context["liveviewDerived"], true, "the switch carries the marker");
+    assert.ok(saved(security), "the security system's context was saved");
+    assert.ok(saved(sceneSwitch), "the switch's context was saved");
   });
 });
 
