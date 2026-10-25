@@ -941,14 +941,14 @@ const featureOptionsParams = {
       }
     },
 
-    // The delay before the connection-error view re-enables its retry button, overriding the library's five-second default. A UniFi Protect controller can take well
-    // over five seconds to authenticate and return its bootstrap, so twenty seconds keeps an impatient user from hammering retry while the first connection attempt is
-    // still in flight.
     // The copy the framework's boot affordance shows while a controller connection is in flight, in place of its generic default.
     connectingMessage: "Connecting to your UniFi Protect controller...",
     // The guidance line for a controller that cannot be reached, pointing at the connection editor mounted beneath the error rather than at a tab the reader is
     // already on.
     controllerFailureGuidance: "You can correct this controller's connection details below, or retry.",
+    // The delay before the connection-error view re-enables its retry button, overriding the library's five-second default. A UniFi Protect controller can take well
+    // over five seconds to authenticate and return its bootstrap, so twenty seconds keeps an impatient user from hammering retry while the first connection attempt is
+    // still in flight.
     controllerRetryEnableDelayMs: 20000,
     isController: isController,
     validOption: validOption,
