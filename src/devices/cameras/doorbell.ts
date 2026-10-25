@@ -317,7 +317,8 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       // The camera's MAC address plus the identity suffix gives our UUID seed the guaranteed uniqueness we need.
       packageCameraAccessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName(this.accessoryName + PACKAGE_CAMERA_NAME_SUFFIX), uuid);
 
-      // Register this accessory with homebridge and add it to the accessory array so we can track it.
+      // Register this accessory with homebridge and add it to the accessory array so we can track it. We mark it as well, so the save that closes this window carries
+      // what the package camera's configure pass below sets up on it.
       if(this.hasFeature("Device.Standalone")) {
 
         this.api.publishExternalAccessories(PLUGIN_NAME, [packageCameraAccessory]);
@@ -327,7 +328,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       }
 
       this.platform.accessories.push(packageCameraAccessory);
-      this.api.updatePlatformAccessories(this.platform.accessories);
+      this.platform.persistence.persist(packageCameraAccessory);
     }
 
     // Now create the package camera accessory through the NVR composition root. The package camera is a HomeKit sub-view of this same physical device, so it shares our
@@ -429,10 +430,12 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       return;
     }
 
-    // Remove the accessory through the shared, presence-guarded tail.
+    // Remove the accessory through the shared, presence-guarded tail. Where it lived is read first, because unregistering a bridged accessory takes it off the bridge.
+    const bridged = accessory._associatedHAPAccessory.bridged;
+
     this.nvr.removeAccessoryFromHomeKit(accessory);
 
-    if(!accessory._associatedHAPAccessory.bridged) {
+    if(!bridged) {
 
       this.log.info("You will need to manually delete the package camera accessory in the Home app to complete the removal.");
     }
@@ -837,9 +840,10 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     for(const switchService of this.accessory.services.filter(service => (service.UUID === this.hap.Service.Switch.UUID) && service.subtype &&
       !this.isReservedName(service.subtype) && !this.messageSwitches.has(service.subtype))) {
 
-      // The message has been deleted on the doorbell - remove it from HomeKit and inform the user about it.
+      // The message has been deleted on the doorbell - remove it from HomeKit, mark the accessory for the next save, and inform the user about it.
       this.log.info("Removing saved doorbell message: %s.", switchService.subtype?.slice(switchService.subtype.indexOf(".") + 1));
       this.accessory.removeService(switchService);
+      this.platform.persistence.persist(this.accessory);
     }
   }
 
@@ -1004,9 +1008,12 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
    * doorbell subtypes (the three physical-chime switches, the chime-volume lightbulb, the auth contact sensor) and the non-reserved message-switch Switch services
    * (whose subtype is shaped "type.text", never a reserved name). Deliberately does NOT remove the Doorbell service (configureDoorbellTrigger's existing arm owns its
    * removal for non-doorbell hardware), the mute switch, the HKSV-recording switch, or the UFP-recording switches - those are camera-level or owned elsewhere.
-   * Static and accessory-scoped because it runs without a live capability (none is attached when this fires).
+   * Static and accessory-scoped because it runs without a live capability (none is attached when this fires). It answers whether it removed anything, so the caller
+   * marks the accessory for a save only when the sweep changed it, and a steady plain camera's sweep marks nothing.
    */
-  public static removeServices(accessory: ProtectAccessory, hap: HAP, log: HomebridgePluginLogging): void {
+  public static removeServices(accessory: ProtectAccessory, hap: HAP, log: HomebridgePluginLogging): boolean {
+
+    let removed = false;
 
     // Remove the reserved doorbell-only subtypes.
     for(const subtype of DOORBELL_RESERVED_SUBTYPES) {
@@ -1018,6 +1025,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
         log.info("Removing stale doorbell service: %s.", subtype);
         accessory.removeService(service);
+        removed = true;
       }
     }
 
@@ -1027,6 +1035,9 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
       log.info("Removing stale doorbell message switch: %s.", switchService.subtype?.slice(switchService.subtype.indexOf(".") + 1));
       accessory.removeService(switchService);
+      removed = true;
     }
+
+    return removed;
   }
 }

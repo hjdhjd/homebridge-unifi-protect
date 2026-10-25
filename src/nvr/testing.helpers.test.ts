@@ -13,9 +13,9 @@
  * endpoint walk reaches, and that a fired decision lands on the double's accessory graph through its removal tail.
  */
 import { PROTECT_NVR_REBOOT_CHECK_INTERVAL, PROTECT_NVR_REBOOT_INTERVAL } from "../settings.ts";
+import { SAVE_WINDOW_MS, asProtectAccessory, makeNvrConfig, makeTestAccessoryFamily, makeTestNvr } from "./testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig, makeSensorConfig } from "../devices/testing.helpers.ts";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
-import { asProtectAccessory, makeNvrConfig, makeTestAccessoryFamily, makeTestNvr } from "./testing.helpers.ts";
 import { describe, test } from "node:test";
 import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import type { ProtectDevices } from "../types.ts";
@@ -138,6 +138,36 @@ describe("harness growth: the NVR double's removal wiring", () => {
     assert.equal(apiCalls.filter((call) => call.kind === "unregister").length, 1, "no unregister is recorded for an unbridged accessory");
 
     controller.abort();
+  });
+
+  /* Homebridge returns to its cache every accessory an update names, so a save still pending for an accessory the tail removes would bring it back at the next start.
+   * A survivor and a victim are marked inside one save window, and the victim is removed before the window closes: the window's save names the survivor alone,
+   * which is also what shows the window did close.
+   */
+  test("the removal tail drops a removed accessory's pending save, so the save its window closes on names only the survivor", () => {
+
+    const store = new TestStateStore(makeProtectState());
+    const { apiCalls, clock, controller, nvr } = makeTestNvr({ store });
+    const survivor = makeTestAccessory("Survivor", "uuid:survivor");
+    const victim = makeTestAccessory("Victim", "uuid:victim");
+
+    nvr.platform.accessories.push(victim, survivor);
+
+    try {
+
+      nvr.platform.persistence.persist(asProtectAccessory(victim), { detectMotion: false });
+      nvr.platform.persistence.persist(asProtectAccessory(survivor), { detectMotion: false });
+      nvr.removeAccessoryFromHomeKit(victim);
+      clock.advance(SAVE_WINDOW_MS);
+
+      const saved = apiCalls.filter((call) => call.kind === "update").flatMap((call) => call.accessories);
+
+      assert.equal(apiCalls.filter((call) => (call.kind === "unregister") && call.accessories.includes(victim)).length, 1, "the bridged victim was unregistered");
+      assert.deepEqual(saved, [survivor], "the window's one save names the survivor and never the removed accessory");
+    } finally {
+
+      controller.abort();
+    }
   });
 });
 

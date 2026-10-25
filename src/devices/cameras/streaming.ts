@@ -125,8 +125,10 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
     // Configure the video stream with the derived streams: the resolutions, the recording audio format, and the probe subscription the delegate's buffer adopts.
     this.#stream = this.platform.streamingDelegateFactory.create(this.host, derived);
 
-    // Fire up the controller and inform HomeKit about it.
+    // Fire up the controller and inform HomeKit about it. The controller's services are part of what Homebridge's accessory cache holds for the accessory, so we mark
+    // it for the next save, at the cost of one batched save each start, when every camera establishes its controller anew.
     this.accessory.configureController(this.#stream.controller);
+    this.platform.persistence.persist(this.accessory);
 
     // Tell the host its controller is registered, so it can configure the services the registration gave the accessory. The call is synchronous, like the rest of this
     // stretch.
@@ -213,10 +215,11 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
     this.#stream?.shutdown();
     this.#stream?.timeshift?.shutdown();
 
-    // Unregister our controller.
+    // Unregister our controller, marking the accessory for the next save, since the controller's services leave it.
     if(this.#stream) {
 
       this.accessory.removeController(this.#stream.controller);
+      this.platform.persistence.persist(this.accessory);
     }
   }
 

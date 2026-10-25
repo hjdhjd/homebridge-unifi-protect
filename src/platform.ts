@@ -3,9 +3,10 @@
  * platform.ts: homebridge-unifi-protect platform class.
  */
 import type { API, DynamicPlatformPlugin, Logging } from "homebridge";
-import { APIEvent, FeatureOptions, FfmpegCodecs, RtpPortAllocator, addressListingForm, debugGatedLog, livestreamProcessFactory, recordingProcessFactory,
-  systemClock } from "homebridge-plugin-utils";
+import { APIEvent, AccessoryPersistence, FeatureOptions, FfmpegCodecs, RtpPortAllocator, addressListingForm, debugGatedLog, livestreamProcessFactory,
+  recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
 import type { Clock, HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
+import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.ts";
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
 import type { LegacyFeatureOptions } from "./options-legacy.ts";
@@ -37,6 +38,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly legacyOptions: LegacyFeatureOptions;
   public readonly livestreamProcessFactory: LivestreamProcessFactory;
   public readonly log: Logging;
+  public readonly persistence: AccessoryPersistence;
   public readonly pluginLog: HomebridgePluginLogging;
   public readonly recordingProcessFactory: RecordingProcessFactory;
   public readonly rtpPorts: RtpPortAllocator;
@@ -48,6 +50,10 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.api = api;
     this.clock = systemClock;
     this.controllers = [];
+
+    // Every change to what Homebridge's accessory cache holds for our accessories is reported here, and the changes each save window gathers reach the cache in one
+    // write. It is built ahead of the controllers, whose devices report through it from their first configure pass.
+    this.persistence = new AccessoryPersistence({ api, clock: this.clock, platformName: PLATFORM_NAME, pluginIdentifier: PLUGIN_NAME });
 
     /* The configured options as the engine should see them. A configuration written for an earlier version of this plugin can name options the current catalog does not
      * declare, and several of those shapes are not merely stale - read through that catalog they decompose into values of the very options that supersede them. The

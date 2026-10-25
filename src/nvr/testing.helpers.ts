@@ -16,7 +16,8 @@
  * homebridge-plugin-utils'. The cross-cutting core - the HAP double, the state store, and the streaming-delegate stub - lives in the root harness this file imports
  * from.
  */
-import { APIEvent, FeatureOptions } from "homebridge-plugin-utils";
+import type { API, HAP } from "homebridge";
+import { APIEvent, AccessoryPersistence, FeatureOptions } from "homebridge-plugin-utils";
 import type { Camera, Chime, ProtectCameraConfig, ProtectClient, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig,
   ProtectRingtoneConfig } from "unifi-protect";
 import { Characteristic, Service, TestAccessory, TestCameraController, TestStreamingDelegateFactory } from "../testing.helpers.ts";
@@ -33,7 +34,6 @@ import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
 import { FIXTURE_RTSPS_PORT } from "../camera.fixtures.ts";
-import type { HAP } from "homebridge";
 import type { LegacyFeatureOptions } from "../options-legacy.ts";
 import type { ProtectCamera } from "../devices/cameras/camera.ts";
 import { ProtectCameraPackage } from "../devices/cameras/camera-package.ts";
@@ -50,17 +50,19 @@ import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
 
 // The platform double's honest structural type. The members mirror what ProtectBase and the camera-family construction paths read off nvr.platform: the HAP
 // namespaces plus the deterministic uuid generator, the injected test clock (typed as the library's TestClock, so the double and every suite advance it with no
-// cast), the platform-accessory class and the registration recorders (the doorbell's configurePackageCamera and the NVR removal tail drive them), the platform's
-// mutable accessories array, a concrete codecSupport (the real platform getter throws before the FFmpeg probe - a concrete object with a non-raspbian hostSystem keeps
-// the recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions engine, the log sinks, the scoped debug gate every
-// owner's logger asks before it speaks, the livestream-process and recording-process factory interfaces (the RTSP debug adapter and the recording delegate construct
-// their FFmpeg processes through them), and the streaming-delegate factory interface.
+// cast), the platform-accessory class and the registration recorders (the doorbell's configurePackageCamera and the NVR removal tail drive them), the event
+// registration Homebridge's API offers, the platform's mutable accessories array, a concrete codecSupport (the real platform getter throws before the FFmpeg probe - a
+// concrete object with a non-raspbian hostSystem keeps the recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions
+// engine, the log sinks, the REAL accessory persistence built over the API double and the test clock, the scoped debug gate every owner's logger asks before it
+// speaks, the livestream-process and recording-process factory interfaces (the RTSP debug adapter and the recording delegate construct their FFmpeg processes through
+// them), and the streaming-delegate factory interface.
 export interface TestProtectPlatform {
 
   readonly accessories: TestAccessory[];
   readonly api: {
 
     hap: { CameraController: typeof TestCameraController; Characteristic: typeof Characteristic; Service: typeof Service; uuid: { generate: (seed: string) => string } };
+    on: (event: APIEvent, listener: () => void) => void;
     platformAccessory: typeof TestAccessory;
     publishExternalAccessories: (pluginName: string, accessories: TestAccessory[]) => void;
     registerPlatformAccessories: (pluginName: string, platformName: string, accessories: TestAccessory[]) => void;
@@ -80,6 +82,7 @@ export interface TestProtectPlatform {
     info: (message: string, ...params: unknown[]) => void;
     warn: (message: string, ...params: unknown[]) => void;
   };
+  readonly persistence: AccessoryPersistence;
   readonly pluginLog: HomebridgePluginLogging;
   readonly recordingProcessFactory: RecordingProcessFactory;
   readonly streamingDelegateFactory: TestStreamingDelegateFactory;
@@ -91,6 +94,11 @@ export interface TestProtectPlatform {
  * timestamp from the clock's now() rather than seeding a timeline of its own.
  */
 export const TEST_CLOCK_EPOCH = 1700000000000;
+
+/* How long the accessory persistence's save window stays open, transcribed from HBPU, which keeps the value to itself. A row advances the platform's test clock by this
+ * much to close the window its marks opened, so a window that grew would leave the row reading no save rather than passing on a stale number.
+ */
+export const SAVE_WINDOW_MS = 1000;
 
 /* Present a harness accessory to an API typed on the production accessory - the removal gate's action surface and its schedule options both are. The double's graph
  * holds TestAccessory instances and the two types are assignable in neither direction, so the crossing is a structural cast, and it lives here in one owned spot
@@ -145,7 +153,8 @@ interface TestRecordingView {
  * so a lifecycle test schedules without ceremony. And the sweep action is a bare counter: the seed arms a zero-delay sweep on the test clock, which fires on whichever
  * advance of the clock comes first, so it must touch nothing for that timing to be harmless.
  *
- * The removal tail is the production presence-guarded splice with the bridged-gated unregister recording, and it is what the gate's removeDevice action runs.
+ * The removal tail is the production presence-guarded tail, the platform persistence's unregister and the splice, and it is what the gate's removeDevice action
+ * runs.
  */
 export class TestProtectNvr {
 
@@ -468,13 +477,17 @@ export class TestProtectNvr {
   // The sweep-stale removal interface, mirroring production: route the camera's request to the REAL DoorbellCapability.removeServices SSOT, with the platform's HAP
   // namespace and the double's log - so suite D exercises the actual removal logic, not a stand-in. The double's structural HAP shape is cast to the production parameter
   // type through unknown, the same confined-cast discipline every other harness boundary uses; the log shape already satisfies HomebridgePluginLogging structurally.
+  // A sweep that removed something marks the accessory for the next save, as production's does.
   public removeStaleDoorbellServices(accessory: ProtectAccessory): void {
 
-    DoorbellCapability.removeServices(accessory, this.platform.api.hap as unknown as HAP, this.log);
+    if(DoorbellCapability.removeServices(accessory, this.platform.api.hap as unknown as HAP, this.log)) {
+
+      this.platform.persistence.persist(accessory);
+    }
   }
 
-  // The production removal tail, mirrored: a presence guard so a stale double-fire is a no-op (never a splice(-1) corruption), the bridged-gated unregister, the
-  // splice, and the cache persist.
+  // The production removal tail, mirrored: a presence guard so a stale double-fire is a no-op (never a splice(-1) corruption), the platform persistence's unregister,
+  // which drops any pending save and unregisters only a bridged accessory, and the splice.
   public removeAccessoryFromHomeKit(accessory: TestAccessory): void {
 
     const index = this.platform.accessories.indexOf(accessory);
@@ -484,13 +497,8 @@ export class TestProtectNvr {
       return;
     }
 
-    if(accessory._associatedHAPAccessory.bridged) {
-
-      this.platform.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-    }
-
+    this.platform.persistence.unregister([asProtectAccessory(accessory)]);
     this.platform.accessories.splice(index, 1);
-    this.platform.api.updatePlatformAccessories(this.platform.accessories);
   }
 }
 
@@ -663,13 +671,24 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
     state: options.store
   };
 
-  // The homebridge API double: a deterministic, injective uuid generator (a pure function of the seed, so tests can pre-compute cached-accessory UUIDs), the
-  // platform-accessory class, and the four registration recorders. The publish / register recorders also maintain the bridged flag, mirroring how standalone
-  // publication leaves a real accessory unbridged while bridge registration marks it bridged.
+  // The shutdown listeners registered through the API double, kept as Homebridge keeps them. Nothing here raises them: the doubles never shut down the way Homebridge
+  // does, so a save the accessory persistence holds leaves only when its window comes due on the test clock.
+  const shutdownListeners: (() => void)[] = [];
+
+  // The homebridge API double: a deterministic, injective uuid generator (a pure function of the seed, so tests can pre-compute cached-accessory UUIDs), the event
+  // registration, the platform-accessory class, and the registration recorders. The publish, register and unregister recorders also maintain the bridged flag,
+  // mirroring how standalone publication leaves a real accessory unbridged, bridge registration marks it bridged, and a removal from the bridge clears it again.
   const api = {
 
     hap: { CameraController: TestCameraController, Characteristic: Characteristic, Service: Service,
       uuid: { generate: (seed: string): string => "uuid:" + seed } },
+    on: (event: APIEvent, listener: () => void): void => {
+
+      if(event === APIEvent.SHUTDOWN) {
+
+        shutdownListeners.push(listener);
+      }
+    },
     platformAccessory: TestAccessory,
     publishExternalAccessories: (_pluginName: string, published: TestAccessory[]): void => {
 
@@ -691,6 +710,11 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
     },
     unregisterPlatformAccessories: (_pluginName: string, _platformName: string, unregistered: TestAccessory[]): void => {
 
+      for(const accessory of unregistered) {
+
+        accessory._associatedHAPAccessory.bridged = false;
+      }
+
       apiCalls.push({ accessories: unregistered, kind: "unregister" });
     },
     updatePlatformAccessories: (updated: TestAccessory[]): void => {
@@ -698,6 +722,10 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       apiCalls.push({ accessories: [...updated], kind: "update" });
     }
   };
+
+  // The REAL accessory persistence, built over the API double and the test clock as the platform builds its own over Homebridge's API and the system clock, so every
+  // save production asks for lands in the update recorder once its window comes due. The API double is presented as Homebridge's through the file's confined cast.
+  const persistence = new AccessoryPersistence({ api: api as unknown as API, clock, platformName: PLATFORM_NAME, pluginIdentifier: PLUGIN_NAME });
 
   const nvr = new TestProtectNvr({
 
@@ -718,6 +746,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       legacyOptions: legacyOptions,
       livestreamProcessFactory: livestreamProcessFactory,
       log: log,
+      persistence: persistence,
       pluginLog: log,
       recordingProcessFactory: recordingProcessFactory,
       streamingDelegateFactory: factory,

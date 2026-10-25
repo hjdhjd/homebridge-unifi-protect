@@ -37,12 +37,14 @@ export class ProtectChime extends ProtectDevice<Chime> {
     // Configure accessory information.
     this.configureInfo();
 
-    // Newer UniFi Protect controllers relocated the chime volume control to the doorbell's settings. Remove any legacy volume service.
+    // Newer UniFi Protect controllers relocated the chime volume control to the doorbell's settings. Remove any legacy volume service, marking the accessory for the
+    // next save.
     let service = this.accessory.getService(this.hap.Service.Lightbulb);
 
     if(service) {
 
       this.accessory.removeService(service);
+      this.platform.persistence.persist(this.accessory);
     }
 
     // Configure the buzzer on the chime.
@@ -56,6 +58,7 @@ export class ProtectChime extends ProtectDevice<Chime> {
     if(service) {
 
       this.accessory.removeService(service);
+      this.platform.persistence.persist(this.accessory);
     }
 
     // Configure ringtone-specific switches.
@@ -93,6 +96,7 @@ export class ProtectChime extends ProtectDevice<Chime> {
       }
 
       this.accessory.removeService(service);
+      this.platform.persistence.persist(this.accessory);
     }
   }
 

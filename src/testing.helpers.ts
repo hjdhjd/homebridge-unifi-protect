@@ -1027,9 +1027,9 @@ export class TestCameraController {
  * The construction-harness growth: a mutable context record (the camera's configureDevice reassigns it wholesale, then writes keys), the ordered controller-event
  * log with HAP's one-controller-per-accessory rule enforced (the double records identity and order, and never operates on the controller's innards),
  * removeService (the faithful removal homebridge-plugin-utils' validService performs when an existing service fails validation), and the _associatedHAPAccessory
- * mirror with a mutable displayName (the accessoryName setter writes both) plus the bridged flag the NVR's removal tail gates its unregister on - true by default
- * (a registered or restored accessory is bridged), flipped false by the platform double's publishExternalAccessories recorder, exactly as standalone publication
- * leaves a real accessory unbridged.
+ * mirror with a mutable displayName (the accessoryName setter writes both) plus the bridged flag the accessory persistence gates its saves and unregisters on - true
+ * by default (a registered or restored accessory is bridged), flipped false by the platform double's publishExternalAccessories and unregisterPlatformAccessories
+ * recorders, exactly as standalone publication and a removal from the bridge leave a real accessory unbridged.
  */
 export class TestAccessory {
 
@@ -1044,8 +1044,8 @@ export class TestAccessory {
   public readonly controllerEvents: { controller: unknown; kind: "configure" | "remove"; seq: number }[] = [];
   // The single configured controller - the chokepoint mirroring HAP's one-camera-controller-per-accessory registry, which throws on a same-id double configure.
   public configuredController: Nullable<unknown> = null;
-  // The internal HAP accessory mirror the accessoryName setter writes alongside the platform accessory's own displayName, carrying the bridged flag production's
-  // removal tail reads.
+  // The internal HAP accessory mirror the accessoryName setter writes alongside the platform accessory's own displayName, carrying the bridged flag the accessory
+  // persistence's saves and unregisters and the package camera's detach guidance read.
   public readonly _associatedHAPAccessory: { bridged: boolean; displayName: string };
 
   public constructor(displayName: string, uuid: string) {

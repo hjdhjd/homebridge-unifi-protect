@@ -152,19 +152,34 @@ export abstract class ProtectDeviceCapability<H extends ProtectCapabilityHost = 
   // delegates to. It supplies the host's accessory, defaults the name to the host's accessory name, and answers with the library's result unchanged: the service, and
   // the transition that says whether this call attached it or kept one already present. It lives here rather than on the spine because the spine also serves owners
   // with no single accessory (liveviews manages a set) or a nullable one (the controller's system-information owner), so an accessory contract there would be
-  // dishonest; here a non-null accessory genuinely exists.
+  // dishonest; here a non-null accessory genuinely exists. A service it attaches changes what Homebridge's accessory cache holds for the host's accessory, so the
+  // wrapper marks that accessory for the next save, as the device's own wrapper does.
   protected acquireService<T extends Service>(options: ProtectServiceOptions<AcquireServiceOptions<T>>): AcquireServiceResult<T> {
 
-    return acquireService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
+    const acquired = acquireService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
+
+    if(acquired.transition === "attached") {
+
+      this.platform.persistence.persist(this.accessory);
+    }
+
+    return acquired;
   }
 
   // Reconcile a service's presence on the host's accessory from one verdict, the same thin re-binding. The verdict is either a plain boolean or a presence-aware
   // predicate, mirroring the free function: the predicate receives the service's current presence so a gate can keep an already-present service while refusing to create
   // a new one. The answer is the library's own: the service with an attached or kept transition when the verdict keeps it, or null with a removed or absent transition
-  // when it does not.
+  // when it does not. A service it attaches or removes marks the host's accessory for the next save, as the device's own wrapper does.
   protected validService<T extends Service>(options: ProtectServiceOptions<ValidServiceOptions<T>>): ValidServiceResult<T> {
 
-    return validService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
+    const validated = validService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
+
+    if((validated.transition === "attached") || (validated.transition === "removed")) {
+
+      this.platform.persistence.persist(this.accessory);
+    }
+
+    return validated;
   }
 
   // The log prefix and diagnostics name: the host's functional name, which resolves to the live controller projection name so a log prefix tracks the controller's

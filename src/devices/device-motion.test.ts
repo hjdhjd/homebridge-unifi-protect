@@ -23,9 +23,10 @@
  * base services are HAP- and MQTT-driven, not observeState-driven, so there is no observer-wake subscription here (unlike the family suites).
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import { SAVE_WINDOW_MS, TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
+import type { TestAccessory, TestApiCall } from "../testing.helpers.ts";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import type { TestClock, TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
-import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import { loggedAt, settle } from "homebridge-plugin-utils/testing";
 import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../settings.ts";
@@ -33,7 +34,6 @@ import type { ProtectAccessory } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Sensor } from "unifi-protect";
-import type { TestAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 
 // Fire the deferred reflects the motion trigger arms outside this.timers, so the revert lands within the test rather than after teardown: settle the set handler,
@@ -61,12 +61,15 @@ const controllers: AbortController[] = [];
 // enabled true. The userOptions thread into the REAL FeatureOptions engine, so the Enable.Motion.* strings - and only those - materialize the services. seedAccessory,
 // when supplied, runs against the fresh accessory before construction, standing in for the services a Homebridge restart restores from the accessory cache.
 function buildMotionDevice(harnessOptions: { seedAccessory?: (accessory: TestAccessory) => void; userOptions?: string[] } = {}): {
-  accessory: TestAccessory; clock: TestClock; device: TestBaseDevice; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; recording: TestRecordingDispatch;
+  accessory: TestAccessory; apiCalls: TestApiCall[]; clock: TestClock; device: TestBaseDevice; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient;
+  recording: TestRecordingDispatch;
 } {
 
   const sensorConfig = makeSensorConfig();
   const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));
-  const { clock, controller, logEntries, mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): TestRecordingDispatch => new TestRecordingDispatch(innerNvr),
+  const { apiCalls, clock, controller, logEntries, mqtt, nvr } = makeTestNvr({
+
+    dispatch: (innerNvr: ProtectNvr): TestRecordingDispatch => new TestRecordingDispatch(innerNvr),
     mqtt: true,
     store, userOptions: harnessOptions.userOptions });
 
@@ -98,7 +101,7 @@ function buildMotionDevice(harnessOptions: { seedAccessory?: (accessory: TestAcc
   device.configureMotionSensorFor({ enabled: true });
   device.configureOccupancySensorFor({ enabled: true });
 
-  return { accessory, clock, device, logEntries, mqtt, recording };
+  return { accessory, apiCalls, clock, device, logEntries, mqtt, recording };
 }
 
 describe("base ProtectDevice motion capability (device-motion concern net)", () => {
@@ -163,6 +166,63 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       // The disabled path resets context.detectMotion to true so motion detection cannot be left silently off with no switch to re-enable it.
       assert.equal(built.device.accessory.context.detectMotion, true, "the absent-switch path reset context.detectMotion to true");
+    });
+
+    /* A toggle is a setting the user expects to survive a restart, so the switch's set saves it to Homebridge's accessory cache: one update names the accessory once
+     * the save window the set opened closes, carrying the value the set wrote. The window the construction opened is closed first, so the update the row reads belongs
+     * to the toggle alone.
+     */
+    test("a toggle is saved once its save window closes, carrying the detectMotion it wrote", async () => {
+
+      const built = buildMotionDevice({ userOptions: ["Enable.Motion.Switch"] });
+      const saves = (): number => built.apiCalls.filter((call) => (call.kind === "update") && call.accessories.includes(built.accessory)).length;
+
+      device = built.device;
+
+      const motionSwitch = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
+
+      assert.ok(motionSwitch, "the Motion.Switch feature materializes the SWITCH_MOTION_SENSOR switch");
+
+      built.clock.advance(SAVE_WINDOW_MS);
+
+      const constructed = saves();
+
+      await motionSwitch.getCharacteristic(Characteristic.On).triggerSet(false);
+      built.clock.advance(SAVE_WINDOW_MS - 1);
+
+      assert.equal(saves(), constructed, "nothing is saved while the toggle's window is open");
+
+      built.clock.advance(1);
+
+      assert.equal(saves(), constructed + 1, "exactly one update names the accessory once the toggle's window closes");
+      assert.equal(built.accessory.context["detectMotion"], false, "the saved accessory carries the detectMotion the toggle wrote");
+    });
+
+    // Every mark inside one window goes out in one save, so a burst of toggles costs Homebridge one cache write rather than one per toggle.
+    test("a burst of toggles inside one save window is saved in one update", async () => {
+
+      const built = buildMotionDevice({ userOptions: ["Enable.Motion.Switch"] });
+      const saves = (): number => built.apiCalls.filter((call) => (call.kind === "update") && call.accessories.includes(built.accessory)).length;
+
+      device = built.device;
+
+      const motionSwitch = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
+
+      assert.ok(motionSwitch, "the Motion.Switch feature materializes the SWITCH_MOTION_SENSOR switch");
+
+      built.clock.advance(SAVE_WINDOW_MS);
+
+      const constructed = saves();
+      const on = motionSwitch.getCharacteristic(Characteristic.On);
+
+      await on.triggerSet(false);
+      built.clock.advance(SAVE_WINDOW_MS / 2);
+      await on.triggerSet(true);
+      await on.triggerSet(false);
+      built.clock.advance(SAVE_WINDOW_MS / 2);
+
+      assert.equal(saves(), constructed + 1, "the toggles inside the window were saved in exactly one update");
+      assert.equal(built.accessory.context["detectMotion"], false, "the one save carries the last toggle's value");
     });
   });
 

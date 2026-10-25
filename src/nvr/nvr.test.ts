@@ -3,7 +3,8 @@
  * nvr.test.ts: Unit tests for the controller root's pure decision logic - the startup-resilient connect retry policy, the request-outcome classifier, the
  * removal-stability arithmetic, the disruption-expectation gating (the classification, its induced and recency halves, and the episode-latch), the induced-reboot resume
  * decision, the scheduled-reboot arithmetic with the recording-count rule behind its deferral, and the address override rule - plus the NvrHealth connection-input
- * mapping those drive, and the real controller root's disabled-controller path, its stability sweep's liveviews pass, its connect retry, and its address override.
+ * mapping those drive, and the real controller root's disabled-controller path, its stability sweep's liveviews pass, its connect retry, its address override, and
+ * the accessory cache saves its adoption asks for.
  *
  * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively owns the entire device and
  * media graph. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and assert those here, exercising the controller's real
@@ -18,7 +19,7 @@
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError } from "unifi-protect";
 import type { ProtectCameraConfig, ProtectClient, ProtectNvrConfig } from "unifi-protect";
-import { TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr } from "./testing.helpers.ts";
+import { SAVE_WINDOW_MS, TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr } from "./testing.helpers.ts";
 import { TestClock, formatLogEntry, logCount, loggedAt, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, countActiveRecordingViews, createConnectRetryPolicy,
@@ -916,6 +917,58 @@ describe("the controller root's address override", () => {
       await settle();
 
       assert.equal(store.observerCount, 0, "every observe loop the root and its camera started ended with its shutdown");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
+  });
+});
+
+describe("the controller root's accessory cache saves", () => {
+
+  /* A standalone accessory has no place in Homebridge's accessory cache: the cache's serializer refuses one, and a save that named one would fail every save of the
+   * run. The root adopts a bridged camera and a standalone one, and marks each as it adds and configures it inside one save window. The window's save names the
+   * bridged camera and never the standalone one, and every mark the adoption made goes out in that one save.
+   */
+  test("a standalone camera is never handed to the cache, while the bridged camera marked in the same window is saved in one update", async () => {
+
+    const clock = new TestClock(TEST_CLOCK_EPOCH);
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+
+    // Each camera record carries what the root's membership reconcile reads before it constructs a camera, its category and its adoption by this controller.
+    const adopted = (options: { id: string; mac: string; name: string }): ProtectCameraConfig => ({ ...makeCameraConfig({ channels: G2_PRO_CHANNELS, ...options }),
+      isAdopted: true, isAdoptedByOther: false, modelKey: "camera" });
+    const bridgedConfig = adopted({ id: "camera-bridged", mac: "74ACB9000101", name: "Bridged Camera" });
+    const standaloneConfig = adopted({ id: "camera-standalone", mac: "74ACB9000102", name: "Standalone Camera" });
+    const store = new TestStateStore(makeProtectState({ cameras: [ bridgedConfig, standaloneConfig ], nvr: nvrConfig }));
+    const { apiCalls, controller, nvr: double } = makeTestNvr({ clock, store, userOptions: ["Enable.Device.Standalone." + standaloneConfig.mac] });
+    const client = makeConnectedClient({ nvrConfig, store });
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
+
+    try {
+
+      await root.login();
+      await settle();
+
+      const bridged = double.platform.accessories.find((accessory) => accessory.UUID === "uuid:" + bridgedConfig.mac);
+      const standalone = double.platform.accessories.find((accessory) => accessory.UUID === "uuid:" + standaloneConfig.mac);
+
+      assert.ok(bridged && standalone, "the root added the bridged camera and the standalone one");
+      assert.ok(apiCalls.some((call) => (call.kind === "publishExternal") && call.accessories.includes(standalone)),
+        "the standalone camera was published outside the bridge");
+      assert.equal(apiCalls.some((call) => call.kind === "update"), false, "nothing is saved while the adoption's window is open");
+
+      clock.advance(SAVE_WINDOW_MS);
+
+      const saves = apiCalls.filter((call) => call.kind === "update");
+
+      assert.equal(saves.length, 1, "every mark the adoption made went out in one save");
+      assert.ok(saves[0]?.accessories.includes(bridged), "the save names the bridged camera");
+      assert.equal(saves.some((call) => call.accessories.includes(standalone)), false, "no save names the standalone camera");
     } finally {
 
       shutdown();

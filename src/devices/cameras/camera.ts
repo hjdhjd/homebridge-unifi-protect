@@ -913,8 +913,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         continue;
       }
 
-      // We don't have this contact sensor enabled, remove it.
+      // We don't have this contact sensor enabled, remove it and mark the accessory for the next save.
       this.accessory.removeService(objectService);
+      this.platform.persistence.persist(this.accessory);
       this.log.info("Disabling smart motion license plate contact sensor: %s.", objectService.subtype?.slice(objectService.subtype.indexOf(".") + 1));
     }
 
@@ -933,8 +934,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         continue;
       }
 
-      // We don't have this contact sensor enabled, remove it.
+      // We don't have this contact sensor enabled, remove it and mark the accessory for the next save.
       this.accessory.removeService(objectService);
+      this.platform.persistence.persist(this.accessory);
       this.log.info("Disabling smart motion contact sensor: %s.", smartDetectLabel(smartDetectType));
     }
 
@@ -1061,6 +1063,12 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     const transition = validCharacteristic({ characteristic: this.hap.Characteristic.StatusTampered, service,
       validate: capabilityGate({ capability: this.ufp.featureFlags.hasTamperDetection, toggle: this.ufp.smartDetectSettings.enableTamperDetection }) });
 
+    // A characteristic the gate attached or removed changes the service Homebridge's accessory cache holds, so the accessory is marked for the next save.
+    if((transition === "attached") || (transition === "removed")) {
+
+      this.platform.persistence.persist(this.accessory);
+    }
+
     if((transition === "removed") || (transition === "absent")) {
 
       // Clear the one-way tamper latch only on the genuine user toggle-off (the documented clear path); a transient capability-false must never clear an active tamper.
@@ -1101,7 +1109,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
 
-      this.accessory.context.doorbellMuted = !!value;
+      this.platform.persistence.persist(this.accessory, { doorbellMuted: !!value });
 
       this.log.info("Doorbell chime %s.", value ? "disabled" : "enabled");
     });
@@ -1134,10 +1142,12 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     if(!triggerService) {
 
-      // Since we aren't enabling the doorbell trigger on this camera, remove the doorbell service if the camera isn't actually doorbell-capable hardware.
+      // Since we aren't enabling the doorbell trigger on this camera, remove the doorbell service if the camera isn't actually doorbell-capable hardware, and mark
+      // the accessory for the next save.
       if(!this.ufp.featureFlags.isDoorbell && doorbellService) {
 
         this.accessory.removeService(doorbellService);
+        this.platform.persistence.persist(this.accessory);
       }
 
       return false;
@@ -1231,6 +1241,12 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       // Initialize the night vision state.
       service.updateCharacteristic(this.hap.Characteristic.NightVision, this.nightVision);
+    }
+
+    // A characteristic the gates above attached or removed changes the service Homebridge's accessory cache holds, so the accessory is marked for the next save.
+    if([ statusLightTransition, nightVisionTransition ].some((transition) => (transition === "attached") || (transition === "removed"))) {
+
+      this.platform.persistence.persist(this.accessory);
     }
 
     return true;
@@ -1703,7 +1719,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         this.log.info("HKSV event recording %s.", value ? "enabled" : "disabled");
       }
 
-      this.accessory.context.hksvRecordingDisabled = !value;
+      this.platform.persistence.persist(this.accessory, { hksvRecordingDisabled: !value });
     });
 
     // Initialize the switch.

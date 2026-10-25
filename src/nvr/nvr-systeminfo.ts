@@ -73,9 +73,8 @@ export class ProtectNvrSystemInfo extends ProtectBase {
 
         this.log.info("Removing UniFi Protect controller system information sensors.");
 
-        // Unregister the accessory and delete its remnants from HomeKit and the plugin.
-        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
-        this.platform.accessories.splice(this.platform.accessories.indexOf(this.accessory), 1);
+        // Remove the accessory through the controller root's shared removal tail, which drops any save still pending for it, takes it off the bridge, and forgets it.
+        this.nvr.removeAccessoryFromHomeKit(this.accessory);
       }
 
       this.accessory = null;
@@ -95,11 +94,10 @@ export class ProtectNvrSystemInfo extends ProtectBase {
       this.platform.accessories.push(this.accessory);
     }
 
-    // We have the system information accessory, now let's configure it.
-    // Clean out the context object in case it's been polluted somehow.
+    // We have the system information accessory, now let's configure it. We clean out the context object in case it's been polluted somehow, write our bookkeeping
+    // into it, and mark the accessory, so the save that closes this window carries the context and the services this pass configures.
     this.accessory.context = {};
-    this.accessory.context.nvr = this.nvr.ufp.mac;
-    this.accessory.context.systemInfo = true;
+    this.platform.persistence.persist(this.accessory, { nvr: this.nvr.ufp.mac, systemInfo: true });
 
     // Configure accessory information.
     this.setInfo(this.accessory, this.nvr.ufp);
@@ -143,9 +141,14 @@ export class ProtectNvrSystemInfo extends ProtectBase {
       return false;
     }
 
-    // Validate the service.
-    const { service } = validService({ accessory: this.accessory, name: this.accessory.displayName + " CPU Temperature", serviceType: this.hap.Service.TemperatureSensor,
-      validate: this.nvr.hasFeature("NVR.SystemInfo") });
+    // Validate the service. A service the gate attached or removed changes what Homebridge's accessory cache holds, so the accessory is marked for the next save.
+    const { service, transition } = validService({ accessory: this.accessory, name: this.accessory.displayName + " CPU Temperature",
+      serviceType: this.hap.Service.TemperatureSensor, validate: this.nvr.hasFeature("NVR.SystemInfo") });
+
+    if((transition === "attached") || (transition === "removed")) {
+
+      this.platform.persistence.persist(this.accessory);
+    }
 
     if(!service) {
 

@@ -557,12 +557,13 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       // set (mountType "leak" for single-channel mount-role devices, the live leakSettings flag for multi-channel devices).
       const enabled = leakChannelEnabled(context, sensor.channel);
 
-      // Remove the opposite sensor type if it exists since we are switching between sensor configurations.
+      // Remove the opposite sensor type if it exists since we are switching between sensor configurations, marking the accessory for the next save.
       const oldService = this.accessory.getServiceById(removeServiceType, sensor.subtype);
 
       if(oldService) {
 
         this.accessory.removeService(oldService);
+        this.platform.persistence.persist(this.accessory);
       }
 
       // A channel toggled off releases its MQTT get handler BEFORE the validService continue skips the rest of the loop body, mirroring the occupancy / motion ordering.

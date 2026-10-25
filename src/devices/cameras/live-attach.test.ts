@@ -20,6 +20,7 @@
  * path is exercised only to the registration boundary (the subscription is recorded), not through a live MQTT broker.
  */
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
+import { SAVE_WINDOW_MS, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
@@ -32,7 +33,6 @@ import { ProtectReservedNames } from "../../types.ts";
 import type { TestAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
-import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // Construct a real ProtectCamera, with the casts confined to this one boundary - the instance under test is the production class and its composed capability.
 function construct(nvr: TestProtectNvr, accessory: TestAccessory, projection: TestCameraProjection): ProtectCamera {
@@ -246,7 +246,7 @@ describe("sweep-stale removal and the controller-identity observability (suite D
     // the sweep strips exactly the former. Driving removeServices directly isolates its own selectivity from the feature-gated construction configures (the mute switch,
     // HKSV switch, and Doorbell service each have their own removers in the construction path).
     const store = new TestStateStore(makeProtectState({ cameras: [makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { isDoorbell: false } })] }));
-    const { controller, nvr } = makeTestNvr({ store });
+    const { apiCalls, clock, controller, nvr } = makeTestNvr({ store });
     const accessory = makeTestAccessory("Front Door", "uuid:74ACB9000006");
 
     // The doorbell-only services that must be removed.
@@ -274,6 +274,19 @@ describe("sweep-stale removal and the controller-identity observability (suite D
     assert.ok(accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_MUTE), "the mute switch is untouched by removeServices");
     assert.ok(accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_HKSV_RECORDING), "the HKSV-recording switch is untouched by removeServices");
     assert.ok(accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_UFP_RECORDING_ALWAYS), "the UFP-recording switch is untouched by removeServices");
+
+    // A sweep that removed something marks the accessory, so the window it opened saves it once, while a sweep with nothing left to remove marks nothing, so a steady
+    // plain camera's sweep asks for no save.
+    const saves = (): number => apiCalls.filter((call) => (call.kind === "update") && call.accessories.includes(accessory)).length;
+
+    clock.advance(SAVE_WINDOW_MS);
+
+    assert.equal(saves(), 1, "the sweep that removed services saved the accessory once");
+
+    nvr.removeStaleDoorbellServices(accessory as unknown as ProtectAccessory);
+    clock.advance(SAVE_WINDOW_MS);
+
+    assert.equal(saves(), 1, "a sweep with nothing left to remove asks for no save");
 
     controller.abort();
   });

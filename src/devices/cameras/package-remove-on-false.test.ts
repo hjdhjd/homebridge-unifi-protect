@@ -128,9 +128,12 @@ describe("package camera remove-on-false (BC2)", () => {
 
     assert.deepEqual(motionPublishes, [ "true", "false" ], "exactly one terminal motion reset follows the latched motion on the shared topic");
 
-    // The flow's one user-facing message is the schedule-time reason.
+    // The flow's one user-facing message is the schedule-time reason. The unregister takes the accessory off the bridge, so the guidance a standalone accessory needs
+    // is decided by where it lived before the removal, and a bridged one hears none.
     assert.equal(logEntries.filter((entry) => formatLogEntry(entry).includes("no longer reports a package camera")).length, 1,
       "the removal decision is narrated exactly once");
+    assert.equal(logEntries.filter((entry) => formatLogEntry(entry).includes("manually delete the package camera accessory")).length, 0,
+      "a bridged package camera's removal says no manual-deletion guidance");
 
     // Post-detach, the package is gone reactively too: only the doorbell's own observers remain and a state push wakes nothing attributed to the package.
     const wakes: ObserverWakePayload[] = [];

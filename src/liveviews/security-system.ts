@@ -40,16 +40,8 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     // Clean out the context object in case it's been polluted somehow, carrying a saved scene through the wipe. The accessory is marked as one the liveviews owner
     // derives, so the controller's device removal passes leave it to that owner, and the context is saved.
-    this.accessory.context = {};
-    this.accessory.context.liveviewDerived = true;
-    this.accessory.context.nvr = this.nvr.ufp.mac;
-
-    if(savedState !== undefined) {
-
-      this.accessory.context.securityState = savedState;
-    }
-
-    this.api.updatePlatformAccessories([this.accessory]);
+    this.accessory.context = (savedState === undefined) ? {} : { securityState: savedState };
+    this.platform.persistence.persist(this.accessory, { liveviewDerived: true, nvr: this.nvr.ufp.mac });
 
     this.configureInfo();
 
@@ -183,8 +175,14 @@ export class ProtectSecuritySystem extends ProtectBase {
   // Configure the security system for HomeKit. It shows the saved scene, the user's last choice, or Off when none is saved, and applies nothing to the cameras.
   private configureSecuritySystem(): void {
 
-    // Acquire (find or create) the security system service.
-    const { service } = acquireService({ accessory: this.accessory, name: this.accessory.displayName, serviceType: this.hap.Service.SecuritySystem });
+    // Acquire (find or create) the security system service. A service the acquisition attached changes what Homebridge's accessory cache holds, so the accessory is
+    // marked for the next save.
+    const { service, transition } = acquireService({ accessory: this.accessory, name: this.accessory.displayName, serviceType: this.hap.Service.SecuritySystem });
+
+    if(transition === "attached") {
+
+      this.platform.persistence.persist(this.accessory);
+    }
 
     const SecuritySystemCurrentState = this.hap.Characteristic.SecuritySystemCurrentState;
     const SecuritySystemTargetState = this.hap.Characteristic.SecuritySystemTargetState;
@@ -244,9 +242,15 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     this.isAlarmTriggered = false;
 
-    // Have we enabled the security system alarm?
-    const { service } = validService({ accessory: this.accessory, name: this.accessory.displayName + " Security Alarm", serviceType: this.hap.Service.Switch,
-      validate: this.nvr.hasFeature("SecuritySystem.Alarm") });
+    // Have we enabled the security system alarm? A switch the gate attached or removed changes what Homebridge's accessory cache holds, so the accessory is marked for
+    // the next save.
+    const { service, transition } = validService({ accessory: this.accessory, name: this.accessory.displayName + " Security Alarm",
+      serviceType: this.hap.Service.Switch, validate: this.nvr.hasFeature("SecuritySystem.Alarm") });
+
+    if((transition === "attached") || (transition === "removed")) {
+
+      this.platform.persistence.persist(this.accessory);
+    }
 
     if(!service) {
 
@@ -392,14 +396,23 @@ export class ProtectSecuritySystem extends ProtectBase {
     // out, you can define multiple liveviews in Protect with the same name...who knew!), and then create a single list containing all of the cameras found.
     const targetCameraIds = liveviews.filter(view => view.name.toLowerCase() === viewScene).map(view => view.slots.map(slots => slots.cameras)).flat(2);
 
-    // We don't have a liveview for this state and we aren't disarming - update state for the user and we're done.
+    // Arming or disarming is how the user acknowledges a triggered alarm, so every scene change clears it and turns the alarm switch off, whether or not a liveview
+    // backs the scene.
+    this.isAlarmTriggered = false;
+
+    if(this.accessory.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value !== this.isAlarmTriggered) {
+
+      this.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
+    }
+
+    // We don't have a liveview for this state and we aren't disarming - save, show and publish the state for the user, and we're done.
     if((newState !== SecuritySystemCurrentState.DISARMED) && !targetCameraIds.length) {
 
       this.log.info("No liveview configured for this security system state. Create a liveview named %s in the Protect webUI to use this feature.", viewScene);
 
-      this.accessory.context.securityState = newState;
-      this.api.updatePlatformAccessories([this.accessory]);
+      this.platform.persistence.persist(this.accessory, { securityState: newState });
       this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
+      this.publish(mqttTopics.securitysystem.topic, this.currentSecuritySystemState);
 
       return;
     }
@@ -439,14 +452,14 @@ export class ProtectSecuritySystem extends ProtectBase {
       // Only take action to change motion detection state if needed.
       if(targetAccessory.context.detectMotion !== targetState) {
 
-        targetAccessory.context.detectMotion = targetState;
+        this.platform.persistence.persist(targetAccessory, { detectMotion: targetState });
 
         // Update the switch service, if present.
         const motionSwitch = targetAccessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
         if(motionSwitch) {
 
-          motionSwitch.updateCharacteristic(this.hap.Characteristic.On, targetAccessory.context.detectMotion);
+          motionSwitch.updateCharacteristic(this.hap.Characteristic.On, targetState);
         }
 
         this.log.info("%s -> %s: Motion detection %s.", viewScene, targetAccessory.displayName,
@@ -455,17 +468,8 @@ export class ProtectSecuritySystem extends ProtectBase {
     }
 
     // Save and show our new state.
-    this.accessory.context.securityState = newState;
-    this.api.updatePlatformAccessories([this.accessory]);
+    this.platform.persistence.persist(this.accessory, { securityState: newState });
     this.accessory.getService(this.hap.Service.SecuritySystem)?.updateCharacteristic(SecuritySystemCurrentState, newState);
-
-    // Reset our alarm state and update our alarm switch.
-    this.isAlarmTriggered = false;
-
-    if(this.accessory.getService(this.hap.Service.Switch)?.getCharacteristic(this.hap.Characteristic.On).value !== this.isAlarmTriggered) {
-
-      this.accessory.getService(this.hap.Service.Switch)?.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);
-    }
 
     // Publish to MQTT, if configured.
     this.publish(mqttTopics.securitysystem.topic, this.currentSecuritySystemState);

@@ -26,11 +26,11 @@
  * would no-op.
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import { SAVE_WINDOW_MS, makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
 import type { TestAccessory, TestService } from "../testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
 import { logCount, loggedAt, settle } from "homebridge-plugin-utils/testing";
-import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL } from "../settings.ts";
 import type { ProtectDevices } from "../types.ts";
 import { ProtectLiveviews } from "./liveviews.ts";
@@ -783,7 +783,8 @@ describe("the liveviews reconcile through the membership delta and the removal g
     assert.ok(built.apiCalls.some((call) => (call.kind === "unregister") && call.accessories.includes(ghost)), "and it was unregistered from HomeKit");
   });
 
-  // Each kind of accessory the liveviews owner derives carries the one marker the controller's device removal passes read, and each context write is saved.
+  // Each kind of accessory the liveviews owner derives carries the one marker the controller's device removal passes read, and each context write is saved once the
+  // save window it opened closes.
   test("the switches and the security system carry the liveview-derived marker, and each context write is saved", async () => {
 
     const built = buildLiveviews({ liveviews: [ makeLiveviewConfig({ id: "lv-away", name: "Protect-Away" }),
@@ -792,6 +793,8 @@ describe("the liveviews reconcile through the membership delta and the removal g
     activeController = built.controller;
 
     await settle();
+
+    built.nvr.platform.clock.advance(SAVE_WINDOW_MS);
 
     const security = built.nvr.platform.accessories.find((accessory) => accessory.UUID === SECURITY_UUID);
     const sceneSwitch = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"));

@@ -27,6 +27,7 @@
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
+import { SAVE_WINDOW_MS, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import type { TestAccessory, TestService } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
@@ -40,7 +41,6 @@ import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
-import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // Every harness controller this file opens, aborted once at the end so no observe loop outlives the suite. The constructions are per-test and numerous, so the capture
 // rides the construction itself rather than each test's own teardown.
@@ -763,6 +763,53 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
     } finally {
 
       diagnosticsChannel.unsubscribe("hbup:observer:wake", onWake);
+    }
+  });
+
+  /* A lock the user turns off stays off across a restart only once Homebridge's accessory cache holds the camera without it, so the reconcile that removes the lock
+   * marks the camera, and the save window that mark opens carries it to the cache once. The window the construction opened is closed first, so the update the row
+   * reads after the reconcile belongs to the reconcile alone.
+   */
+  test("turning the Access lock off saves the camera once, without the lock, when the reconcile's save window closes", async () => {
+
+    const cameraConfig = makeCameraConfig({ accessDeviceMetadata: { featureFlags: { supportUnlock: true } }, channels: G2_PRO_CHANNELS });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { apiCalls, clock, nvr } = buildTestNvr({ store });
+    const accessory = makeTestAccessory("Test Camera", "uuid:access-lock-11");
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+    const saves = (): number => apiCalls.filter((call) => (call.kind === "update") && call.accessories.includes(accessory)).length;
+
+    await settle();
+
+    try {
+
+      assert.ok(accessLock(accessory), "the Access lock was created at adoption");
+
+      clock.advance(SAVE_WINDOW_MS);
+
+      const constructed = saves();
+
+      assert.equal(constructed, 1, "the construction window saved the camera once");
+
+      // The user turns the option off through the engine's own write path, the way a settings save does, and a controller change drives the reconcile. The change is
+      // a flag only a doorbell reads, so the lock's removal is the one change the reconcile makes, and the save it asks for is the lock's alone.
+      nvr.platform.featureOptions.setOption({ enabled: false, option: "UniFi.Access.Lock" });
+      store.pushCameraFeatureFlags(cameraConfig.id, { hasFingerprintSensor: true });
+
+      await settle();
+
+      assert.equal(accessLock(accessory), undefined, "the reconcile removed the lock the option turned off");
+
+      clock.advance(SAVE_WINDOW_MS - 1);
+
+      assert.equal(saves(), constructed, "nothing is saved while the reconcile's window is open");
+
+      clock.advance(1);
+
+      assert.equal(saves(), constructed + 1, "exactly one update names the camera once the reconcile's window closes");
+    } finally {
+
+      camera.cleanup();
     }
   });
 });

@@ -72,10 +72,11 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
     // always an array, so the comparison needs no presence guard.
     const { toAdd, toRemove } = membershipDelta(this.nvr.client.liveviews.map(x => x.id), currentLiveviewSwitches.map(x => x.subtype ?? ""));
 
-    // Remove the switches whose liveview the controller no longer lists, then add a switch for each liveview it newly lists.
+    // Remove the switches whose liveview the controller no longer lists, marking the accessory for the next save, then add a switch for each liveview it newly lists.
     for(const service of currentLiveviewSwitches.filter(x => toRemove.includes(x.subtype ?? ""))) {
 
       this.accessory.removeService(service);
+      this.platform.persistence.persist(this.accessory);
     }
 
     this.addLiveviewSwitch(toAdd);

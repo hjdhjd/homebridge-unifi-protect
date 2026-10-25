@@ -1160,7 +1160,11 @@ export class ProtectNvr {
   // device leaves).
   public removeStaleDoorbellServices(accessory: ProtectAccessory): void {
 
-    DoorbellCapability.removeServices(accessory, this.hap, this.log);
+    // Only a sweep that removed something changed what Homebridge's accessory cache holds for the accessory, so only that sweep marks it for the next save.
+    if(DoorbellCapability.removeServices(accessory, this.hap, this.log)) {
+
+      this.platform.persistence.persist(accessory);
+    }
   }
 
   // Construct the HomeKit device for a freshly-adopted id in one category, wiring its live unifi-protect projection into the accessory. The projection-acquisition and
@@ -1242,7 +1246,8 @@ export class ProtectNvr {
       this.log.info("%s: Adding %s to HomeKit%s.", describeDevice(device), device.modelKey,
         this.hasFeature("Device.Standalone", device) ? " as a standalone device" : "");
 
-      // Register this accessory with homebridge and add it to the accessory array so we can track it.
+      // Register this accessory with homebridge and add it to the accessory array so we can track it. We mark it as well, so the save that closes this window carries
+      // what the device's configure pass below sets up on it.
       if(this.hasFeature("Device.Standalone", device)) {
 
         this.api.publishExternalAccessories(PLUGIN_NAME, [accessory]);
@@ -1252,7 +1257,7 @@ export class ProtectNvr {
       }
 
       this.platform.accessories.push(accessory);
-      this.api.updatePlatformAccessories(this.platform.accessories);
+      this.platform.persistence.persist(accessory);
     }
 
     // Setup the accessory as a new Protect device in the plugin if we haven't configured it yet. A device we already track needs no action here: its state now arrives
@@ -1368,10 +1373,11 @@ export class ProtectNvr {
     }
   }
 
-  /* Remove an accessory from HomeKit and the platform's accessory list - the shared removal tail that removeHomeKitDevice and the package camera's graced detach
-   * both end in. Unregistration is gated on the accessory actually being bridged: hap-nodejs throws on unregistering a never-bridged (standalone) accessory, whose
-   * HomeKit-side removal is the user's in the Home app. The presence guard makes a stale double-fire a harmless no-op - an indexOf miss would otherwise splice(-1)
-   * and silently delete the LAST accessory in the platform array. Logs nothing: the caller owns the user-facing narration.
+  /* Remove an accessory from HomeKit and the platform's accessory list - the shared removal tail every removal of one of our accessories ends in, removeHomeKitDevice
+   * and the package camera's graced detach among them. The unregister goes through the platform's accessory persistence, which drops any save still pending for the
+   * accessory, so no later save returns it to the cache, and hands Homebridge only an accessory its bridge holds: hap-nodejs throws on unregistering a never-bridged
+   * (standalone) accessory, whose HomeKit-side removal is the user's in the Home app. The presence guard makes a stale double-fire a harmless no-op - an indexOf miss
+   * would otherwise splice(-1) and silently delete the LAST accessory in the platform array. Logs nothing: the caller owns the user-facing narration.
    */
   public removeAccessoryFromHomeKit(accessory: ProtectAccessory): void {
 
@@ -1382,16 +1388,8 @@ export class ProtectNvr {
       return;
     }
 
-    // Unregister the accessory from HomeKit if we have a bridged accessory. Unbridged accessories are managed directly by users in the Home app.
-    if(accessory._associatedHAPAccessory.bridged) {
-
-      this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-    }
-
+    this.platform.persistence.unregister([accessory]);
     this.platform.accessories.splice(index, 1);
-
-    // Tell Homebridge to save the updated list of accessories.
-    this.api.updatePlatformAccessories(this.platform.accessories);
   }
 
   // Return all configured devices of a particular category. The category is required: an omitted argument would filter every device's modelKey against undefined and

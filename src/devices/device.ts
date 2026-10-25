@@ -196,19 +196,34 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
   // Acquire a service on this device's accessory, creating it when the accessory carries none. The wrapper supplies the accessory and defaults the name to the
   // accessory name, and answers with the homebridge-plugin-utils result unchanged: the service, and the transition that says whether this call attached it or kept one
-  // already present.
+  // already present. A service it attaches changes what Homebridge's accessory cache holds, so the wrapper marks the accessory for the next save.
   protected acquireService<T extends Service>(options: ProtectServiceOptions<AcquireServiceOptions<T>>): AcquireServiceResult<T> {
 
-    return acquireService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
+    const acquired = acquireService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
+
+    if(acquired.transition === "attached") {
+
+      this.platform.persistence.persist(this.accessory);
+    }
+
+    return acquired;
   }
 
   // Reconcile a service's presence on this device's accessory from one verdict, supplying the accessory and the default name the same way. The verdict is either a
   // plain boolean or a presence-aware predicate, mirroring the homebridge-plugin-utils free function this delegates to: the predicate receives the service's current
   // presence so a gate can keep an already-present service while refusing to create a new one (the additive-eager / subtractive-conservative capability gates). The
   // answer is the library's own: the service with an attached or kept transition when the verdict keeps it, or null with a removed or absent transition when it does not.
+  // A service it attaches or removes changes what Homebridge's accessory cache holds, so the wrapper marks the accessory for the next save.
   protected validService<T extends Service>(options: ProtectServiceOptions<ValidServiceOptions<T>>): ValidServiceResult<T> {
 
-    return validService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
+    const validated = validService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
+
+    if((validated.transition === "attached") || (validated.transition === "removed")) {
+
+      this.platform.persistence.persist(this.accessory);
+    }
+
+    return validated;
   }
 
   // Configure device-specific settings. The complete base bag is built as one literal and assigned, which is what lets the field be declared with definite assignment
@@ -394,7 +409,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
         this.log.info("Motion detection %s.", value ? "enabled" : "disabled");
       }
 
-      this.accessory.context.detectMotion = !!value;
+      this.platform.persistence.persist(this.accessory, { detectMotion: !!value });
     });
 
     // Initialize the switch state.
@@ -736,7 +751,8 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   }
 
   // Sync the controller's device name into HomeKit when the user enabled name syncing. The cooked display name is the syncedName derivation above, and we only touch
-  // HomeKit (and log) when it actually differs from the current accessory name, so a re-read on an unrelated name-slice yield is a harmless no-op.
+  // HomeKit (and log) when it actually differs from the current accessory name, so a re-read on an unrelated name-slice yield is a harmless no-op. A rename changes the
+  // display name Homebridge's accessory cache holds, so it marks the accessory for the next save.
   protected syncNameFromController(): void {
 
     if(!this.hints.syncName) {
@@ -754,6 +770,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     this.log.info("Detected a name change on the controller; updating the HomeKit name to %s.", synced);
 
     this.accessoryName = synced;
+    this.platform.persistence.persist(this.accessory);
   }
 
   // Pushed by the NVR's connection observe loop when controller-level reachability changes. Rewrites StatusActive from isReachable on every service on the accessory

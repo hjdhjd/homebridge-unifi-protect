@@ -134,6 +134,12 @@ export class ProtectFob extends ProtectDevice<Fob> {
       // removed, while a freshly created lone switch is left untouched, so a single-button fob presents no index and links to no label.
       const transition = validCharacteristic({ characteristic: this.hap.Characteristic.ServiceLabelIndex, service, validate: grouped });
 
+      // An index the gate attached or removed changes the switch Homebridge's accessory cache holds, so the accessory is marked for the next save.
+      if((transition === "attached") || (transition === "removed")) {
+
+        this.platform.persistence.persist(this.accessory);
+      }
+
       // Grouped: stamp the STABLE fixed table index (never the visible-subset position, so hiding an earlier button never renumbers a later one) and link the switch to
       // the label so HomeKit renders them as one remote. The label exists exactly when the fob is grouped, so a kept or attached index always has one to link to.
       if(serviceLabel && ((transition === "attached") || (transition === "kept"))) {

@@ -154,8 +154,7 @@ export class ProtectLiveviews extends ProtectBase {
     this.securitySystem ??= new ProtectSecuritySystem(this.nvr, this.securityAccessory);
 
     // Update our NVR reference, and save the accessory's context.
-    this.securityAccessory.context.nvr = this.nvr.ufp.mac;
-    this.api.updatePlatformAccessories([this.securityAccessory]);
+    this.platform.persistence.persist(this.securityAccessory, { nvr: this.nvr.ufp.mac });
 
     // Refresh the available arm states from the current liveview collection, so adding or removing a Protect-Away/Home/Night liveview re-scopes the security system's
     // valid target states. The owner drives this on every reconcile because it owns the security accessory's lifecycle and its refresh.
@@ -240,21 +239,18 @@ export class ProtectLiveviews extends ProtectBase {
       // Rewrite the context from a clean slate, marking the accessory as one the liveviews owner derives so the controller's device removal passes leave it to us, and
       // save it.
       newAccessory.context = {};
-      newAccessory.context.liveview = viewName;
-      newAccessory.context.liveviewDerived = true;
-      newAccessory.context.liveviewState = liveviewState;
-      newAccessory.context.nvr = this.nvr.ufp.mac;
-      this.api.updatePlatformAccessories([newAccessory]);
+      this.platform.persistence.persist(newAccessory, { liveview: viewName, liveviewDerived: true, liveviewState, nvr: this.nvr.ufp.mac });
 
       // Find the existing liveview switch, if we have one.
       let switchService = newAccessory.getService(this.hap.Service.Switch);
 
-      // Add the liveview switch to the accessory.
+      // Add the liveview switch to the accessory, and mark it for the next save.
       if(!switchService) {
 
         switchService = new this.hap.Service.Switch(newAccessory.displayName);
 
         newAccessory.addService(switchService);
+        this.platform.persistence.persist(newAccessory);
       }
 
       // Activate or deactivate motion detection.
@@ -265,8 +261,8 @@ export class ProtectLiveviews extends ProtectBase {
       // Initialize the switch. We keep a saved liveview switch state because we want to account for edge cases where liveviews can disappear and we end up in a
       // situation where motion detection is disabled without a way to enable it. By saving the switch state on the accessory, we can always initialize all
       // motion-related accessories at startup as having motion enabled, and explicitly disable them here at startup when we restore state.
-      switchService.updateCharacteristic(this.hap.Characteristic.On, newAccessory.context.liveviewState);
-      this.setSwitchState(newAccessory, newAccessory.context.liveviewState);
+      switchService.updateCharacteristic(this.hap.Characteristic.On, liveviewState);
+      this.setSwitchState(newAccessory, liveviewState);
       this.isConfigured.add((newAccessory.context.liveview ?? "").toUpperCase());
 
       // Inform the user.
@@ -380,7 +376,7 @@ export class ProtectLiveviews extends ProtectBase {
 
       // Set the motion detection state. We do this after setting any motion detection switch in order to ensure we fire events in the right order for the motion
       // detection switch.
-      protectDevice.accessory.context.detectMotion = !!targetState;
+      this.platform.persistence.persist(protectDevice.accessory, { detectMotion: !!targetState });
 
       // Inform the user.
       this.log.info("%s -> %s: Motion detection %s.", liveviewSwitch.context.liveview, protectDevice.accessoryName,
@@ -388,8 +384,7 @@ export class ProtectLiveviews extends ProtectBase {
     }
 
     // Save our new state.
-    liveviewSwitch.context.liveviewState = !!targetState;
-    this.api.updatePlatformAccessories([liveviewSwitch]);
+    this.platform.persistence.persist(liveviewSwitch, { liveviewState: !!targetState });
 
     // Publish to MQTT, if configured.
     this.publish(mqttTopics.liveviews.topic, JSON.stringify([{ name: liveviewSwitch.context.liveview ?? "", state: targetState }]));

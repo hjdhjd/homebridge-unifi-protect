@@ -542,8 +542,8 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
   test("setSecurityState with a liveview but no member cameras for the target takes the no-target branch (state updates, the guidance logs)", async () => {
 
-    // A Protect-Home liveview with NO member cameras: arming STAY_ARM finds no target cameras, so the no-target branch updates state and logs the create-a-liveview
-    // guidance.
+    // A Protect-Home liveview with NO member cameras: arming STAY_ARM finds no target cameras, so the no-target branch updates and publishes the state, as every other
+    // set path does, and logs the create-a-liveview guidance.
     const built = buildSecuritySystem({ liveviews: [makeLiveviewConfig({ id: "lv-home", name: "Protect-Home" })] });
 
     activeController = built.controller;
@@ -554,7 +554,27 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.STAY_ARM,
       "the no-target branch still updates CurrentState for the user");
+    assert.deepEqual(built.mqtt.publishedTo(CONTROLLER_MAC + "/securitysystem").map((entry) => entry.payload), [ "Off", "Home" ],
+      "the build stated the Off state once and the no-target branch published the Home state once");
     assert.ok(loggedAt(built.logEntries, "info", "No liveview configured for this security system state."), "the no-target branch logged the create-a-liveview guidance");
+  });
+
+  test("setSecurityState on the no-target branch clears a triggered alarm and publishes the scene, as the member path does", async () => {
+
+    // The alarm is driven first, so the no-target arm has a latch to clear: the alarm Switch turns off, CurrentState shows the scene, and the publish names the scene
+    // rather than the alarm.
+    const built = buildSecuritySystem({ liveviews: [makeLiveviewConfig({ id: "lv-home", name: "Protect-Home" })], userOptions: ["Enable.SecuritySystem.Alarm"] });
+
+    activeController = built.controller;
+
+    await settle();
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "AlarmOn");
+    await built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(TargetState).triggerSet(TargetState.STAY_ARM);
+
+    assert.equal(built.accessory.getService(Service.Switch)?.getCharacteristic(Characteristic.On).value, false, "the no-target arm turned the alarm Switch off");
+    assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.STAY_ARM, "CurrentState shows the scene");
+    assert.deepEqual(built.mqtt.publishedTo(CONTROLLER_MAC + "/securitysystem").map((entry) => entry.payload), [ "Off", "Alarm", "Home" ],
+      "the publish after the no-target arm names the scene, the alarm cleared");
   });
 
   test("setSecurityAlarm triggers the ALARM_TRIGGERED current state and the alarm Switch, and a reset returns to the held state", async () => {
