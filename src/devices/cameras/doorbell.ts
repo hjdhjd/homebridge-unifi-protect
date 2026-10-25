@@ -14,7 +14,6 @@ import type { ProtectCamera } from "./camera.ts";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import { ProtectDeviceCapability } from "../device-capability.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
-import { deviceSelectors } from "unifi-protect";
 import { isFeatureFlagsDrain } from "./capability-reconcile-policy.ts";
 import { mqttTopics } from "../../mqtt.ts";
 
@@ -192,7 +191,8 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
   // motion are firehose occurrences the router handles, not observed here.
   private spawnObservers(): void {
 
-    const cam = deviceSelectors.camera.byId(this.#device.id);
+    const cam = this.nvr.client.state.selectors.camera.byId(this.#device.id);
+    const chimes = this.nvr.client.state.selectors.chime.all;
     const id = this.#device.id;
 
     // Reflect the controller's current LCD message across the doorbell's message switches, re-deriving expiry each time the message slice changes.
@@ -211,7 +211,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // the volume Lightbulb. The selector returns the computed mean volume across the doorbell's assigned chimes, so the store's value dedup wakes this only on a real
     // ring-volume change, not on every unrelated chime patch, and the push keeps the volume Lightbulb consistent with the onGet. The id is hoisted to the plain string
     // here, alongside cam, because a selector runs inside the store's dispatch, where a projection read against a removed record throws.
-    this.observeState({ key: "doorbell.chimeVolume", selector: state => chimeVolumeFor(deviceSelectors.chime.all(state), id), title: "the chime volume" }, () => {
+    this.observeState({ key: "doorbell.chimeVolume", selector: state => chimeVolumeFor(chimes(state), id), title: "the chime volume" }, () => {
 
       this.updateChimeVolume();
       this.publishChimeVolumeState();
@@ -388,7 +388,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       accessory: accessory,
       reason: "The controller no longer reports a package camera on " + this.accessoryName + "; removing its package camera accessory.",
       remove: () => this.detachPackageCamera(),
-      stillGone: () => !deviceSelectors.camera.byId(id)(this.nvr.client.state.snapshot())?.featureFlags.hasPackageCamera
+      stillGone: () => !this.nvr.client.state.selectors.camera.byId(id)(this.nvr.client.state.snapshot())?.featureFlags.hasPackageCamera
     });
   }
 
@@ -935,12 +935,12 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     return this.runDeviceCommand("set the doorbell message", () => this.#device.update({ lcdMessage: payload }));
   }
 
-  // This doorbell's effective chime volume, read through the live chime projections. We delegate to the shared chimeVolumeFor helper over deviceSelectors.chime.all of
-  // the current snapshot - the identical input the volume observer reduces - so the read-through getter and the reactive push share one definition of "this doorbell's
-  // volume". The catalog's chime.all is always an array post-connect.
+  // This doorbell's effective chime volume, read through the live chime projections. We delegate to the shared chimeVolumeFor helper over
+  // client.state.selectors.chime.all of the current snapshot - the identical input the volume observer reduces - so the read-through getter and the reactive push share
+  // one definition of "this doorbell's volume". The catalog's chime.all is always an array post-connect.
   private get chimeVolume(): number {
 
-    return chimeVolumeFor(deviceSelectors.chime.all(this.nvr.client.state.snapshot()), this.#device.id);
+    return chimeVolumeFor(this.nvr.client.state.selectors.chime.all(this.nvr.client.state.snapshot()), this.#device.id);
   }
 
   private async setChimeVolume(value: number): Promise<void> {
@@ -985,7 +985,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
   // Whether any chime assigned to this doorbell carries a ring for it, read over the same chime projection the volume reduces and through the same ring lookup.
   private get hasChimeRing(): boolean {
 
-    return deviceSelectors.chime.all(this.nvr.client.state.snapshot()).some(chime => chimeRingFor(chime, this.#device.id) !== undefined);
+    return this.nvr.client.state.selectors.chime.all(this.nvr.client.state.snapshot()).some(chime => chimeRingFor(chime, this.#device.id) !== undefined);
   }
 
   // Push the chime-volume projection onto the doorbell's volume Lightbulb. Shares the read path (chimeVolume / chimeVolumeFor) with the onGet handlers, so the displayed

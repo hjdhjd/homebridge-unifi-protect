@@ -22,7 +22,7 @@
  * vape gets present only under their feature options, plus the model-aware leak GETs (registered per-channel, present-iff-enabled, once-guarded, and unsubscribed when
  * a channel is toggled off).
  *
- * The multi-wake: the whole-record observer (sensor.config) selects the WHOLE sensor record (deviceSelectors.sensor.byId(id)), and pushSensorPatch replaces it on
+ * The multi-wake: the whole-record observer (sensor.config) selects the WHOLE sensor record (client.state.selectors.sensor.byId(id)), and pushSensorPatch replaces it on
  * every patch that changes the record (a value-identical patch is a reducer no-op and wakes nothing at all), so sensor.config wakes on every such push - in ADDITION
  * to any narrow observer (sensor.motionDetectedAt / sensor.tamperingDetectedAt / sensor.alarmTriggeredAt / sensor.glassBreakTriggeredAt)
  * whose field changed. So a narrow-field push wakes exactly the changed narrow observer plus sensor.config, in registration order (the narrow observer precedes config):

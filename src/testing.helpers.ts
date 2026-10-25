@@ -25,7 +25,7 @@
  */
 import type { CameraController, CameraControllerOptions, Resolution } from "homebridge";
 import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } from "./media/stream-delegate.ts";
-import type { DeepPartial, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig,
+import type { DeepPartial, DeviceSelectors, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig,
   ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState, ProtectStateRecord, ProtectViewerConfig, StateModelKey,
   StateStore } from "unifi-protect";
 import type { AdvertisedStreams } from "./devices/cameras/camera.ts";
@@ -1196,6 +1196,12 @@ export class TestStateStore {
   public snapshot(): ProtectState {
 
     return this.store.snapshot();
+  }
+
+  // The device-collection selector catalog - the same read surface production code reaches as client.state.selectors, the real store's own catalog.
+  public get selectors(): DeviceSelectors {
+
+    return this.store.selectors;
   }
 
   // Patch a camera record, exactly as the controller's realtime update packet would.

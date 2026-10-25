@@ -216,9 +216,9 @@ export class ProtectEventDispatch {
     }
   }
 
-  // Resolve a firehose camera/device id to the addressed camera accessory, or null when it is absent or not a camera. Doorbells share the camera model key and extend
-  // ProtectCamera, so this narrows to both. Cameras are the only accessories the activity firehose addresses, so a non-camera match (or an unconfigured id) is a clean
-  // no-op at the call site.
+  // Resolve a firehose camera/device id to the addressed camera accessory, or null when it is absent or not a camera. A doorbell shares the camera model key and
+  // carries the doorbell capability, so this narrows to both. Cameras are the only accessories the activity firehose addresses, so a non-camera match (or an
+  // unconfigured id) is a clean no-op at the call site.
   private cameraFor(id: string): Nullable<ProtectCamera> {
 
     const device = this.nvr.getDeviceById(id);

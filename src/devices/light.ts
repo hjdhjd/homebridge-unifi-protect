@@ -8,7 +8,6 @@ import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
-import { deviceSelectors } from "unifi-protect";
 import { mqttTopics } from "../mqtt.ts";
 
 export class ProtectLight extends ProtectDevice<Light> {
@@ -176,7 +175,7 @@ export class ProtectLight extends ProtectDevice<Light> {
 
     super.spawnObservers();
 
-    const light = deviceSelectors.light.byId(this.device.id);
+    const light = this.nvr.client.state.selectors.light.byId(this.device.id);
 
     // Light motion, like sensor and camera motion, is a device-state field (lastMotion) the controller advances rather than a firehose occurrence, so observing the
     // timestamp is the single source for this device, firing only on a real (truthy) detection rather than re-synthesizing it from a held prior value.

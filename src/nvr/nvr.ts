@@ -5,9 +5,9 @@
 import type { API, HAP } from "homebridge";
 import { APIEvent, createMqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, membershipDelta, mqttConnectionSettings, prefixedLog,
   retry, sanitizeName, superviseLoop } from "homebridge-plugin-utils";
-import type { Camera, CollectionSelectors, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload,
-  LivestreamRecoveryStartedPayload, ProtectDeviceConfig, ProtectDeviceConfigMap, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
-import { DEVICE_COLLECTION_KEYS, ProtectClient, deviceSelectors, channels as protectChannels } from "unifi-protect";
+import type { Camera, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
+  ProtectDeviceConfig, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
+import { DEVICE_COLLECTION_KEYS, ProtectClient, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, MqttClient, Nullable } from "homebridge-plugin-utils";
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnostics.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
@@ -57,13 +57,12 @@ import { servePlaylist } from "./nvr-playlist.ts";
  */
 export type NvrPhase = "connecting" | "rebooting" | "running" | "shuttingDown";
 
-// One device category's wiring: how to resolve its live unifi-protect projection from an id, how to build its HomeKit device from that projection, and the memoized
-// selectors its membership reads. Correlated on K so a category's projection, class, and selectors cannot drift apart in the descriptor table below.
+// One device category's wiring: how to resolve its live unifi-protect projection from an id and how to build its HomeKit device from that projection. Correlated on K
+// so a category's projection and class cannot drift apart in the descriptor table below.
 interface DeviceDescriptor<K extends DeviceCollectionKey> {
 
   construct: (accessory: ProtectAccessory, projection: ProtectProjectionMap[K]) => ProtectDeviceTypes[K];
   projection: (client: ProtectClient, id: string) => ProtectProjectionMap[K] | undefined;
-  selectors: CollectionSelectors<ProtectDeviceConfigMap[K]>;
 }
 
 export class ProtectNvr {
@@ -113,26 +112,22 @@ export class ProtectNvr {
   // The unifi-protect client logger. Shares the controller-log destination but gates error output through `logApiErrors` so induced-disruption noise is suppressed. Typed
   // as the unifi-protect library's own ProtectLogging contract, single-sourced with what ProtectClient.connect() expects.
   private readonly clientLog: ProtectLogging;
-  // The one place the device-category vocabulary is wired to its selectors, projections, and constructors. The membership observe loops, the stability sweep, and the
-  // per-fire stillGone re-check read the content-memoized adopted-id set through `.selectors.adoptedIds`; adoption resolves the live unifi-protect projection through
-  // `.projection` and builds the HomeKit device through `.construct`. A category added upstream is wired in exactly one place here rather than re-listed at each reader.
+  // The one place the device-category vocabulary is wired to its projections and constructors: adoption resolves the live unifi-protect projection through
+  // `.projection` and builds the HomeKit device through `.construct`. Membership reads the client's own selector catalog through the same key: the membership observe
+  // loops, the stability sweep, and the per-fire stillGone re-check each read the content-memoized adopted-id set as `client.state.selectors[key].adoptedIds`, because
+  // that catalog belongs to the client's store, which connect() establishes after this table is built. A category added upstream is wired in exactly one place here
+  // rather than re-listed at each reader.
   private readonly deviceDescriptors: { readonly [K in DeviceCollectionKey]: DeviceDescriptor<K> } = {
 
     // The camera row builds a ProtectCamera for both plain cameras and doorbells: a device the controller reports as a doorbell attaches its DoorbellCapability through
     // ProtectCamera's own construction-time reconcile, so there is one construction path for both arrival timings (doorbell-at-adoption and a late isDoorbell flip).
-    camera: { construct: (accessory, camera) => new ProtectCamera(this, accessory, camera), projection: (client, id) => client.camera(id),
-      selectors: deviceSelectors.camera },
-    chime: { construct: (accessory, chime) => new ProtectChime(this, accessory, chime), projection: (client, id) => client.chime(id),
-      selectors: deviceSelectors.chime },
-    fob: { construct: (accessory, fob) => new ProtectFob(this, accessory, fob), projection: (client, id) => client.fob(id), selectors: deviceSelectors.fob },
-    light: { construct: (accessory, light) => new ProtectLight(this, accessory, light), projection: (client, id) => client.light(id),
-      selectors: deviceSelectors.light },
-    relay: { construct: (accessory, relay) => new ProtectRelay(this, accessory, relay), projection: (client, id) => client.relay(id),
-      selectors: deviceSelectors.relay },
-    sensor: { construct: (accessory, sensor) => new ProtectSensor(this, accessory, sensor), projection: (client, id) => client.sensor(id),
-      selectors: deviceSelectors.sensor },
-    viewer: { construct: (accessory, viewer) => new ProtectViewer(this, accessory, viewer), projection: (client, id) => client.viewer(id),
-      selectors: deviceSelectors.viewer }
+    camera: { construct: (accessory, camera) => new ProtectCamera(this, accessory, camera), projection: (client, id) => client.camera(id) },
+    chime: { construct: (accessory, chime) => new ProtectChime(this, accessory, chime), projection: (client, id) => client.chime(id) },
+    fob: { construct: (accessory, fob) => new ProtectFob(this, accessory, fob), projection: (client, id) => client.fob(id) },
+    light: { construct: (accessory, light) => new ProtectLight(this, accessory, light), projection: (client, id) => client.light(id) },
+    relay: { construct: (accessory, relay) => new ProtectRelay(this, accessory, relay), projection: (client, id) => client.relay(id) },
+    sensor: { construct: (accessory, sensor) => new ProtectSensor(this, accessory, sensor), projection: (client, id) => client.sensor(id) },
+    viewer: { construct: (accessory, viewer) => new ProtectViewer(this, accessory, viewer), projection: (client, id) => client.viewer(id) }
   };
 
   constructor(platform: ProtectPlatform, nvrOptions: ProtectNvrOptions) {
@@ -856,14 +851,14 @@ export class ProtectNvr {
 
     const snapshot = this.client.state.snapshot();
 
-    return DEVICE_COLLECTION_KEYS.flatMap((key): readonly ProtectDeviceConfig[] => deviceSelectors[key].all(snapshot));
+    return DEVICE_COLLECTION_KEYS.flatMap((key): readonly ProtectDeviceConfig[] => this.client.state.selectors[key].all(snapshot));
   }
 
   // Resolve the live config record for a device id within a category, from the unifi-protect projection. The single read path the membership reconcile uses to turn a
   // freshly-adopted id into the record it feeds to addHomeKitDevice.
   private deviceConfig(category: DeviceCollectionKey, id: string): Nullable<ProtectDeviceConfig> {
 
-    return deviceSelectors[category].byId(id)(this.client.state.snapshot()) ?? null;
+    return this.client.state.selectors[category].byId(id)(this.client.state.snapshot()) ?? null;
   }
 
   // Resolve a device's config record by MAC from the live projections. Used by the removal log to name a device the controller still reports.
@@ -905,7 +900,7 @@ export class ProtectNvr {
         if(device) {
 
           this.removals.schedule({ accessory: device.accessory,
-            stillGone: () => !this.deviceDescriptors[category].selectors.adoptedIds(this.client.state.snapshot()).includes(id) });
+            stillGone: () => !this.client.state.selectors[category].adoptedIds(this.client.state.snapshot()).includes(id) });
         }
       }
     }
@@ -952,7 +947,7 @@ export class ProtectNvr {
 
     for(const key of DEVICE_COLLECTION_KEYS) {
 
-      const ids = this.deviceDescriptors[key].selectors.adoptedIds;
+      const ids = this.client.state.selectors[key].adoptedIds;
 
       // Initial population from the current snapshot, then react to membership deltas.
       this.reconcileMembership(key, ids(this.client.state.snapshot()));
@@ -979,7 +974,7 @@ export class ProtectNvr {
 
     for(const key of DEVICE_COLLECTION_KEYS) {
 
-      this.reconcileMembership(key, this.deviceDescriptors[key].selectors.adoptedIds(this.client.state.snapshot()));
+      this.reconcileMembership(key, this.client.state.selectors[key].adoptedIds(this.client.state.snapshot()));
     }
 
     this.sweepOrphans();

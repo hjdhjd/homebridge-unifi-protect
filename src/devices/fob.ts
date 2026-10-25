@@ -10,7 +10,6 @@ import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { describeDeviceModel } from "./device-descriptor.ts";
-import { deviceSelectors } from "unifi-protect";
 import { validCharacteristic } from "homebridge-plugin-utils";
 
 // Projects one UniFi Protect LoRa fob's fixed button set and battery state onto a HomeKit accessory.
@@ -264,7 +263,7 @@ export class ProtectFob extends ProtectDevice<Fob> {
 
     super.spawnObservers();
 
-    const fob = deviceSelectors.fob.byId(this.device.id);
+    const fob = this.nvr.client.state.selectors.fob.byId(this.device.id);
 
     // The battery-level reaction: when the controller's reported battery percentage changes, re-push BatteryLevel. The selector reads the primitive, so an unrelated fob
     // patch never wakes it.

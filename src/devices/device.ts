@@ -8,7 +8,6 @@ import type { DeviceCollectionKey, ProtectCameraConfig, ProtectDeviceConfig, Pro
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, ProtectServiceOptions, WithoutIdentity } from "../types.ts";
 import { acquireService, mqttGetTopic, mqttSetTopic, setAccessoryName, updateServices, validService } from "homebridge-plugin-utils";
-import { deviceSelectors, isDeviceOnline } from "unifi-protect";
 import { legacyFamilyForOption, resolveLegacySelection } from "../options-legacy.ts";
 import type { LegacyFamily } from "../options-legacy.ts";
 import type { ObserverWakePayload } from "../diagnostics.ts";
@@ -19,6 +18,7 @@ import type { ProtectPlatform } from "../platform.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { channels } from "../diagnostics.ts";
 import { describeDevice } from "./device-descriptor.ts";
+import { isDeviceOnline } from "unifi-protect";
 import { mqttTopics } from "../mqtt.ts";
 import { smartDetectLabel } from "../options.ts";
 
@@ -691,16 +691,17 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   // binds to this.signal, so cleanup()/reconfigure/shutdown tear them all down through the per-accessory controller abort.
   protected spawnObservers(): void {
 
+    // Bind the by-id config selector once, as each device family does for its own observers, so every evaluation reuses the same closure.
+    const config = this.deviceConfigSelector();
+
     // The universal reaction: when the controller-side name changes and the user opted into name syncing, push it to the HomeKit accessory. The selector is the name
     // slice itself, so this fires only on an actual rename, never on routine config churn.
-    this.observeState({ key: "device.name", selector: state => this.deviceConfigSelector()(state)?.name, title: "the device name" },
-      () => this.syncNameFromController());
+    this.observeState({ key: "device.name", selector: state => config(state)?.name, title: "the device name" }, () => this.syncNameFromController());
 
     // Device information (model, serial, firmware) is set once at configure; the firmware revision is the only field that changes at runtime, on a Protect firmware
     // update. A narrow observe on that slice refreshes the AccessoryInformation service when (and only when) firmware changes, re-running configureInfo at
     // firmware-change cadence.
-    this.observeState({ key: "device.firmwareVersion", selector: state => this.deviceConfigSelector()(state)?.firmwareVersion, title: "device information" },
-      () => this.configureInfo());
+    this.observeState({ key: "device.firmwareVersion", selector: state => config(state)?.firmwareVersion, title: "device information" }, () => this.configureInfo());
   }
 
   // Publish the per-accessory observer-wake milestone for a slice a composed capability watches. A capability has no accessory identity of its own (it extends the spine,
@@ -728,7 +729,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   // and the lookup is total.
   private deviceConfigSelector(): (state: ProtectState) => Readonly<ProtectDeviceConfig> | undefined {
 
-    return deviceSelectors[this.device.modelKey].byId(this.device.id);
+    return this.nvr.client.state.selectors[this.device.modelKey].byId(this.device.id);
   }
 
   // The controller-side display name this device syncs into HomeKit: the user-assigned name, falling back to the model's market name. This is the single derivation the

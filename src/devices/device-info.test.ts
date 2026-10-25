@@ -11,11 +11,12 @@
  * the BASE behaviors family-agnostically against the shared TestBaseDevice vehicle on the all-quiet makeSensorConfig carrier rather than re-asserting them inside each
  * family suite. The package-camera-specific name decoration (syncedName's display-suffix override) is family-owned and stays in doorbell-construction.test.ts.
  *
- * The wake mechanism: the base observers (device.name, device.firmwareVersion) read through deviceConfigSelector() -> deviceSelectors.sensor.byId(id) -> the STORE's
- * sensor record (not the projection), so pushSensorPatch - which updates that store record - is what wakes them, each NARROW (a name push wakes only the device.name
- * observer, a firmware push only the device.firmwareVersion observer). The rename reads this.syncedName, which resolves through the non-throwing peek() accessor as
- * peek()?.name ?? peek()?.marketName ?? this.accessoryName, observing the SAME store record, so after a name push both the selector and syncedName see the new name.
- * Observe registration is LAZY (each loop registers on iteration start, a microtask later), so every observerCount assertion and every wake assertion settles first.
+ * The wake mechanism: the base observers (device.name, device.firmwareVersion) read through deviceConfigSelector() -> client.state.selectors.sensor.byId(id) -> the
+ * STORE's sensor record (not the projection), so pushSensorPatch - which updates that store record - is what wakes them, each NARROW (a name push wakes only the
+ * device.name observer, a firmware push only the device.firmwareVersion observer). The rename reads this.syncedName, which resolves through the non-throwing peek()
+ * accessor as peek()?.name ?? peek()?.marketName ?? this.accessoryName, observing the SAME store record, so after a name push both the selector and syncedName see the
+ * new name. Observe registration is LAZY (each loop registers on iteration start, a microtask later), so every observerCount assertion and every wake assertion settles
+ * first.
  *
  * The vacuity gates: the name-sync direction is split by the Device.SyncName feature (default FALSE). WITH Enable.Device.SyncName the rename test asserts a proven
  * before->after transition ("Test Sensor" -> "Renamed Sensor") across BOTH HomeKit-visible name characteristics - Name and the ConfiguredName the Home app lets a user

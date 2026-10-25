@@ -46,7 +46,7 @@ function isSameEntry(candidate: ChannelProfile, other: Nullable<ChannelProfile>)
  * buffer-backed livestreaming (the camera's live-view toggle) and HomeKit Secure Video recording - together with the camera's live reachability, narrates the
  * deferral / resumption / acknowledgment story of that reconciliation, and owns the lifetime signal whose abort, on the controller-disconnect and camera-teardown
  * paths, ends supervision for good. The buffer runs whenever either arm demands it, so the same pooled socket feeds live views, HomeKit Secure Video, and snapshots
- * under one quality policy. The streaming delegate constructs one supervisor per livestream-capable camera, before the recording delegate that may consume it - a
+ * under one quality policy. The streaming delegate constructs one supervisor for every camera, before the recording delegate that may consume it - a
  * recording delegate cannot exist without its supervisor, so buffer supervision has exactly one owner and one construction path.
  */
 export class ProtectTimeshiftSupervisor {

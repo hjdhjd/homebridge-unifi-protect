@@ -368,6 +368,13 @@ describe("the state-store double (TestStateStore)", () => {
     // anyway so nothing lingers.
     controller.abort();
   });
+
+  test("selectors exposes the real store's catalog, so a by-id read over the snapshot returns the seeded camera", () => {
+
+    const { camera, store } = makeStore();
+
+    assert.equal(store.selectors.camera.byId(camera.id)(store.snapshot()), camera, "the catalog's camera by-id selector resolves the seeded record");
+  });
 });
 
 describe("makeProtectState device-slice widening", () => {

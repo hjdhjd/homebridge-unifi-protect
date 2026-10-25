@@ -10,7 +10,6 @@ import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camer
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS, PROTECT_NVR_REBOOT_RECENCY_MS,
   PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState } from "../../types.ts";
-import { ProtectAuthorizationError, deviceSelectors } from "unifi-protect";
 import { RECORDING_AUDIO_STAND_IN, describeAudioFormat, livestreamAudioFormat } from "../../media/stream-delegate.ts";
 import { STREAM_QUALITY_TIERS, smartDetectLabel } from "../../options.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl, selectSubstrateChannelFrom } from "../../media/resolution.ts";
@@ -24,6 +23,7 @@ import type { DoorbellCapability } from "./doorbell.ts";
 import type { LivestreamSubscription } from "../../media/livestream.ts";
 import type { NightVisionCommand } from "./night-vision-policy.ts";
 import type { Nullable } from "homebridge-plugin-utils";
+import { ProtectAuthorizationError } from "unifi-protect";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import { ProtectDevice } from "../device.ts";
 import type { ProtectHints } from "../device.ts";
@@ -546,7 +546,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // Bind the by-id camera selector once and read fields off it, so each per-dispatch selector evaluation reuses the same closure rather than re-deriving it. We seed it
     // from the projection's non-throwing id rather than the throwing config, so the selector binding never depends on a present record.
-    const cam = deviceSelectors.camera.byId(this.device.id);
+    const cam = this.nvr.client.state.selectors.camera.byId(this.device.id);
 
     // The RTSP channel set and the negotiated video codec both shape the HomeKit streaming surface, so a change to either re-derives it. Separate observers, not one
     // tuple: a fresh tuple would never dedup on Object.is, whereas each field dedups natively as its own slice.

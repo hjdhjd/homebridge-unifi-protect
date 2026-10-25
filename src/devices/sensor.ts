@@ -19,7 +19,6 @@ import type { ProtectConfigurePass } from "./device.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
-import { deviceSelectors } from "unifi-protect";
 import { leakChannelEnabled } from "./leak-policy.ts";
 import { mqttTopics } from "../mqtt.ts";
 
@@ -1140,7 +1139,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
     super.spawnObservers();
 
-    const sensor = deviceSelectors.sensor.byId(this.device.id);
+    const sensor = this.nvr.client.state.selectors.sensor.byId(this.device.id);
 
     // Sensor motion is a device-state field, not a firehose occurrence: the controller surfaces a UP Sense motion as a fresh motionDetectedAt timestamp on the sensor
     // record, with no `event`-channel counterpart. So the single source for "did this sensor see motion?" is the timestamp itself, and observing it is the honest
