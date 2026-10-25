@@ -3,24 +3,32 @@
  * testing.helpers.test.ts: Unit tests for the controller-subsystem test helpers in testing.helpers.ts.
  *
  * The NVR double is the controller every device test is constructed against, so a defect in the way it wires the removal gate, the reboot scheduler, its managed-device
- * registry, or its config builder would corrupt whole families of tests at once. These rows pin the surfaces production reaches for through its owner: the double's
- * wiring of the real removal gate and the removal tail behind it, its wiring of the real reboot scheduler and the recording count behind that, the MQTT recording
- * double, the accessory-family builder, and the read-through config getters.
+ * registry, or its config builder would corrupt whole families of tests at once. These rows assert the surfaces production reaches for through its owner: the double's
+ * wiring of the real removal gate and the real device-removal cascade behind it, its wiring of the real reboot scheduler and the recording count behind that, the MQTT
+ * recording double, the accessory-family builder, and the read-through config getters.
  *
  * The removal and reboot rows drive their companions the way production does - facts and suppliers in, timers armed on a real TimerRegistry - so they drive time by
- * advancing the double's test clock. Each companion's own arithmetic, drain rules, and narration are asserted directly in nvr-removal.test.ts and nvr-reboot.test.ts;
- * what these rows assert is the DOUBLE: that its wiring resolves the same grace production resolves, that its recording walk reaches the same population production's
- * endpoint walk reaches, and that a fired decision lands on the double's accessory graph through its removal tail.
+ * advancing the double's test clock. Each companion's own arithmetic, drain rules, and narration are asserted directly in nvr-removal.test.ts and nvr-reboot.test.ts,
+ * and the cascade's guards and cascades against the real controller root in nvr.test.ts; what these rows assert is the DOUBLE: that its wiring resolves the same grace
+ * production resolves, that its recording count walks production's endpoints walk over a real doorbell and its package camera, and that a fired decision lands on
+ * the double's accessory graph through the cascade production runs, so an accessory of another controller is left alone.
  */
 import { PROTECT_NVR_REBOOT_CHECK_INTERVAL, PROTECT_NVR_REBOOT_INTERVAL } from "../settings.ts";
 import { TestCameraProjection, makeCameraConfig, makeSensorConfig } from "../devices/testing.helpers.ts";
-import { TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
+import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
+import { TestStateStore, accessoryUuid, makeProtectState, makeRecordingDelegateDouble, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import { makeNvrConfig, makeTestAccessoryFamily, makeTestNvr, restoreAccessories } from "./testing.helpers.ts";
 import { ACCESSORY_SAVE_WINDOW_MS } from "homebridge-plugin-utils";
+import type { Camera } from "unifi-protect";
+import { G6_PRO_ENTRY_CHANNELS } from "../camera.fixtures.ts";
+import { ProtectCamera } from "../devices/cameras/camera.ts";
 import type { ProtectDevices } from "../types.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
+import type { ProtectNvr } from "./nvr.ts";
+import type { StreamingDelegate } from "../media/stream-delegate.ts";
+import type { TestProtectNvr } from "./testing.helpers.ts";
+import type { TestRecordingDelegate } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 
 // Every "Delaying device removal" line the gate narrated, as the harness rendered it. The line carries the resolved grace, so the count of these lines is the
@@ -47,6 +55,7 @@ describe("harness growth: the NVR double's removal wiring", () => {
     const { api, clock, controller, logEntries, nvr } = makeTestNvr({ store });
     const accessory = makeTestAccessory("Victim", "74ACB9000201");
 
+    accessory.context = { mac: "74ACB9000201", nvr: nvr.ufp.mac };
     restoreAccessories(nvr, [accessory]);
 
     try {
@@ -67,7 +76,7 @@ describe("harness growth: the NVR double's removal wiring", () => {
 
       clock.advance(60000);
 
-      assert.equal(nvr.platform.accessories.includes(accessory), false, "the fired grace removed the accessory through the double's removal tail");
+      assert.equal(nvr.platform.accessories.includes(accessory), false, "the fired grace removed the accessory through the device-removal cascade");
       assert.equal(api.calls.filter((call) => call.kind === "unregister").length, 1, "the fired grace unregistered the bridged accessory exactly once");
     } finally {
 
@@ -81,6 +90,7 @@ describe("harness growth: the NVR double's removal wiring", () => {
     const { clock, controller, logEntries, nvr } = makeTestNvr({ store });
     const accessory = makeTestAccessory("Victim", "74ACB9000201");
 
+    accessory.context = { mac: "74ACB9000201", nvr: nvr.ufp.mac };
     restoreAccessories(nvr, [accessory]);
 
     try {
@@ -117,8 +127,9 @@ describe("harness growth: the NVR double's removal wiring", () => {
     const bystander = makeTestAccessory("Bystander", "74ACB9000202");
     const victim = makeTestAccessory("Victim", "74ACB9000201");
 
-    // The victim is a cached accessory, restored onto the bridge. The bystander joins the platform array without joining the bridge, as a standalone accessory does,
-    // so the tail's bridged gate has an accessory to refuse below.
+    // The victim is a cached accessory of this controller, restored onto the bridge. The bystander joins the platform array without joining the bridge, as a
+    // standalone accessory does, so the tail's bridged gate has an accessory to refuse below.
+    victim.context = { mac: "74ACB9000201", nvr: nvr.ufp.mac };
     restoreAccessories(nvr, [victim]);
     nvr.platform.accessories.push(bystander);
     nvr.removals.schedule({ accessory: victim, stillGone: () => true });
@@ -167,6 +178,36 @@ describe("harness growth: the NVR double's removal wiring", () => {
 
       assert.equal(api.calls.filter((call) => (call.kind === "unregister") && call.accessories.includes(victim)).length, 1, "the bridged victim was unregistered");
       assert.deepEqual(saved, [survivor], "the window's one save names the survivor and never the removed accessory");
+    } finally {
+
+      controller.abort();
+    }
+  });
+
+  /* The gate's removal runs the controller's own cascade, whose ownership guard leaves every accessory of another controller alone. Such an accessory, scheduled through
+   * the gate and fired, stays on the platform, and nothing is unregistered or logged as removed.
+   */
+  test("a removal the gate fires for an accessory of another controller removes nothing", () => {
+
+    const store = new TestStateStore(makeProtectState());
+    const { api, clock, controller, logEntries, nvr } = makeTestNvr({ store });
+    const foreign = makeTestAccessory("Other Controller Camera", "74ACB9000205");
+
+    foreign.context = { mac: "74ACB9000205", nvr: "AABBCCDDEEFF" };
+    restoreAccessories(nvr, [foreign]);
+
+    try {
+
+      nvr.restabilizeController();
+      nvr.removals.schedule({ accessory: foreign, stillGone: () => true });
+
+      assert.deepEqual(delayingLines(logEntries), ["Other Controller Camera: Delaying device removal for at least 60 seconds."], "the gate armed the removal");
+
+      clock.advance(60000);
+
+      assert.ok(nvr.platform.accessories.includes(foreign), "the accessory stays on the platform");
+      assert.equal(api.calls.filter((call) => call.kind === "unregister").length, 0, "nothing was unregistered");
+      assert.equal(logEntries.some((entry) => formatLogEntry(entry).includes("Removing")), false, "no removal was logged");
     } finally {
 
       controller.abort();
@@ -366,17 +407,55 @@ describe("harness growth: the NVR double's reboot wiring", () => {
     }
   });
 
+  // The doorbell family a widening row reads its recordings through.
+  interface RecordingDoorbell {
+
+    clock: TestClock;
+    controller: AbortController;
+    doorbell: ProtectCamera;
+    logEntries: readonly TestLogEntry[];
+    nvr: TestProtectNvr;
+    packageCamera: ProtectCamera;
+    parentRecording: TestRecordingDelegate;
+  }
+
+  /* A real doorbell built over the double from a package-capable record whose package channel is present from the start, so the doorbell and its package camera each
+   * hold a delegate the stub factory returned. Each delegate's recording arm is a recording delegate double, the parent's idle and the package's transmitting, and the
+   * doorbell is seeded into the double's configured devices, where production's endpoints walk finds it and its package camera.
+   */
+  async function makeRecordingDoorbell(options: { userOptions?: string[] } = {}): Promise<RecordingDoorbell> {
+
+    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, name: "Back Door" });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { clock, controller, factory, logEntries, nvr } = makeTestNvr({ store, userOptions: options.userOptions });
+    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Back Door", cameraConfig.mac),
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+
+    await settle();
+
+    const packageCamera = doorbell.packageCamera;
+
+    assert.ok(packageCamera, "the package camera was composed");
+
+    const parentDelegate = factory.createCalls.find((call) => call.camera === doorbell)?.delegate;
+    const packageDelegate = factory.createCalls.find((call) => call.camera === packageCamera)?.delegate;
+
+    assert.ok(parentDelegate && packageDelegate, "the factory built a delegate for the doorbell and one for its package camera");
+
+    const parentRecording = makeRecordingDelegateDouble({ isTransmitting: false });
+
+    parentDelegate.hksv = parentRecording as unknown as StreamingDelegate["hksv"];
+    packageDelegate.hksv = makeRecordingDelegateDouble({ isTransmitting: true }) as unknown as StreamingDelegate["hksv"];
+    nvr.configuredDevices.set(doorbell.accessory.UUID, doorbell);
+
+    return { clock, controller, doorbell, logEntries, nvr, packageCamera, parentRecording };
+  }
+
   test("a transmitting package camera defers the scheduled reboot on its own, and both views count together", async () => {
 
-    const store = new TestStateStore(makeProtectState());
-    const { clock, controller, logEntries, nvr } = makeTestNvr({ store });
-
-    // A parent that is not recording, carrying a package view that is. Only a walk that reaches package cameras sees this recording at all, so the count below is
+    // A parent that is not recording, carrying a package camera that is. Only a walk that reaches package cameras sees this recording at all, so the count below is
     // exactly what the endpoint walk added.
-    const camera = { packageCamera: { streaming: { isRecordingTransmitting: true } }, protectId: "cam-widening",
-      streaming: { isRecordingTransmitting: false } };
-
-    nvr.configuredDevices.set(accessoryUuid("cam-widening"), camera as unknown as ProtectDevices);
+    const { clock, controller, doorbell, logEntries, nvr, parentRecording } = await makeRecordingDoorbell();
 
     try {
 
@@ -391,7 +470,7 @@ describe("harness growth: the NVR double's reboot wiring", () => {
         "the package alone accounts for the count");
 
       // The parent starts recording too, and the next check counts the two views as two.
-      camera.streaming.isRecordingTransmitting = true;
+      parentRecording.isTransmitting = true;
       clock.advance(PROTECT_NVR_REBOOT_CHECK_INTERVAL);
 
       await settle();
@@ -400,19 +479,15 @@ describe("harness growth: the NVR double's reboot wiring", () => {
         "a parent and its package are counted as the two views they are");
     } finally {
 
+      doorbell.cleanup();
       controller.abort();
     }
   });
 
   test("a package inside its removal grace still defers the reboot while it is recording", async () => {
 
-    const store = new TestStateStore(makeProtectState());
-    const { clock, controller, logEntries, nvr } = makeTestNvr({ store, userOptions: ["Enable.Nvr.DelayDeviceRemoval.3600"] });
-    const packageAccessory = makeTestAccessory("Back Door Package Camera", "74ACB9000204.PackageCamera");
-    const camera = { packageCamera: { streaming: { isRecordingTransmitting: true } }, protectId: "cam-grace", streaming: { isRecordingTransmitting: false } };
-
-    restoreAccessories(nvr, [packageAccessory]);
-    nvr.configuredDevices.set(accessoryUuid("cam-grace"), camera as unknown as ProtectDevices);
+    const { clock, controller, doorbell, logEntries, nvr, packageCamera } = await makeRecordingDoorbell({ userOptions: ["Enable.Nvr.DelayDeviceRemoval.3600"] });
+    const packageAccessory = packageCamera.accessory;
 
     try {
 
@@ -435,6 +510,7 @@ describe("harness growth: the NVR double's reboot wiring", () => {
         "a pending removal does not exclude a view that is actively recording");
     } finally {
 
+      doorbell.cleanup();
       controller.abort();
     }
   });

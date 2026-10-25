@@ -4,8 +4,9 @@
  * removal-stability arithmetic, the disruption-expectation gating (the classification, its induced and recency halves, and the episode-latch), the induced-reboot resume
  * decision, the scheduled-reboot arithmetic with the recording-count rule behind its deferral, and the address override rule - plus the NvrHealth connection-input
  * mapping those drive, and the real controller root's disabled-controller path, its stability sweep's liveviews pass, its connect retry, its address override, the
- * accessory cache saves its adoption asks for, the name it adds a camera under when the camera's own name sanitizes to nothing, and its removal of a package camera
- * whose parent is gone.
+ * accessory cache saves its adoption asks for, the name it adds a camera under when the camera's own name sanitizes to nothing, its removal of a package camera
+ * whose parent is gone, and its device-removal cascade: the guards that leave an accessory alone, the name each removal is logged under, the package camera a
+ * removal takes with it, and what a removal releases.
  *
  * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively owns the entire device and
  * media graph. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and assert those here, exercising the controller's real
@@ -15,26 +16,30 @@
  *
  * The root's one external boundary is its connect port, so a path that is the root's own rather than a decision it delegates runs through the real root: it is built
  * over the controller double's platform with a client double answering the port, and the platform's shutdown registration is run at the end of each row so no
- * process-global diagnostics subscription outlives it.
+ * process-global diagnostics subscription outlives it. The device-removal cascade runs through the real root the same way: it is a companion the root constructs
+ * (nvr-removal-cascade.ts), and the controller double constructs the same one, so the cascade these rows record is the code every removal in either runs.
  */
 import { ACCESSORY_SAVE_WINDOW_MS, retry } from "homebridge-plugin-utils";
+import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../camera.fixtures.ts";
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
-import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError } from "unifi-protect";
+import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError, channels as protectChannels } from "unifi-protect";
 import type { ProtectCameraConfig, ProtectClient, ProtectNvrConfig } from "unifi-protect";
 import { TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr,
   restoreAccessories } from "./testing.helpers.ts";
 import { TestClock, formatLogEntry, logCount, loggedAt, settle, settleUntil } from "homebridge-plugin-utils/testing";
+import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, countActiveRecordingViews, createConnectRetryPolicy,
   createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption, isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest,
   isWithinRebootRecency, resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describe, test } from "node:test";
-import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import { NvrHealth } from "./nvr-health.ts";
 import type { NvrPhase } from "./nvr.ts";
+import type { ProtectAccessory } from "../types.ts";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
 import { ProtectNvr } from "./nvr.ts";
+import type { TestProtectNvr } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
 import { makeCameraConfig } from "../devices/testing.helpers.ts";
 import { once } from "node:events";
@@ -1071,6 +1076,500 @@ describe("the controller root's orphan package camera removal", () => {
       controller.abort();
 
       await settle();
+    }
+  });
+});
+
+describe("the device-removal cascade", () => {
+
+  // The controller every row's root logs in as, and another controller, whose accessories this root leaves alone.
+  const CONTROLLER_MAC = makeNvrConfig().mac;
+  const OTHER_CONTROLLER_MAC = "AABBCCDDEEFF";
+
+  // The prefix the root's logger puts on every line once it has connected: the controller's name and its model.
+  const PREFIX = "Test Controller [UniFi Dream Machine SE]: ";
+
+  // The handles a row drives its removal through and reads its outcome from.
+  interface LoggedInRoot {
+
+    api: TestHomebridgeApi;
+    connection: TestConnection;
+    double: TestProtectNvr;
+    logEntries: readonly TestLogEntry[];
+    root: ProtectNvr;
+    stop: () => Promise<void>;
+    store: TestStateStore;
+  }
+
+  // A camera record the root adopts at login: the record makeCameraConfig builds, with the category and the adoption by this controller the membership reconcile reads
+  // before it constructs a camera.
+  function adopted(config: ProtectCameraConfig): ProtectCameraConfig {
+
+    return { ...config, isAdopted: true, isAdoptedByOther: false, modelKey: "camera" };
+  }
+
+  // The camera most rows adopt, and the doorbell whose package camera the camera cascade takes with it.
+  const PORCH = adopted(makeCameraConfig({ channels: G2_PRO_CHANNELS, id: "camera-porch", mac: "74ACB9000101", name: "Porch Camera" }));
+  const FRONT_DOOR = adopted(makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, id: "camera-front-door",
+    mac: "74ACB9000001", name: "Front Door" }));
+
+  /* Log a real controller root in over the controller double's platform: the row's accessories restored onto the bridge first, as Homebridge restores its cache before
+   * the plugin logs in, and the row's camera records in the store the root connects to. The controller reports an uptime starting now, so the removal gate stays
+   * unsettled and its stability sweep never runs, and nothing but the row's own removal reaches the platform. stop ends the run: Homebridge's shutdown, the double's
+   * controller and a settle, so no observe loop or process-global subscription outlives the row.
+   */
+  async function logIn(options: { accessories?: ProtectAccessory[]; cameras?: ProtectCameraConfig[]; userOptions?: string[] } = {}): Promise<LoggedInRoot> {
+
+    const clock = new TestClock(TEST_CLOCK_EPOCH);
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+    const store = new TestStateStore(makeProtectState({ cameras: options.cameras ?? [], nvr: nvrConfig }));
+    const { api, controller, logEntries, nvr: double } = makeTestNvr({ clock, store, userOptions: options.userOptions });
+
+    restoreAccessories(double, options.accessories ?? []);
+
+    const client = makeConnectedClient({ nvrConfig, store });
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
+
+    await root.login();
+    await settle();
+
+    const stop = async (): Promise<void> => {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    };
+
+    return { api, connection: client.connection as unknown as TestConnection, double, logEntries, root, stop, store };
+  }
+
+  // Every accessory the root handed Homebridge to unregister, in order.
+  function unregistered(api: TestHomebridgeApi): ProtectAccessory[] {
+
+    return api.calls.filter((call) => call.kind === "unregister").flatMap((call) => call.accessories);
+  }
+
+  // The accessory the root added for a camera record, found by the UUID production derives from its MAC.
+  function accessoryOf(double: TestProtectNvr, mac: string): ProtectAccessory {
+
+    const accessory = double.platform.accessories.find((candidate) => candidate.UUID === accessoryUuid(mac));
+
+    assert.ok(accessory, "the root added the accessory for " + mac);
+
+    return accessory;
+  }
+
+  // An accessory restored onto the bridge with the context a row gives it.
+  function cached(name: string, seed: string, context: ProtectAccessory["context"]): ProtectAccessory {
+
+    const accessory = makeTestAccessory(name, seed);
+
+    accessory.context = context;
+
+    return accessory;
+  }
+
+  test("an accessory no longer on the platform is left alone, so a removal that already ran is a no-op", async () => {
+
+    // A device accessory of this controller that is not on the platform, as one an earlier removal already took off it is not.
+    const gone = cached("Garage Camera", "74ACB9000003", { mac: "74ACB9000003", nvr: CONTROLLER_MAC });
+    const { api, logEntries, root, stop } = await logIn();
+
+    try {
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(gone);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [], "nothing is logged");
+      assert.deepEqual(unregistered(api), [], "nothing is unregistered");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("an accessory of another controller is left alone", async () => {
+
+    const foreign = cached("Other Controller Camera", "74ACB9000002", { mac: "74ACB9000002", nvr: OTHER_CONTROLLER_MAC });
+    const { api, double, logEntries, root, stop } = await logIn({ accessories: [foreign] });
+
+    try {
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(foreign);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [], "nothing is logged");
+      assert.ok(double.platform.accessories.includes(foreign), "the accessory stays on the platform");
+      assert.deepEqual(unregistered(api), [], "nothing is unregistered");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("the system information accessory is left to the owner that manages it", async () => {
+
+    const { api, double, logEntries, root, stop } = await logIn({ userOptions: ["Enable.NVR.SystemInfo"] });
+
+    try {
+
+      const systemInfo = double.platform.accessories.find((accessory) => accessory.context.systemInfo);
+
+      assert.ok(systemInfo, "the root's system information owner added its accessory at login");
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(systemInfo);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [], "nothing is logged");
+      assert.ok(double.platform.accessories.includes(systemInfo), "the accessory stays on the platform");
+      assert.deepEqual(unregistered(api), [], "nothing is unregistered");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("an accessory the liveviews owner derives is left to that owner", async () => {
+
+    const liveview = cached("Front Door Liveview", CONTROLLER_MAC + ".Liveview.FRONTDOOR", { liveview: "Front Door", liveviewDerived: true, nvr: CONTROLLER_MAC });
+    const { api, double, logEntries, root, stop } = await logIn({ accessories: [liveview] });
+
+    try {
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(liveview);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [], "nothing is logged");
+      assert.ok(double.platform.accessories.includes(liveview), "the accessory stays on the platform");
+      assert.deepEqual(unregistered(api), [], "nothing is unregistered");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("an accessory of this controller carrying no MAC that is not a package camera is left alone", async () => {
+
+    const unmanaged = cached("Unmanaged Accessory", CONTROLLER_MAC + ".Unmanaged", { nvr: CONTROLLER_MAC });
+    const { api, double, logEntries, root, stop } = await logIn({ accessories: [unmanaged] });
+
+    try {
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(unmanaged);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [], "nothing is logged");
+      assert.ok(double.platform.accessories.includes(unmanaged), "the accessory stays on the platform");
+      assert.deepEqual(unregistered(api), [], "nothing is unregistered");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a package camera whose parent still stands is left for the parent's removal", async () => {
+
+    const parent = cached("Front Door", "74ACB9000001", { mac: "74ACB9000001", nvr: CONTROLLER_MAC });
+    const packageCamera = cached("Front Door Package Camera", "74ACB9000001.PackageCamera", { nvr: CONTROLLER_MAC, packageCamera: "74ACB9000001" });
+    const { api, double, logEntries, root, stop } = await logIn({ accessories: [ parent, packageCamera ] });
+
+    try {
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(packageCamera);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [], "nothing is logged");
+      assert.ok(double.platform.accessories.includes(packageCamera) && double.platform.accessories.includes(parent), "both accessories stay on the platform");
+      assert.deepEqual(unregistered(api), [], "nothing is unregistered");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a configured device is named from its wrapper's live record", async () => {
+
+    const { api, double, logEntries, root, stop } = await logIn({ cameras: [PORCH] });
+
+    try {
+
+      const accessory = accessoryOf(double, PORCH.mac);
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(accessory);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [PREFIX + "Porch Camera [Test Camera Model]: Removing camera from HomeKit."],
+        "the removal names the camera from its live record");
+      assert.equal(double.platform.accessories.includes(accessory), false, "the accessory left the platform");
+      assert.deepEqual(unregistered(api), [accessory], "the accessory was unregistered");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a configured device whose record is gone is named from the record the controller reports for its MAC", async () => {
+
+    const { double, logEntries, root, stop, store } = await logIn({ cameras: [PORCH] });
+
+    try {
+
+      const accessory = accessoryOf(double, PORCH.mac);
+
+      // The controller drops the camera's record and reports the same MAC again under a new id, so the wrapper's own record is gone while the MAC still resolves.
+      store.removeCameraRecord(PORCH.id);
+      store.addCameraRecord({ ...PORCH, id: "camera-porch-readopted", name: "Porch Camera Readopted" });
+
+      await settle();
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(accessory);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [PREFIX + "Porch Camera Readopted [Test Camera Model]: Removing camera from HomeKit."],
+        "the removal names the camera from the record its MAC resolves to");
+      assert.equal(double.platform.accessories.includes(accessory), false, "the accessory left the platform");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a configured device with no record at all is named from its accessory name", async () => {
+
+    const { api, double, logEntries, root, stop, store } = await logIn({ cameras: [PORCH] });
+
+    try {
+
+      const accessory = accessoryOf(double, PORCH.mac);
+
+      store.removeCameraRecord(PORCH.id);
+
+      await settle();
+
+      // The accessory's AccessoryInformation Name, which the wrapper's accessory name reads, is set apart from its display name, so the line shows which one it took.
+      accessory.getService(api.hap.Service.AccessoryInformation)?.updateCharacteristic(api.hap.Characteristic.Name, "Porch Camera Information");
+
+      assert.notEqual(accessory.displayName, "Porch Camera Information", "the display name and the accessory name differ");
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(accessory);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [PREFIX + "Porch Camera Information: Removing device from HomeKit."],
+        "the removal names the device from its accessory name");
+      assert.equal(double.platform.accessories.includes(accessory), false, "the accessory left the platform");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("an accessory with no configured device is named from its display name", async () => {
+
+    const garage = cached("Garage Camera", "74ACB9000003", { mac: "74ACB9000003", nvr: CONTROLLER_MAC });
+    const { api, double, logEntries, root, stop } = await logIn({ accessories: [garage] });
+
+    try {
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(garage);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [PREFIX + "Garage Camera: Removing device from HomeKit."],
+        "the removal names the accessory from its display name");
+      assert.equal(double.platform.accessories.includes(garage), false, "the accessory left the platform");
+      assert.deepEqual(unregistered(api), [garage], "the accessory was unregistered");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a standalone device's removal tells the user to finish it in the Home app, and hands Homebridge nothing to unregister", async () => {
+
+    const { api, double, logEntries, root, stop } = await logIn({ cameras: [PORCH], userOptions: ["Enable.Device.Standalone." + PORCH.mac] });
+
+    try {
+
+      const accessory = accessoryOf(double, PORCH.mac);
+
+      assert.equal(accessory._associatedHAPAccessory.bridged, false, "the standalone camera was published outside the bridge");
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(accessory);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [PREFIX + "Porch Camera [Test Camera Model]: Removing camera from HomeKit. You will need to " +
+        "manually delete the device in the Home app to complete the removal."], "the removal line carries the guidance");
+      assert.equal(double.platform.accessories.includes(accessory), false, "the accessory left the platform");
+      assert.deepEqual(unregistered(api), [], "nothing is unregistered");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("removing a doorbell removes its package camera with it", async () => {
+
+    const { api, double, logEntries, root, stop } = await logIn({ cameras: [FRONT_DOOR] });
+
+    try {
+
+      const doorbell = accessoryOf(double, FRONT_DOOR.mac);
+      const packageCamera = accessoryOf(double, FRONT_DOOR.mac + ".PackageCamera");
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(doorbell);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [PREFIX + "Front Door [Test Camera Model]: Removing camera from HomeKit."],
+        "the removal logs the doorbell's line alone");
+      assert.equal(double.platform.accessories.includes(doorbell) || double.platform.accessories.includes(packageCamera), false, "both accessories left the platform");
+      assert.deepEqual(unregistered(api), [ doorbell, packageCamera ], "the doorbell and its package camera were unregistered");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("removing an unknown device removes the package camera that names its MAC", async () => {
+
+    const parent = cached("Front Door", "74ACB9000001", { mac: "74ACB9000001", nvr: CONTROLLER_MAC });
+    const packageCamera = cached("Front Door Package Camera", "74ACB9000001.PackageCamera", { nvr: CONTROLLER_MAC, packageCamera: "74ACB9000001" });
+    const { api, double, logEntries, root, stop } = await logIn({ accessories: [ parent, packageCamera ] });
+
+    try {
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(parent);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [PREFIX + "Front Door: Removing device from HomeKit."],
+        "the removal logs the unknown device's line alone");
+      assert.equal(double.platform.accessories.includes(parent) || double.platform.accessories.includes(packageCamera), false, "both accessories left the platform");
+      assert.deepEqual(unregistered(api), [ parent, packageCamera ], "the device and the package camera were unregistered");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("removal cleans up the configured device, so its observers end", async () => {
+
+    const { double, logEntries, root, stop, store } = await logIn({ cameras: [PORCH] });
+
+    try {
+
+      const observers = store.observerCount;
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(accessoryOf(double, PORCH.mac));
+
+      await settle();
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [PREFIX + "Porch Camera [Test Camera Model]: Removing camera from HomeKit."],
+        "the removal logs its one line");
+      assert.ok(store.observerCount < observers, "the camera's observers ended with its cleanup");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("removal retires the device from the event dispatcher, so its inflight motion is cleared", async () => {
+
+    const { double, logEntries, root, stop } = await logIn({ cameras: [PORCH] });
+
+    try {
+
+      const device = root.getDeviceById(PORCH.id);
+
+      assert.ok(device, "the root adopted the camera");
+
+      root.events.motionEventHandler(device);
+
+      assert.equal(root.events.hasInflightMotion(device.id), true, "the motion event is inflight");
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(accessoryOf(double, PORCH.mac));
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [PREFIX + "Porch Camera [Test Camera Model]: Removing camera from HomeKit."],
+        "the removal logs its one line");
+      assert.equal(root.events.hasInflightMotion(device.id), false, "the retirement cleared the inflight motion");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("removal drops the device from the configured devices", async () => {
+
+    const { double, logEntries, root, stop } = await logIn({ cameras: [PORCH] });
+
+    try {
+
+      const accessory = accessoryOf(double, PORCH.mac);
+
+      assert.equal(root.configuredDevices.has(accessory.UUID), true, "the camera is configured");
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(accessory);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), [PREFIX + "Porch Camera [Test Camera Model]: Removing camera from HomeKit."],
+        "the removal logs its one line");
+      assert.equal(root.configuredDevices.has(accessory.UUID), false, "the camera is no longer configured");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  /* A livestream episode a camera opens is closed by its recovery, and one the camera's removal leaves open is reclaimed with it. A controller reboot the root observes
+   * makes the episode the camera opens a quiet one, the camera is removed with the episode still open and adopted again, and its recovery is then published: an
+   * episode the removal reclaimed reads as a new, unclassified one, so the recovery is said at warn. Every episode this row opens is closed before it ends, so nothing
+   * it published is left open on the process-global channels.
+   */
+  test("removal reclaims the livestream episode a removed camera left open", async () => {
+
+    const { connection, double, logEntries, root, stop } = await logIn({ cameras: [PORCH] });
+    const key = PORCH.id + ".livestream";
+
+    try {
+
+      connection.emit("controllerRebooted");
+
+      const opened = logEntries.length;
+
+      protectChannels.livestreamRecoveryStarted.publish({ attempts: 0, cameraId: PORCH.id, key, sinceLastSegmentMs: 0 });
+
+      assert.deepEqual(logEntries.slice(opened).filter((entry) => entry.level === "warn").map(formatLogEntry), [],
+        "the reboot the root observed made the episode a quiet one");
+
+      root.removeHomeKitDevice(accessoryOf(double, PORCH.mac));
+
+      assert.equal(root.addHomeKitDevice(PORCH), true, "the camera was adopted again");
+
+      await settle();
+
+      const recovered = logEntries.length;
+
+      protectChannels.livestreamRecoveryRecovered.publish({ cameraId: PORCH.id, downtimeMs: 1000, key });
+
+      assert.deepEqual(logEntries.slice(recovered).map((entry) => [ entry.level, formatLogEntry(entry) ]),
+        [[ "warn", "Porch Camera [Test Camera Model]: The livestream has recovered after 1 s." ]], "the recovery of the reclaimed episode is said at warn");
+    } finally {
+
+      await stop();
     }
   });
 });

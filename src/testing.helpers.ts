@@ -4,7 +4,8 @@
  *
  * Every accessory, service and characteristic a suite touches is the real thing. This file loads the Homebridge runtime once, through HBPU's Homebridge double, so an
  * accessory is Homebridge's own PlatformAccessory over the hap-nodejs copy Homebridge loads, its services and characteristics are HAP's own, and the API the
- * controller double hands production is HBPU's TestHomebridgeApi, which runs Homebridge's bridge bookkeeping and records the calls Homebridge accepted. A suite's
+ * controller double hands production is HBPU's TestHomebridgeApi, which runs Homebridge's bridge bookkeeping and records the calls Homebridge accepted, with
+ * makeTestApi the builder of every such API double, each checked after every test for a warning Homebridge's server logged that the test left untaken. A suite's
  * assertion about HomeKit state therefore reads what production would leave there, and the harness restates no part of HAP or Homebridge to get it. The accessory
  * builder derives every identity through HAP's own UUID generator, the way production derives each accessory's UUID, and the read helpers below give suites the
  * views HAP keeps no log of: the values production wrote to one characteristic, the controller configurations and removals an accessory saw, and the options a camera
@@ -28,7 +29,7 @@ import type { DeepPartial, DeviceSelectors, ProtectCameraConfig, ProtectChimeCon
   ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState, ProtectStateRecord, ProtectViewerConfig, StateModelKey,
   StateStore } from "unifi-protect";
 import type { ProtectAccessory, ProtectAccessoryContext } from "./types.ts";
-import { TestHomebridgeApi, loadHomebridge } from "homebridge-plugin-utils/testing";
+import { loadHomebridge, watchServerWarnings } from "homebridge-plugin-utils/testing";
 import type { AdvertisedStreams } from "./devices/cameras/camera.ts";
 import type { ChannelProfile } from "./media/resolution.ts";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -43,6 +44,15 @@ import { createStateStore } from "unifi-protect";
  * whole process. The NVR and media helpers build their API doubles over this same runtime, so every accessory a suite meets shares one HAP.
  */
 export const runtime = await loadHomebridge(import.meta.url);
+
+/**
+ * The builder of every Homebridge API double the suites build, each over the runtime above and checked after every test for a warning or an error Homebridge's server
+ * logged that the test left untaken. This module evaluates once per process, before any suite creates its tests, so the builder's one after-each hook sits at the root
+ * of each file's test tree and checks every double built through it after each test's own cleanups. A warning fails the test it is checked after: one a `before` hook
+ * draws, or one a timer logs once its test has ended, lands on the next test, among the edges HBPU's watchServerWarnings documents. A second builder in a file would
+ * lose its check in any test whose first check failed, so every double comes from this one.
+ */
+export const makeTestApi = watchServerWarnings(runtime);
 
 /**
  * The runtime's HAP namespace, the one production reaches as `api.hap`.
@@ -73,7 +83,7 @@ export type TestProtectAccessory = TestPlatformAccessory<ProtectAccessoryContext
 
 // The API double whose accessory class builds every accessory makeTestAccessory hands back. An accessory made here is placed on another API's bridge by that API's
 // own restore or registration, because each API double runs on the one runtime above and accepts any accessory of its PlatformAccessory class.
-const constructionApi = new TestHomebridgeApi(runtime);
+const constructionApi = makeTestApi();
 
 // The counter behind each default accessory identity, so accessories built without a seed, same-named or not, never share a UUID: Homebridge skips a registration
 // whose UUID it already holds, which would leave a later accessory off the bridge in silence.

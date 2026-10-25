@@ -7,13 +7,13 @@
  * the Homebridge double it runs through. What these rows cover is what the harness adds on top: the state store facade and the state builder that seeds it, the
  * accessory builder's identities, the read helpers over HAP's change record, and the controller log the streaming stub's stand-in controller keeps.
  */
-import { Characteristic, Service, TestStateStore, TestStreamingDelegate, accessoryUuid, controllerEvents, eventsFrom, makeProtectState, makeTestAccessory, runtime,
-  writesTo } from "./testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, TestStreamingDelegate, accessoryUuid, controllerEvents, eventsFrom, makeProtectState, makeTestAccessory,
+  makeTestApi, runtime, writesTo } from "./testing.helpers.ts";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.ts";
 import type { ProtectCameraConfig, ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig, ProtectSensorConfig,
   ProtectViewerConfig } from "unifi-protect";
-import { TestHomebridgeApi, settle, triggerSet } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
+import { settle, triggerSet } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { makeCameraConfig } from "./devices/testing.helpers.ts";
 
@@ -199,7 +199,7 @@ describe("harness growth: accessory identities, the change-record readers, and t
     assert.equal(accessoryUuid("74ACB9000001"), runtime.hap.uuid.generate("74ACB9000001"), "the derivation is HAP's own generator");
 
     // Homebridge skips a registration whose UUID it already holds, so same-named accessories built without a seed must never share one.
-    const api = new TestHomebridgeApi(runtime);
+    const api = makeTestApi();
     const first = makeTestAccessory("Same Name");
     const second = makeTestAccessory("Same Name");
 

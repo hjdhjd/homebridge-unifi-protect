@@ -5,17 +5,18 @@
  * This module is the home for all of the controller root's pure decision logic, separated from the ProtectNvr composition root that acts on it. It holds the
  * startup-resilient connect retry policy, the request-outcome classifier that feeds NvrHealth, induced-disruption and reboot-recency gating, the induced-reboot resume
  * decision, the per-episode livestream-recovery quiet latch, the scheduled-reboot deferral decision with its initial-delay arithmetic and its recording-count rule, the
- * removal-stability arithmetic, and the rule that resolves the address override the cameras' RTSP URLs are composed against. Each is a pure function of its inputs. They
- * live here, in a dependency-light leaf, rather than inside the ProtectNvr composition root, for the same reason the unifi-protect library keeps its reducer pure and
- * apart from its client and the plugin keeps the NvrHealth reducer apart from its event-sink wrapper: a decision separated from the effect it drives is independently
- * testable, and the test is the proof the separation is real. ProtectNvr transitively imports the entire device and media graph (cameras, streaming, snapshots); a pure
- * predicate should never have to stand that up to be exercised. This module imports only what its decisions read - the library's auth-error type and recovery schedule,
- * HBPU's error and URL-host formatters, and the plugin's refusal schedule - so it loads and tests in isolation.
+ * removal-stability arithmetic, the rule that resolves the address override the cameras' RTSP URLs are composed against, and the reads of the controller's device
+ * inventory out of its state store. Each is a pure function of its inputs. They live here, in a dependency-light leaf, rather than inside the ProtectNvr composition
+ * root, for the same reason the unifi-protect library keeps its reducer pure and apart from its client and the plugin keeps the NvrHealth reducer apart from its
+ * event-sink wrapper: a decision separated from the effect it drives is independently testable, and the test is the proof the separation is real. ProtectNvr
+ * transitively imports the entire device and media graph (cameras, streaming, snapshots); a pure predicate should never have to stand that up to be exercised. This
+ * module imports only what its decisions read - the library's auth-error type, recovery schedule and device-collection keys, HBPU's error and URL-host formatters, and
+ * the plugin's refusal schedule - so it loads and tests in isolation.
  */
+import type { ConnectionState, ProtectDeviceConfig, StateStore } from "unifi-protect";
+import { DEVICE_COLLECTION_KEYS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError } from "unifi-protect";
 import type { Nullable, RetryBackoff } from "homebridge-plugin-utils";
-import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError } from "unifi-protect";
 import { formatErrorMessage, formatUrlHost } from "homebridge-plugin-utils";
-import type { ConnectionState } from "unifi-protect";
 import type { NvrPhase } from "./nvr.ts";
 import { PROTECT_CONNECT_REFUSAL_SCHEDULE_MS } from "../settings.ts";
 
@@ -324,6 +325,42 @@ export function countActiveRecordingViews(views: Iterable<{ streaming?: Nullable
   }
 
   return count;
+}
+
+/**
+ * The read surface of a controller's state store that the device-inventory reads take: its current state and its own selector catalog.
+ */
+export type StoreReadSurface = Pick<StateStore, "selectors" | "snapshot">;
+
+/**
+ * Every device config record the controller reports, across every device category, flattened from one snapshot of its state store through the store's own selector
+ * catalog. Each reader of the controller's device inventory takes it from here, so none re-derives it from a held copy.
+ *
+ * @param state - The controller's state store.
+ *
+ * @returns Every device config record the store holds, category by category.
+ */
+export function deviceInventory(state: StoreReadSurface): ProtectDeviceConfig[] {
+
+  const snapshot = state.snapshot();
+
+  return DEVICE_COLLECTION_KEYS.flatMap((key): readonly ProtectDeviceConfig[] => state.selectors[key].all(snapshot));
+}
+
+/**
+ * The device config record the controller reports for a MAC, read from its device inventory, or null when it reports none.
+ *
+ * @param options       - Lookup inputs.
+ * @param options.mac   - The device MAC to look for.
+ * @param options.state - The controller's state store.
+ *
+ * @returns The record the controller reports for the MAC, or null.
+ */
+export function deviceConfigByMac(options: { mac: string; state: StoreReadSurface }): Nullable<ProtectDeviceConfig> {
+
+  const { mac, state } = options;
+
+  return deviceInventory(state).find((config) => config.mac === mac) ?? null;
 }
 
 /**

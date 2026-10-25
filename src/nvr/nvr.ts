@@ -6,16 +6,18 @@ import type { API, HAP } from "homebridge";
 import { APIEvent, createMqttClient, debugGatedLog, formatSeconds, loopFaultReporter, membershipDelta, mqttConnectionSettings, prefixedLog, retry,
   superviseLoop } from "homebridge-plugin-utils";
 import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
-  ProtectDeviceConfig, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
+  ProtectDeviceConfig, ProtectLogging, ProtectNvrConfig, StateStore } from "unifi-protect";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, MqttClient, Nullable } from "homebridge-plugin-utils";
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnostics.ts";
-import { OVERRIDE_ADDRESS_ZONE_WARNING, canTransition, countActiveRecordingViews, createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected,
+import { OVERRIDE_ADDRESS_ZONE_WARNING, canTransition, createConnectRetryPolicy, createLivestreamEpisodeLatch, deviceInventory, isDisruptionExpected,
   resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, ProtectDevices, ProtectProjectionMap } from "../types.ts";
+import { countActiveHksvRecordings, deviceEndpoints } from "./nvr-endpoints.ts";
 import { describeDevice, deviceDisplayName } from "../devices/device-descriptor.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
+import { DeviceRemovalCascade } from "./nvr-removal-cascade.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
@@ -36,7 +38,6 @@ import { RebootScheduler } from "./nvr-reboot.ts";
 import { RemovalStabilityGate } from "./nvr-removal.ts";
 import { StreamingCapability } from "../devices/cameras/streaming.ts";
 import { channels } from "../diagnostics.ts";
-import { isPackageCameraContext } from "../types.ts";
 import { livestreamRecoveryDecision } from "../media/livestream-recovery-policy.ts";
 import { servePlaylist } from "./nvr-playlist.ts";
 
@@ -117,8 +118,13 @@ export class ProtectNvr {
   // The scheduled reboot: when it fires, how long an active HKSV recording may hold it back, and how a command that took no effect is recognized. Handed the recording
   // count and the connection health as suppliers it pulls at its own fire time; the reboot command itself and both phase moves run back here through its actions.
   public readonly reboot: RebootScheduler;
+  // The device-removal cascade: the guards, the package-camera cascade, the device's cleanup and retirement, and the shared tail every removal of one of our
+  // accessories runs. Handed the controller's MAC and its state store as suppliers it pulls at use time; the acts the removal gate, the livestream-episode ledger and
+  // the event dispatcher own run back here through its actions.
+  readonly #removalCascade: DeviceRemovalCascade;
   // The removal-stability decision: whether destructive removal is currently allowed, and the graced scheduling of the removals it permits. Fed the controller's
-  // good-state through #pushRemovalStability; every act it decides on runs back here through the actions it was constructed with.
+  // good-state through #pushRemovalStability; every act it decides on runs through the actions it was constructed with, a removal through the device-removal cascade
+  // and the sweep back here.
   public readonly removals: RemovalStabilityGate;
   // Lifecycle phase. The SSOT for "what is this NVR doing right now?". Consumed by components that need to distinguish induced from organic disruption.
   // Mutated only through `transition()`, never directly.
@@ -226,12 +232,32 @@ export class ProtectNvr {
       signal: this.signal
     });
 
+    // Initialize the device-removal cascade. It owns the act of removing one of our accessories - the guards, the package-camera cascade, the device's cleanup and
+    // retirement, and the shared tail - while the acts another companion owns run here through the actions handed in below. Each action is a closure that reads its
+    // companion when it runs, because the removal gate and the event dispatcher are both constructed after the cascade.
+    this.#removalCascade = new DeviceRemovalCascade({
+
+      accessories: this.platform.accessories,
+      actions: {
+
+        cancelPendingRemoval: (uuid: string): void => this.removals.cancelFor(uuid),
+        forgetCamera: (cameraId: string): void => this.livestreamEpisodes.forgetCamera(cameraId),
+        retireDevice: (device: ProtectDevice): void => this.events.retireDevice(device)
+      },
+      controllerMac: (): string => this.ufp.mac,
+      devices: this.configuredDevices,
+      log: this.log,
+      persistence: this.platform.persistence,
+      state: (): StateStore => this.client.state
+    });
+
     // Initialize the removal-stability gate. It owns the entire destructive-removal decision - the good-state clock, the settling window, and the grace timers - while
-    // every act that touches the accessory graph stays here at the root, reached through the actions handed in below. Constructed exactly once and never rebuilt per
-    // reconnect: its first-stabilization latch records that this process has stabilized before, which no later disruption undoes.
+    // every act that touches the accessory graph is reached through the actions handed in below: a removal runs the device-removal cascade, and the sweep runs here at
+    // the root. Constructed exactly once and never rebuilt per reconnect: its first-stabilization latch records that this process has stabilized before, which no later
+    // disruption undoes.
     this.removals = new RemovalStabilityGate({
 
-      actions: { removeDevice: (accessory: ProtectAccessory): void => this.removeHomeKitDevice(accessory), runSweep: (): void => this.sweepRemovableDevices() },
+      actions: { removeDevice: (accessory: ProtectAccessory): void => this.#removalCascade.removeDevice(accessory), runSweep: (): void => this.sweepRemovableDevices() },
       clock: this.platform.clock,
       graceSeconds: (): number => this.getFeatureNumber("Nvr.DelayDeviceRemoval") ?? 0,
       log: this.log,
@@ -250,7 +276,7 @@ export class ProtectNvr {
         reboot: async (): Promise<void> => this.client.reboot(),
         resumeRunning: (): void => this.transition("running")
       },
-      activeRecordings: (): number => this.#activeHksvRecordings(),
+      activeRecordings: (): number => countActiveHksvRecordings(this.configuredDevices),
       clock: this.platform.clock,
       isConnectionHealthy: (): boolean => this.client.connection.isHealthy,
       log: this.log,
@@ -526,27 +552,6 @@ export class ProtectNvr {
     this.removals.refresh(good ? { good, upSince: this.ufp.upSince } : { good });
   }
 
-  // How many camera views are actively transmitting HKSV recordings, which is what the reboot scheduler's deferral decision rests on. Every camera view this controller
-  // manages counts - package cameras alongside their parents - because a package recording an event has as much claim to finish it as its parent does, and the endpoints
-  // iterator is what reaches both. The walk is this root's, since it owns the device graph, while the counting rule itself lives once in nvr-policy.ts, shared with
-  // every other caller that has its own population to count.
-  #activeHksvRecordings(): number {
-
-    const views: ProtectCamera[] = [];
-
-    for(const device of this.deviceEndpoints()) {
-
-      if(!(device instanceof ProtectCamera)) {
-
-        continue;
-      }
-
-      views.push(device);
-    }
-
-    return countActiveRecordingViews(views);
-  }
-
   // Publish an NVR-level lifecycle milestone on the forward-only diagnostics channel. Zero-cost when no subscriber is attached (the Node-native sync check).
   private publishLifecycle(event: NvrLifecyclePayload["event"]): void {
 
@@ -677,7 +682,7 @@ export class ProtectNvr {
     // rather than a forever-elevated probesize. The endpoints iterator walks package cameras alongside their parents, so the package's delegate resets here too. The
     // same walk starts each camera watching for its own return, so a camera that never comes back from this reboot is called out instead of disappearing quietly;
     // package cameras take an inert override there, because their parent's watch already speaks for the shared hardware.
-    for(const device of this.deviceEndpoints()) {
+    for(const device of deviceEndpoints(this.configuredDevices)) {
 
       if(!(device instanceof ProtectCamera)) {
 
@@ -727,7 +732,7 @@ export class ProtectNvr {
     // does not own its own session manager, so disposing these consumers is what releases their underlying unifi-protect livestream pool subscriptions. This
     // is a STRICT ORDERING REQUIREMENT - the connection-dependent consumers (and the pool subscriptions they hold) are torn down in this loop BEFORE the
     // unifi-protect client is disposed below, so no subscription outlives the client it draws from. The endpoints iterator walks package cameras alongside their parents.
-    for(const device of this.deviceEndpoints()) {
+    for(const device of deviceEndpoints(this.configuredDevices)) {
 
       if(!(device instanceof ProtectCamera)) {
 
@@ -915,13 +920,11 @@ export class ProtectNvr {
     this.reboot.schedule({ requestedIntervalHours: rebootInterval, upSince: this.ufp.upSince });
   }
 
-  // The live unifi-protect device config records across every category, flattened. The single read path for the discovery dump, the by-mac lookup, and the orphan sweep,
-  // so those readers never re-derive the controller's device inventory from a held snapshot - each reads the current state snapshot through the category catalog.
+  // The live unifi-protect device config records across every category, flattened by the policy module's device inventory read. The read path for the discovery dump
+  // and the adopted-MAC set the orphan sweep reads, so neither re-derives the controller's device inventory from a held snapshot.
   private get deviceConfigs(): ProtectDeviceConfig[] {
 
-    const snapshot = this.client.state.snapshot();
-
-    return DEVICE_COLLECTION_KEYS.flatMap((key): readonly ProtectDeviceConfig[] => this.client.state.selectors[key].all(snapshot));
+    return deviceInventory(this.client.state);
   }
 
   // Resolve the live config record for a device id within a category, from the unifi-protect projection. The single read path the membership reconcile uses to turn a
@@ -929,12 +932,6 @@ export class ProtectNvr {
   private deviceConfig(category: DeviceCollectionKey, id: string): Nullable<ProtectDeviceConfig> {
 
     return this.client.state.selectors[category].byId(id)(this.client.state.snapshot()) ?? null;
-  }
-
-  // Resolve a device's config record by MAC from the live projections. Used by the removal log to name a device the controller still reports.
-  private deviceConfigByMac(mac: string): Nullable<ProtectDeviceConfig> {
-
-    return this.deviceConfigs.find(config => config.mac === mac) ?? null;
   }
 
   // Reconcile one device category's HomeKit membership against the controller's current adopted-id set. One engine handles both membership and adoption changes: an
@@ -1098,7 +1095,7 @@ export class ProtectNvr {
         // (degraded / lost / reconnecting / healthy), so reading connection.isHealthy here is what closes the gate the moment a socket-dropping outage begins.
         this.#pushRemovalStability();
 
-        for(const device of this.deviceEndpoints()) {
+        for(const device of deviceEndpoints(this.configuredDevices)) {
 
           const flip = device.refreshReachability();
 
@@ -1270,128 +1267,18 @@ export class ProtectNvr {
     return true;
   }
 
-  // Remove an individual Protect accessory from HomeKit. The pure immediate remover: every guard and the package-camera cascade run here. The DelayDeviceRemoval grace
-  // is decided by the removal gate before this method runs, so by the time removeHomeKitDevice is called the decision to remove was already made and graced. The
-  // disabled-controller sweep, the self-reject in addHomeKitDevice, and a fired removal grace all call straight through here.
+  // Remove an individual Protect accessory from HomeKit, every guard and the package-camera cascade included, through the device-removal cascade. The disabled-controller
+  // sweep and the self-reject in addHomeKitDevice call through here, and a fired removal grace reaches the same cascade through the removal gate's action.
   public removeHomeKitDevice(accessory: ProtectAccessory): void {
 
-    // Ensure that this accessory hasn't already been removed.
-    if(!this.platform.accessories.some(x => x.UUID === accessory.UUID)) {
-
-      return;
-    }
-
-    // We only remove devices if they're on the Protect controller we're interested in.
-    if(accessory.context.nvr !== this.ufp.mac) {
-
-      return;
-    }
-
-    // The NVR system information accessory is handled elsewhere.
-    if(accessory.context.systemInfo) {
-
-      return;
-    }
-
-    // The accessories the liveviews owner derives - the liveview switches and the security system - are handled elsewhere.
-    if(accessory.context.liveviewDerived) {
-
-      return;
-    }
-
-    // We only store MAC addresses on devices that exist on the Protect controller. Any other accessories created are ones we created ourselves and are managed
-    // elsewhere, with one exception - package cameras. If we have a matching parent camera for the package camera, we're done here. Package cameras are dealt with
-    // when we remove the parent camera. If the parent doesn't exist, this is an orphan that we need to remove.
-    if(!accessory.context.mac &&
-      (!isPackageCameraContext(accessory.context) || (this.platform.accessories.some(x => x.context.mac === accessory.context.packageCamera)))) {
-
-      return;
-    }
-
-    // Grab our instance of the Protect device, if it exists.
-    const protectDevice = this.configuredDevices.get(accessory.UUID);
-
-    // Reclaim any livestream-episode latch entries for the camera being removed (a started-but-never-recovered episode would otherwise never drain). Keyed off the
-    // device's id, which is the cameraId the latch entries carry; a non-camera device's id matches nothing, so this is a no-op scan of a small map for them.
-    if(protectDevice?.protectId) {
-
-      this.livestreamEpisodes.forgetCamera(protectDevice.protectId);
-    }
-
-    // See if we can pull the device's configuration details from our Protect device instance or the controller projection.
-    //
-    // The by-MAC controller projection backs the removal descriptor only when the wrapper's record has vanished (or there is no wrapper). While the record is
-    // present, the wrapper's own live config carries the descriptor, so the projection lookup is never evaluated on that path - it is lazy by construction.
-    const byMac = (!protectDevice?.recordPresent && accessory.context.mac) ? this.deviceConfigByMac(accessory.context.mac) : null;
-
-    // The removal descriptor: the wrapper's live config while its record is present, recombining the bare MAC the narrowed state view no longer carries. The mac is
-    // recombined ONLY to satisfy the descriptor's required-field type - the plain-mode log line below does not read it (mac would surface only under includeNetwork).
-    const descriptor = (protectDevice?.recordPresent ? { ...protectDevice.ufp, mac: protectDevice.mac } : null) ?? byMac;
-
-    // The model category drives the log label and the package-camera cascade; read it non-throwing from the wrapper while its record is present, else the by-MAC lookup.
-    const modelKey = (protectDevice?.recordPresent ? protectDevice.modelKey : null) ?? byMac?.modelKey;
-
-    this.log.info("%s: Removing %s from HomeKit.%s",
-      descriptor ? describeDevice(descriptor) : protectDevice?.accessoryName ?? accessory.displayName,
-      modelKey ?? "device",
-      accessory._associatedHAPAccessory.bridged ? "" : " You will need to manually delete the device in the Home app to complete the removal.");
-
-    const deletingAccessories = [accessory];
-
-    // If it's an unknown device or a camera, look for a corresponding package camera if we have one and remove it as well. The lookup runs only for an accessory
-    // carrying a MAC of its own: an orphan package camera carries none and has no package of its own, and a lookup by an absent MAC would match every accessory that
-    // is not a package camera.
-    if(accessory.context.mac && (!descriptor || (modelKey === "camera"))) {
-
-      const packageCameraAccessory = this.platform.accessories.find(x => x.context.packageCamera === accessory.context.mac);
-
-      // Remove the package camera, if it exists, and cleanup the device if it has been configured.
-      if(packageCameraAccessory) {
-
-        deletingAccessories.push(packageCameraAccessory);
-      }
-    }
-
-    // Cleanup our device instance.
-    protectDevice?.cleanup();
-
-    // Settle and reclaim the dispatcher's timers and enrichment marks for this device. They are keyed by the persisted device id and outlive the wrapper otherwise, so
-    // removal both settles every latched boolean topic they own and reclaims the timers themselves; the exact-boundary sweep also reclaims the cascaded package
-    // camera's timers through the parent-id prefix, by design here where the package accessory is already in deletingAccessories.
-    if(protectDevice) {
-
-      this.events.retireDevice(protectDevice);
-    }
-
-    // Finally, remove it from our list of configured devices and HomeKit.
-    this.configuredDevices.delete(accessory.UUID);
-
-    // Remove each accessory through the shared tail. Cancelling any pending delayed removal per accessory first kills the cascade-then-stale-timer double fire: a
-    // cascade-removed package camera may hold its own pending detach grace, which must never fire against an accessory this removal already handled.
-    for(const targetAccessory of deletingAccessories) {
-
-      this.removals.cancelFor(targetAccessory.UUID);
-      this.removeAccessoryFromHomeKit(targetAccessory);
-    }
+    this.#removalCascade.removeDevice(accessory);
   }
 
-  /* Remove an accessory from HomeKit and the platform's accessory list - the shared removal tail every removal of one of our accessories ends in, removeHomeKitDevice
-   * and the package camera's graced detach among them. The unregister goes through the platform's accessory persistence, which drops any save still pending for the
-   * accessory, so no later save returns it to the cache, and hands Homebridge only an accessory its bridge holds: hap-nodejs throws on unregistering a never-bridged
-   * (standalone) accessory, whose HomeKit-side removal is the user's in the Home app. The presence guard makes a stale double-fire a harmless no-op - an indexOf miss
-   * would otherwise splice(-1) and silently delete the LAST accessory in the platform array. Logs nothing: the caller owns the user-facing narration.
-   */
+  // Remove an accessory from HomeKit and the platform's accessory list through the device-removal cascade's shared tail, which every removal of one of our accessories
+  // ends in. The owners that manage their own accessories - the liveviews, the doorbell's package camera, the system information - remove them through here.
   public removeAccessoryFromHomeKit(accessory: ProtectAccessory): void {
 
-    const index = this.platform.accessories.indexOf(accessory);
-
-    if(index === -1) {
-
-      return;
-    }
-
-    this.platform.persistence.unregister([accessory]);
-    this.platform.accessories.splice(index, 1);
+    this.#removalCascade.removeAccessory(accessory);
   }
 
   // Return all configured devices of a particular category. The category is required: an omitted argument would filter every device's modelKey against undefined and
@@ -1401,24 +1288,6 @@ export class ProtectNvr {
     // The type guard narrows each device to the category's concrete class off its modelKey, so the filtered array is ProtectDeviceTypes[T][] without a cast; every
     // device's modelKey is set consistently with its class per the ProtectDeviceTypes mapping, which the guard restates for the compiler.
     return [...this.configuredDevices.values()].filter((device): device is ProtectDeviceTypes[T] => device.modelKey === model);
-  }
-
-  // Iterate every HomeKit device endpoint this controller manages: each configured device and, immediately after a camera-family device that carries one, its package
-  // camera. Package cameras hang off the doorbell capability composed on their parent camera rather than configuredDevices, so any controller-wide push or read (the
-  // reachability fan-out, the probesize reset, the disconnect teardown, the scheduled reboot's active-recording count) walks this iterator instead of hand-fanning the
-  // package at each site. Consumers that need camera-typed members narrow with instanceof ProtectCamera - sound and cast-free, since package cameras are ProtectCamera
-  // subclasses, and the parent's packageCamera getter delegates to the capability.
-  private *deviceEndpoints(): Generator<ProtectDevice> {
-
-    for(const device of this.configuredDevices.values()) {
-
-      yield device;
-
-      if((device instanceof ProtectCamera) && device.packageCamera) {
-
-        yield device.packageCamera;
-      }
-    }
   }
 
   // Resolve the reachability of the camera whose livestream recovery is being decided, for the recovery policy's unavailable-defer gate (step 3). Both getDeviceById and

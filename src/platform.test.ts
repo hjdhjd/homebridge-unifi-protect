@@ -21,10 +21,9 @@ import { featureOptionCategories, featureOptions } from "./options.ts";
 import { FeatureOptions } from "homebridge-plugin-utils";
 import { ProtectPlatform } from "./platform.ts";
 import type { ProtectPlatformConfig } from "./types.ts";
-import { TestHomebridgeApi } from "homebridge-plugin-utils/testing";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
-import { runtime } from "./testing.helpers.ts";
+import { makeTestApi } from "./testing.helpers.ts";
 
 // The controller and camera these rows resolve against.
 const CONTROLLER = "AABBCCDDEEFF";
@@ -72,7 +71,7 @@ function buildPlatform(options: string[], controllers?: unknown): { lines: TestL
   const log = Object.assign(sink("info"), { debug: sink("debug"), error: sink("error"), info: sink("info"), log: sink("info"), success: sink("info"),
     warn: sink("warn") });
   const config: ProtectPlatformConfig = { controllers: controllers as ProtectPlatformConfig["controllers"], name: "UniFi Protect", options, platform: "UniFi Protect" };
-  const api = new TestHomebridgeApi(runtime);
+  const api = makeTestApi();
 
   return { lines, platform: new ProtectPlatform(log as unknown as Logging, config, api as unknown as API) };
 }

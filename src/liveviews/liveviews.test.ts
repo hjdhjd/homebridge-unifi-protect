@@ -113,8 +113,8 @@ function buildLiveviews(harnessOptions: { cachedAccessories?: TestProtectAccesso
   owner: ProtectLiveviews; store: TestStateStore;
 } {
 
-  const store = new TestStateStore(makeProtectState({ liveviews: harnessOptions.liveviews ?? [], nvr: makeNvrConfig({ mac: harnessOptions.mac,
-    name: harnessOptions.name }) }));
+  const store = new TestStateStore(makeProtectState({ liveviews: harnessOptions.liveviews ?? [], nvr: makeNvrConfig({ hardwareRevision: "1.0.0",
+    mac: harnessOptions.mac, name: harnessOptions.name }) }));
   const { api, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, sharedPlatform: harnessOptions.sharedPlatform, store,
     userOptions: harnessOptions.userOptions });
 

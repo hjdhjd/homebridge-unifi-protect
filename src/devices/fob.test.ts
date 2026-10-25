@@ -320,6 +320,7 @@ describe("real ProtectFob construction and behavior", () => {
 
     const armSwitch = restored.addService(Service.StatelessProgrammableSwitch, "Arm", buttonSubtype("arm"));
 
+    armSwitch.addOptionalCharacteristic(Characteristic.ConfiguredName);
     armSwitch.updateCharacteristic(Characteristic.ServiceLabelIndex, 1);
 
     const built = buildFob({}, { accessory: restored, userOptions: buttonSelection("arm") });
@@ -591,6 +592,7 @@ describe("real ProtectFob construction and behavior", () => {
 
       const svc = restored.addService(Service.StatelessProgrammableSwitch, button.label, buttonSubtype(button.wireId));
 
+      svc.addOptionalCharacteristic(Characteristic.ConfiguredName);
       svc.updateCharacteristic(Characteristic.ServiceLabelIndex, button.index);
       svc.updateCharacteristic(Characteristic.ConfiguredName, button.label);
     }
@@ -624,6 +626,7 @@ describe("real ProtectFob construction and behavior", () => {
 
       const svc = restored.addService(Service.StatelessProgrammableSwitch, button.label, buttonSubtype(button.wireId));
 
+      svc.addOptionalCharacteristic(Characteristic.ConfiguredName);
       svc.updateCharacteristic(Characteristic.ServiceLabelIndex, button.index);
       svc.updateCharacteristic(Characteristic.ConfiguredName, button.label);
     }

@@ -4,32 +4,35 @@
  *
  * This file owns the controller half of the harness: TestProtectNvr, the NVR double every device test is constructed against, together with the platform double, the
  * recording MQTT client, the NVR config builder, and the family builder that assembles a whole accessory set. The NVR double mirrors the surfaces production reaches
- * for through its owner - the Homebridge API and accessory persistence, the removal tail, the managed-device registry - and embeds the controller's companions as the
- * REAL production objects rather than stubs of them: the ProtectEventDispatch behind its events member, the DiagnosticsHealthBridge behind health, the
- * RemovalStabilityGate behind removals, and the RebootScheduler behind reboot. So a routed event, a removal decision, and a reboot attempt alike travel the production
- * path. makeTestNvr is the composition root of the harness: it wires a store, a platform, a dispatch, and the streaming-delegate factory into a controller a real
- * device class can be constructed against end to end, with no FFmpeg, over HBPU's Homebridge API double and the real HAP the root harness loads. A row that runs the
- * real controller root itself builds it over the same double's platform through makeRootPlatform, with a client double answering its connect port,
- * makeConnectedClient's for a connected controller, and TestConnection as its connection monitor.
+ * for through its owner - the Homebridge API and accessory persistence, the managed-device registry - and embeds the controller's companions as the REAL production
+ * objects rather than stubs of them: the ProtectEventDispatch behind its events member, the DiagnosticsHealthBridge behind health, the RemovalStabilityGate behind
+ * removals, the DeviceRemovalCascade behind every removal and the shared removal tail, and the RebootScheduler behind reboot. So a routed event, a removal decision and
+ * the removal it runs, and a reboot attempt alike travel the production path. makeTestNvr is the composition root of the harness: it wires a store, a platform, a
+ * dispatch, and the streaming-delegate factory into a controller a real device class can be constructed against end to end, with no FFmpeg, over HBPU's Homebridge
+ * API double and the real HAP the root harness loads. A row that runs the real controller root itself builds it over the same double's platform through
+ * makeRootPlatform, with a client double answering its connect port, makeConnectedClient's for a connected controller, and TestConnection as its connection monitor.
  *
- * Fidelity to the cited contracts, not invention, is the line these doubles hold: the removal decision IS ProtectNvr's own gate class and the MQTT surface is
- * homebridge-plugin-utils', and the API double is HBPU's own, running Homebridge's bridge bookkeeping over the real accessories. The cross-cutting core - the
- * Homebridge runtime, the state store, and the streaming-delegate stub - lives in the root harness this file imports from.
+ * Fidelity to the cited contracts, not invention, is the line these doubles hold: the removal decision IS ProtectNvr's own gate class and the removal it runs IS
+ * ProtectNvr's own cascade class, the MQTT surface is homebridge-plugin-utils', and the API double is HBPU's own, running Homebridge's bridge bookkeeping over the
+ * real accessories. The cross-cutting core - the Homebridge runtime, the state store, and the streaming-delegate stub - lives in the root harness this file imports
+ * from.
  */
 import { APIEvent, AccessoryPersistence, FeatureOptions } from "homebridge-plugin-utils";
 import type { Camera, Chime, ProtectCameraConfig, ProtectClient, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig,
   ProtectRingtoneConfig } from "unifi-protect";
 import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { NvrPhase, ProtectNvr } from "./nvr.ts";
-import { OVERRIDE_ADDRESS_ZONE_WARNING, countActiveRecordingViews, isDisruptionExpected, resolveOverrideAddress } from "./nvr-policy.ts";
+import { OVERRIDE_ADDRESS_ZONE_WARNING, isDisruptionExpected, resolveOverrideAddress } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "../options.ts";
-import { TestClock, TestHomebridgeApi, TestLivestreamProcessFactory, TestMqttClient, TestRecordingProcessFactory, capturingLog } from "homebridge-plugin-utils/testing";
+import { TestClock, TestLivestreamProcessFactory, TestMqttClient, TestRecordingProcessFactory, capturingLog } from "homebridge-plugin-utils/testing";
+import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectAccessory, TestStateStore } from "../testing.helpers.ts";
-import { TestStreamingDelegateFactory, makeTestAccessory, runtime } from "../testing.helpers.ts";
+import { TestStreamingDelegateFactory, makeTestAccessory, makeTestApi } from "../testing.helpers.ts";
 import { featureOptionCategories, featureOptions } from "../options.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
+import { DeviceRemovalCascade } from "./nvr-removal-cascade.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
 import { FIXTURE_RTSPS_PORT } from "../camera.fixtures.ts";
@@ -44,8 +47,8 @@ import { RemovalStabilityGate } from "./nvr-removal.ts";
 import { StreamingCapability } from "../devices/cameras/streaming.ts";
 import { TestCameraProjection } from "../devices/testing.helpers.ts";
 import type { TestChimeProjection } from "../devices/testing.helpers.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
+import { countActiveHksvRecordings } from "./nvr-endpoints.ts";
 
 // The platform double's honest structural type. The members mirror what ProtectBase and the camera-family construction paths read off nvr.platform: HBPU's
 // Homebridge API double, which carries the real HAP namespace, Homebridge's own platform-accessory class, the accessory calls the doorbell's configurePackageCamera
@@ -104,16 +107,6 @@ export class TestRecordingDispatch extends ProtectEventDispatch {
   }
 }
 
-/* The camera-view slice the double's active-recording walk reads: the transmit flag, and on a parent its package view. The ProtectDevices union declares neither member
- * - only the camera class does - so the walk presents each seeded device through this shape at the collection edge, the same confined-cast discipline every other
- * harness boundary uses. Both members are optional and nullable, matching what the seeded slices actually are: a test seeds only the hops its arm needs.
- */
-interface TestRecordingView {
-
-  packageCamera?: Nullable<TestRecordingView>;
-  streaming?: Nullable<{ isRecordingTransmitting: boolean }>;
-}
-
 /* The NVR double, mirroring each member the camera-family construction and lifecycle paths read. The construction surface comprises the unifi-protect client shape
  * (connection health for isReachable, the controllerName fallback ProtectBase.name uses for controller-scoped owners, the nvr config record behind the ufp
  * read-through, and the store double as client.state), the controller options, the platform double, a REAL un-aborted AbortSignal (composeSignals input and the
@@ -128,8 +121,9 @@ interface TestRecordingView {
  * so a lifecycle test schedules without ceremony. And the sweep action is a bare counter: the seed arms a zero-delay sweep on the test clock, which fires on whichever
  * advance of the clock comes first, so it must touch nothing for that timing to be harmless.
  *
- * The removal tail is the production presence-guarded tail, the platform persistence's unregister and the splice, and it is what the gate's removeDevice action
- * runs.
+ * The removal itself is the REAL DeviceRemovalCascade, constructed over the double's suppliers: the gate's removeDevice action runs it, and so do the double's
+ * removeHomeKitDevice and the shared tail every owner calls, so the guards, the package-camera cascade and the tail are production's. A removal therefore takes only
+ * an accessory carrying this controller's context, as production's does.
  */
 export class TestProtectNvr {
 
@@ -183,6 +177,8 @@ export class TestProtectNvr {
   // Set by a test to make the NEXT commanded reboot fail. Single-shot: the action consumes and clears it as it throws, so a failure-then-success chain needs no manual
   // reset between the two.
   public rebootError: Nullable<Error> = null;
+  // The REAL device-removal cascade, constructed over the double's suppliers as ProtectNvr constructs its own.
+  readonly #removalCascade: DeviceRemovalCascade;
   public readonly removals: RemovalStabilityGate;
   public readonly signal: AbortSignal;
   // How many stability sweeps the gate has asked this root to run. The recorder behind the gate's runSweep action, which does this and nothing else: the seed arms a
@@ -243,17 +239,39 @@ export class TestProtectNvr {
 
     this.health.wireDiagnostics();
 
+    /* The REAL device-removal cascade, constructed the way ProtectNvr constructs its own (nvr.ts): the platform's accessory list and persistence, the double's
+     * configured-device registry and recording log, and the controller MAC and the store double as suppliers it pulls at use time. Its actions are closures for the
+     * same reason production's are: the gate and the event dispatcher are both constructed after it. So a removal the gate fires and every owner's call of the shared
+     * tail run production's guards, package-camera cascade and tail.
+     */
+    this.#removalCascade = new DeviceRemovalCascade({
+
+      accessories: init.platform.accessories,
+      actions: {
+
+        cancelPendingRemoval: (uuid: string): void => this.removals.cancelFor(uuid),
+        forgetCamera: (): void => {
+
+          // No-op: the double runs no livestream narration and holds no episode latch, so there is no episode to reclaim.
+        },
+        retireDevice: (device: ProtectDevice): void => this.events.retireDevice(device)
+      },
+      controllerMac: (): string => this.ufp.mac,
+      devices: this.configuredDevices,
+      log: this.log,
+      persistence: init.platform.persistence,
+      state: (): TestStateStore => this.client.state
+    });
+
     /* The REAL removal-stability gate, wired the way ProtectNvr wires its own (nvr.ts): the grace resolved per request through the REAL FeatureOptions engine, the
-     * double's recording log, the platform's test clock, and the controller lifetime signal its TimerRegistry binds to. One divergence is deliberate: production's
-     * removeDevice action is the root's richer removeHomeKitDevice cascade, while the double's is its own thin removal tail. The gate cares only that its decision runs
-     * an action - executing a removal is the root's territory in the double exactly as it is in production - and the tail is the executor every consuming test already
-     * reads.
+     * double's recording log, the platform's test clock, and the controller lifetime signal its TimerRegistry binds to, with the device-removal cascade above as the
+     * removal its decisions run.
      */
     this.removals = new RemovalStabilityGate({
 
       actions: {
 
-        removeDevice: (accessory: ProtectAccessory): void => this.removeAccessoryFromHomeKit(accessory),
+        removeDevice: (accessory: ProtectAccessory): void => this.#removalCascade.removeDevice(accessory),
         runSweep: (): void => { this.sweepRequests++; }
       },
       clock: init.platform.clock,
@@ -290,7 +308,7 @@ export class TestProtectNvr {
         },
         resumeRunning: (): void => { this.phase = "running"; }
       },
-      activeRecordings: (): number => this.#activeHksvRecordings(),
+      activeRecordings: (): number => countActiveHksvRecordings(this.configuredDevices),
       clock: init.platform.clock,
       isConnectionHealthy: (): boolean => this.client.connection.isHealthy,
       log: this.log,
@@ -311,29 +329,6 @@ export class TestProtectNvr {
      * advances the clock, fires the counter on that advance, and touches nothing else; the controller signal's abort drains it with the rest of the gate's timers.
      */
     this.pushControllerStability(true);
-  }
-
-  /* The double's mirror of the root's active-recording supplier. Production narrows by instanceof over its endpoints iterator; this walks the same population
-   * structurally, because the double's graph holds seeded device slices rather than real camera instances. Only the WALK is mirrored - what counts is the very same
-   * shared nvr-policy rule production consumes, so the double and the controller can never drift apart on the question the deferral actually asks.
-   */
-  #activeHksvRecordings(): number {
-
-    const views: TestRecordingView[] = [];
-
-    for(const device of this.configuredDevices.values()) {
-
-      const view = device as unknown as TestRecordingView;
-
-      views.push(view);
-
-      if(view.packageCamera) {
-
-        views.push(view.packageCamera);
-      }
-    }
-
-    return countActiveRecordingViews(views);
   }
 
   /* Whether a disruption right now is expected, derived exactly as the production root derives it: the very same shared nvr-policy classification, over this double's
@@ -459,19 +454,16 @@ export class TestProtectNvr {
     }
   }
 
-  // The production removal tail, mirrored: a presence guard so a stale double-fire is a no-op (never a splice(-1) corruption), the platform persistence's unregister,
-  // which drops any pending save and unregisters only a bridged accessory, and the splice.
+  // The production removal, through the device-removal cascade: every guard, the package-camera cascade and the shared tail.
+  public removeHomeKitDevice(accessory: ProtectAccessory): void {
+
+    this.#removalCascade.removeDevice(accessory);
+  }
+
+  // The production removal tail, through the device-removal cascade: the presence guard, the platform persistence's unregister and the splice.
   public removeAccessoryFromHomeKit(accessory: ProtectAccessory): void {
 
-    const index = this.platform.accessories.indexOf(accessory);
-
-    if(index === -1) {
-
-      return;
-    }
-
-    this.platform.persistence.unregister([accessory]);
-    this.platform.accessories.splice(index, 1);
+    this.#removalCascade.removeAccessory(accessory);
   }
 }
 
@@ -564,7 +556,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   // Reuse the caller-supplied accessories array and API double when sharing a platform across controllers, so a second controller sees and reconciles over the first's
   // switches; otherwise each call gets its own fresh pair over the one runtime every suite shares.
   const accessories = options.sharedPlatform?.accessories ?? [];
-  const api = options.sharedPlatform?.api ?? new TestHomebridgeApi(runtime);
+  const api = options.sharedPlatform?.api ?? makeTestApi();
 
   // The HELD chime projection doubles client.chimes returns: the SAME instances captured once here, never a per-access rebuild. The doorbell's setChimeVolume filters
   // client.chimes and calls update() on the matching projection, and a test asserts that projection's updateCalls / sets its updateRejection lever, so they must be

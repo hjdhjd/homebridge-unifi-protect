@@ -14,10 +14,10 @@
  * stability on it (the gate counts from now after its first stabilization), drives the reconcile, and advances the clock. What every assertion reads is a real
  * observable - the live package handle, the platform accessory array, the API double's calls, the narration.
  *
- * Honesty notes on scope: the root-side production machinery (removeHomeKitDevice's richer cascade with its per-accessory cancel, and the sweep's package pass) cannot
- * be unit-driven without standing up a real ProtectNvr, so the double wires the gate to its own thin removal tail and the doorbell-side behavior is what these tests
- * exercise end to end. The cascade in the fire-after-cascade scenario is likewise assembled from the doorbell's cleanup plus that tail, the same operations the
- * production cascade performs.
+ * The removal the gate's decisions run is the controller's own device-removal cascade, which the NVR double constructs as the controller root does, so the
+ * fire-after-cascade scenario drives the real cascade: the parent's removal cleans the doorbell up and takes the package accessory with it, and the detach's own
+ * absent-target guard is what leaves a later fire nothing to remove. The stability sweep's package pass is the root's own, so the across-restart and re-arm scenarios
+ * drive its per-device arm, the capability's reconcile, directly.
  */
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import type { TestClock, TestHomebridgeApi, TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
@@ -450,11 +450,15 @@ describe("package camera remove-on-false (BC2)", () => {
   test("a detach fire after the cascade already removed the accessory is a no-op - the platform array is never corrupted", async () => {
 
     const harness = await makeFamily();
-    const { api, clock, doorbell, logEntries, nvr } = harness;
+    const { api, clock, doorbell, logEntries, nvr, store } = harness;
 
     assert.ok(doorbell.packageCamera, "the package camera starts live");
 
     const accessory = doorbell.packageCamera.accessory as unknown as TestProtectAccessory;
+
+    // The parent joins the platform as a cached doorbell does, and the double's registry carries it, so the cascade finds both the accessory and the device behind it.
+    restoreAccessories(nvr, [doorbell.accessory]);
+    nvr.configuredDevices.set(doorbell.accessory.UUID, doorbell);
 
     // A bystander accessory seeded LAST in the platform array: the exact victim an unguarded splice(indexOf = -1) would silently delete.
     const bystander = makeTestAccessory("Bystander", "74ACB9000202");
@@ -470,17 +474,27 @@ describe("package camera remove-on-false (BC2)", () => {
 
       assert.deepEqual(delayingLines(logEntries), [defaultDelayLine(accessory)], "the detach grace is armed");
 
-      // The cascade arrives first: the parent's removal tears the family down and removes the package accessory through the same tail (production's
-      // removeHomeKitDevice additionally cancels the pending timer - the fire below exercises the backstop for a fire already in flight).
-      doorbell.cleanup();
-      nvr.removeAccessoryFromHomeKit(accessory);
+      // The cascade arrives first: the parent's removal cleans the doorbell up, which tears its package camera down, drops it from the configured devices, and takes
+      // the package accessory with it through the shared tail.
+      const observers = store.observerCount;
+      const logged = logEntries.length;
+
+      nvr.removeHomeKitDevice(doorbell.accessory);
+
+      await settle();
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry), ["Front Door [Test Camera Model]: Removing camera from HomeKit."],
+        "the cascade logged the doorbell's removal");
+      assert.ok(store.observerCount < observers, "the doorbell's cleanup ended its observers");
+      assert.equal(nvr.configuredDevices.has(doorbell.accessory.UUID), false, "the doorbell left the configured devices");
+      assert.equal(nvr.platform.accessories.includes(accessory), false, "the cascade removed the package accessory");
 
       const survivors = [...nvr.platform.accessories];
       const unregisters = api.calls.filter((call) => call.kind === "unregister").length;
 
-      // The package flag is still false, so this fire finds stillGone TRUE and genuinely runs the detach. What makes it harmless is the detach's own absent-target
-      // guard: the live instance is already gone and the cached accessory is no longer on the platform, so it reaches no removal at all.
-      assert.doesNotThrow(() => clock.advance(60000), "the fire against an already-removed target never throws");
+      // The package flag is still false, so a fire of the detach finds stillGone TRUE. The cascade cancelled the pending detach, and the detach's own absent-target
+      // guard is the backstop for a fire already in flight: the live instance is gone and the cached accessory is no longer on the platform, so it reaches no removal.
+      assert.doesNotThrow(() => clock.advance(60000), "the deadline passing against an already-removed target never throws");
       assert.deepEqual(nvr.platform.accessories, survivors, "the fire removed nothing further");
       assert.equal(api.calls.filter((call) => call.kind === "unregister").length, unregisters, "no second unregister was recorded for the already-removed accessory");
       assert.ok(nvr.platform.accessories.includes(bystander), "the bystander - the splice(-1) victim of an unguarded tail - survives");
