@@ -2,7 +2,7 @@
  *
  * camera.ts: Camera device class for UniFi Protect.
  */
-import { AudioRecordingCodecType, capabilityGate, formatErrorMessage, parseValueList, toStartCase, validCharacteristic } from "homebridge-plugin-utils";
+import { AudioRecordingCodecType, capabilityGate, formatErrorMessage, parseValueList, presenceChanged, toStartCase, validCharacteristic } from "homebridge-plugin-utils";
 import type { Camera, LivestreamSource, ProtectState, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { CharacteristicValue, Resolution } from "homebridge";
 import type { LivestreamAudioFormat, StreamingDelegate } from "../../media/stream-delegate.ts";
@@ -1064,7 +1064,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       validate: capabilityGate({ capability: this.ufp.featureFlags.hasTamperDetection, toggle: this.ufp.smartDetectSettings.enableTamperDetection }) });
 
     // A characteristic the gate attached or removed changes the service Homebridge's accessory cache holds, so the accessory is marked for the next save.
-    if((transition === "attached") || (transition === "removed")) {
+    if(presenceChanged(transition)) {
 
       this.platform.persistence.persist(this.accessory);
     }
@@ -1244,7 +1244,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     // A characteristic the gates above attached or removed changes the service Homebridge's accessory cache holds, so the accessory is marked for the next save.
-    if([ statusLightTransition, nightVisionTransition ].some((transition) => (transition === "attached") || (transition === "removed"))) {
+    if([ statusLightTransition, nightVisionTransition ].some(presenceChanged)) {
 
       this.platform.persistence.persist(this.accessory);
     }

@@ -27,10 +27,11 @@
  */
 import { Characteristic, Service, TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
-import { SAVE_WINDOW_MS, makeNvrConfig, makeTestNvr, restoreAccessories } from "../nvr/testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
 import { logCount, loggedAt, settle, triggerSet } from "homebridge-plugin-utils/testing";
+import { makeNvrConfig, makeTestNvr, restoreAccessories } from "../nvr/testing.helpers.ts";
+import { ACCESSORY_SAVE_WINDOW_MS } from "homebridge-plugin-utils";
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL } from "../settings.ts";
 import { ProtectLiveviews } from "./liveviews.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
@@ -103,15 +104,17 @@ function seedMember(nvr: TestProtectNvr, options: { detectMotion?: boolean; id: 
 // CONSTRUCTED instance (NOT nvr.liveviews - the double has no liveviews member). makeProtectState seeds the liveviews with DISTINCT ids per the makeLiveviewConfig
 // distinct-id discipline; the casts are confined to the construction boundary exactly as the family suites do. Optional cachedAccessories are restored onto the bridge
 // and into the platform array BEFORE construction (orphan-removal / pre-seeded-switch-state fixtures), as Homebridge restores a cached accessory, and an unstable
-// controller leaves good state before the initial reconcile, the posture of a controller that has only just come up. The returned controller is aborted in teardown:
+// controller leaves good state before the initial reconcile, the posture of a controller that has only just come up. The controller record carries the MAC and name
+// a row gives it, so a row can stand the owner up under any controller name, one that sanitizes to nothing included. The returned controller is aborted in teardown:
 // the fixture tears down through the controller it built, the scope that owns every registration the test created.
 function buildLiveviews(harnessOptions: { cachedAccessories?: TestProtectAccessory[]; disconnected?: boolean; liveviews?: ProtectNvrLiveviewConfig[]; mac?: string;
-  sharedPlatform?: { accessories: ProtectAccessory[]; api: ReturnType<typeof makeTestNvr>["api"] }; unstable?: boolean; userOptions?: string[]; } = {}): {
+  name?: string; sharedPlatform?: { accessories: ProtectAccessory[]; api: ReturnType<typeof makeTestNvr>["api"] }; unstable?: boolean; userOptions?: string[]; } = {}): {
   api: ReturnType<typeof makeTestNvr>["api"]; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr;
   owner: ProtectLiveviews; store: TestStateStore;
 } {
 
-  const store = new TestStateStore(makeProtectState({ liveviews: harnessOptions.liveviews ?? [], nvr: makeNvrConfig({ mac: harnessOptions.mac }) }));
+  const store = new TestStateStore(makeProtectState({ liveviews: harnessOptions.liveviews ?? [], nvr: makeNvrConfig({ mac: harnessOptions.mac,
+    name: harnessOptions.name }) }));
   const { api, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, sharedPlatform: harnessOptions.sharedPlatform, store,
     userOptions: harnessOptions.userOptions });
 
@@ -274,6 +277,51 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     assert.ok(switchAccessory.getService(Service.Switch), "the switch accessory carries a Switch service");
     assert.ok(loggedAt(built.logEntries, "info", "Configuring plugin-specific liveview switch: Scene."), "the configure-switch info line logged the view name");
   });
+
+  test("a controller with an empty name adds its security system accessory under its market name", async () => {
+
+    // HAP refuses an accessory whose display name is empty, and the controller's empty name sanitizes to nothing, so the security system takes the market name.
+    const built = buildLiveviews({ liveviews: [makeLiveviewConfig({ id: "lv-away", name: "Protect-Away" })], name: "" });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const security = built.nvr.platform.accessories.find((accessory) => accessory.UUID === SECURITY_UUID);
+
+    assert.ok(security, "the owner self-created the security accessory under a controller with an empty name");
+    assert.equal(security.displayName, "UniFi Dream Machine SE", "the security accessory was added under the controller's market name");
+    assert.ok(built.api.calls.some((call) => (call.kind === "register") && call.accessories.includes(security)),
+      "the security accessory was registered under that name");
+  });
+
+  // A switch's name joins the controller's name and the view's and is sanitized whole, so an empty controller name leaves the view name alone and a character HomeKit
+  // refuses only at a name's end stays when the view name follows it. Only a switch whose controller and view names each sanitize to nothing falls to the controller's
+  // market name, because HAP refuses an accessory whose display name is empty.
+  for(const row of [
+    { controllerName: "", expected: "Scene",
+      title: "a controller with an empty name adds a liveview switch under the view name alone", viewName: "Scene" },
+    { controllerName: "Home -", expected: "Home - Scene",
+      title: "a controller name ending in a character HomeKit refuses at a name's end keeps it in a liveview switch's name", viewName: "Scene" },
+    { controllerName: "🙂", expected: "UniFi Dream Machine SE",
+      title: "a liveview switch whose controller and view names each sanitize to nothing is added under the controller's market name", viewName: "🙂" }
+  ]) {
+
+    test(row.title, async () => {
+
+      const built = buildLiveviews({ liveviews: [makeLiveviewConfig({ id: "lv-named", name: "Protect-" + row.viewName })], name: row.controllerName });
+
+      activeController = built.controller;
+
+      await settle();
+
+      const switchAccessory = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid(row.viewName));
+
+      assert.ok(switchAccessory, "the owner self-created the liveview switch under the controller name " + JSON.stringify(row.controllerName));
+      assert.equal(switchAccessory.displayName, row.expected, "the switch was added under " + JSON.stringify(row.expected));
+      assert.ok(built.api.calls.some((call) => (call.kind === "register") && call.accessories.includes(switchAccessory)), "the switch was registered under that name");
+    });
+  }
 
   test("a reserved Protect-Away/Home/Night/Off name creates NO liveview switch (it is reserved for the security system)", async () => {
 
@@ -799,7 +847,7 @@ describe("the liveviews reconcile through the membership delta and the removal g
 
     await settle();
 
-    built.nvr.platform.clock.advance(SAVE_WINDOW_MS);
+    built.nvr.platform.clock.advance(ACCESSORY_SAVE_WINDOW_MS);
 
     const security = built.nvr.platform.accessories.find((accessory) => accessory.UUID === SECURITY_UUID);
     const sceneSwitch = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"));

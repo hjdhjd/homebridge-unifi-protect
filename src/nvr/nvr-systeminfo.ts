@@ -4,11 +4,12 @@
  */
 import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext } from "../types.ts";
-import { sanitizeName, validService } from "homebridge-plugin-utils";
+import { presenceChanged, validService } from "homebridge-plugin-utils";
 import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectBase } from "../devices/device-base.ts";
 import type { ProtectConfigurePass } from "../devices/device.ts";
 import type { ProtectNvr } from "./nvr.ts";
+import { deviceDisplayName } from "../devices/device-descriptor.ts";
 import { mqttTopics } from "../mqtt.ts";
 import { selectNvr } from "unifi-protect";
 
@@ -87,7 +88,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     if(!this.accessory) {
 
       // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
-      this.accessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName(this.nvr.ufp.name ?? this.nvr.ufp.marketName), uuid);
+      this.accessory = new this.api.platformAccessory<ProtectAccessoryContext>(deviceDisplayName(this.nvr.ufp), uuid);
 
       // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
       this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
@@ -145,7 +146,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     const { service, transition } = validService({ accessory: this.accessory, name: this.accessory.displayName + " CPU Temperature",
       serviceType: this.hap.Service.TemperatureSensor, validate: this.nvr.hasFeature("NVR.SystemInfo") });
 
-    if((transition === "attached") || (transition === "removed")) {
+    if(presenceChanged(transition)) {
 
       this.platform.persistence.persist(this.accessory);
     }

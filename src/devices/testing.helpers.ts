@@ -1318,7 +1318,7 @@ export class TestBaseDevice extends ProtectDevice<Sensor> {
     return this.configureInfo();
   }
 
-  // Public window onto the base spawnObservers (the universal device observers: device.name -> syncNameFromController and device.firmwareVersion -> configureInfo).
+  // Public window onto the base spawnObservers (the universal device observers: device.name -> syncNameFromController and device.firmwareVersion -> setInfo).
   // A concern test calls this after configureHintsFor / configureInfoFor to register the observers, then settles the lazy registration before asserting the reactions.
   public spawnObserversFor(): void {
 

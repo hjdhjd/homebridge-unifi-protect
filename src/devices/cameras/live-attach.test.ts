@@ -20,11 +20,12 @@
  * path is exercised only to the registration boundary (the subscription is recorded), not through a live MQTT broker.
  */
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
-import { SAVE_WINDOW_MS, makeTestNvr, restoreAccessories } from "../../nvr/testing.helpers.ts";
 import { Service, TestStateStore, controllerEvents, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { logCount, settle } from "homebridge-plugin-utils/testing";
+import { makeTestNvr, restoreAccessories } from "../../nvr/testing.helpers.ts";
+import { ACCESSORY_SAVE_WINDOW_MS } from "homebridge-plugin-utils";
 import type { Camera } from "unifi-protect";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
@@ -281,12 +282,12 @@ describe("sweep-stale removal and the controller-identity observability (suite D
     // plain camera's sweep asks for no save.
     const saves = (): number => api.calls.filter((call) => (call.kind === "update") && call.accessories.includes(accessory)).length;
 
-    clock.advance(SAVE_WINDOW_MS);
+    clock.advance(ACCESSORY_SAVE_WINDOW_MS);
 
     assert.equal(saves(), 1, "the sweep that removed services saved the accessory once");
 
     nvr.removeStaleDoorbellServices(accessory);
-    clock.advance(SAVE_WINDOW_MS);
+    clock.advance(ACCESSORY_SAVE_WINDOW_MS);
 
     assert.equal(saves(), 1, "a sweep with nothing left to remove asks for no save");
 

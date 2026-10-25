@@ -13,11 +13,12 @@
  * endpoint walk reaches, and that a fired decision lands on the double's accessory graph through its removal tail.
  */
 import { PROTECT_NVR_REBOOT_CHECK_INTERVAL, PROTECT_NVR_REBOOT_INTERVAL } from "../settings.ts";
-import { SAVE_WINDOW_MS, makeNvrConfig, makeTestAccessoryFamily, makeTestNvr, restoreAccessories } from "./testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig, makeSensorConfig } from "../devices/testing.helpers.ts";
 import { TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
+import { makeNvrConfig, makeTestAccessoryFamily, makeTestNvr, restoreAccessories } from "./testing.helpers.ts";
+import { ACCESSORY_SAVE_WINDOW_MS } from "homebridge-plugin-utils";
 import type { ProtectDevices } from "../types.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
@@ -160,7 +161,7 @@ describe("harness growth: the NVR double's removal wiring", () => {
       nvr.platform.persistence.persist(victim, { detectMotion: false });
       nvr.platform.persistence.persist(survivor, { detectMotion: false });
       nvr.removeAccessoryFromHomeKit(victim);
-      clock.advance(SAVE_WINDOW_MS);
+      clock.advance(ACCESSORY_SAVE_WINDOW_MS);
 
       const saved = api.calls.filter((call) => call.kind === "update").flatMap((call) => call.accessories);
 

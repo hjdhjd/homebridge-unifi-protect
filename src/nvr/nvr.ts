@@ -3,7 +3,7 @@
  * nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP } from "homebridge";
-import { APIEvent, createMqttClient, debugGatedLog, formatSeconds, loopFaultReporter, membershipDelta, mqttConnectionSettings, prefixedLog, retry, sanitizeName,
+import { APIEvent, createMqttClient, debugGatedLog, formatSeconds, loopFaultReporter, membershipDelta, mqttConnectionSettings, prefixedLog, retry,
   superviseLoop } from "homebridge-plugin-utils";
 import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
   ProtectDeviceConfig, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
@@ -14,7 +14,7 @@ import { OVERRIDE_ADDRESS_ZONE_WARNING, canTransition, countActiveRecordingViews
   resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, ProtectDevices, ProtectProjectionMap } from "../types.ts";
-import { describeDevice, describeDeviceModel } from "../devices/device-descriptor.ts";
+import { describeDevice, deviceDisplayName } from "../devices/device-descriptor.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
@@ -1241,7 +1241,7 @@ export class ProtectNvr {
     // We've got a new device, let's add it to HomeKit.
     if(!accessory) {
 
-      accessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName(device.name ?? describeDeviceModel(device)), uuid);
+      accessory = new this.api.platformAccessory<ProtectAccessoryContext>(deviceDisplayName(device), uuid);
 
       this.log.info("%s: Adding %s to HomeKit%s.", describeDevice(device), device.modelKey,
         this.hasFeature("Device.Standalone", device) ? " as a standalone device" : "");
@@ -1338,8 +1338,10 @@ export class ProtectNvr {
 
     const deletingAccessories = [accessory];
 
-    // If it's an unknown device or a camera, look for a corresponding package camera if we have one and remove it as well.
-    if(!descriptor || (modelKey === "camera")) {
+    // If it's an unknown device or a camera, look for a corresponding package camera if we have one and remove it as well. The lookup runs only for an accessory
+    // carrying a MAC of its own: an orphan package camera carries none and has no package of its own, and a lookup by an absent MAC would match every accessory that
+    // is not a package camera.
+    if(accessory.context.mac && (!descriptor || (modelKey === "camera"))) {
 
       const packageCameraAccessory = this.platform.accessories.find(x => x.context.packageCamera === accessory.context.mac);
 

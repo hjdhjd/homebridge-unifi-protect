@@ -7,7 +7,7 @@ import type { AcquireServiceOptions, AcquireServiceResult, HomebridgePluginLoggi
 import type { DeviceCollectionKey, ProtectDeviceConfig, ProtectState } from "unifi-protect";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, ProtectServiceOptions, WithoutIdentity } from "../types.ts";
-import { acquireService, mqttGetTopic, mqttSetTopic, setAccessoryName, updateServices, validService } from "homebridge-plugin-utils";
+import { acquireService, mqttGetTopic, mqttSetTopic, presenceChanged, setAccessoryName, updateServices, validService } from "homebridge-plugin-utils";
 import { legacyFamilyForOption, resolveLegacySelection } from "../options-legacy.ts";
 import type { LegacyFamily } from "../options-legacy.ts";
 import type { ObserverWakePayload } from "../diagnostics.ts";
@@ -218,7 +218,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
     const validated = validService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
 
-    if((validated.transition === "attached") || (validated.transition === "removed")) {
+    if(presenceChanged(validated.transition)) {
 
       this.platform.persistence.persist(this.accessory);
     }
@@ -280,10 +280,11 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   // Configure the device information details for HomeKit.
   public configureInfo(): boolean {
 
-    // Sync the Protect name with HomeKit, if configured.
-    if(this.hints.syncName) {
+    // Sync the Protect name with HomeKit, if configured. HBPU's name helper writes only the names that differ and answers whether it wrote any, so the accessory is
+    // marked for the next save exactly when the sync changed what Homebridge's accessory cache holds - a fresh accessory's first sync adds its ConfiguredName.
+    if(this.hints.syncName && setAccessoryName(this.accessory, this.syncedName)) {
 
-      this.accessoryName = this.syncedName;
+      this.platform.persistence.persist(this.accessory);
     }
 
     // setInfo reads the full identity-bearing record (marketName/type/mac/hardwareRevision/firmwareVersion), so it takes the raw record - present at configure time -
@@ -695,21 +696,24 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
   // Spawn this accessory's narrow-selector state observers: one for-await loop per reaction, each yielding only when its watched slice changes by reference, so
   // idle wake-ups are structurally zero (the store's Object.is dedup is upstream of the yield). Leaves override and call super to add their device-specific reactions;
-  // the base owns the one reaction every device class shares - syncing the controller's name into HomeKit - so a rename propagates whatever the device kind. Each loop
-  // binds to this.signal, so cleanup()/reconfigure/shutdown tear them all down through the per-accessory controller abort.
+  // the base owns the reactions every device class shares - syncing the controller's name into HomeKit and refreshing device information on a firmware update - so
+  // each propagates whatever the device kind. Each loop binds to this.signal, so cleanup()/reconfigure/shutdown tear them all down through the per-accessory
+  // controller abort.
   protected spawnObservers(): void {
 
     // Bind the by-id config selector once, as each device family does for its own observers, so every evaluation reuses the same closure.
     const config = this.deviceConfigSelector();
 
     // The universal reaction: when the controller-side name changes and the user opted into name syncing, push it to the HomeKit accessory. The selector is the name
-    // slice itself, so this fires only on an actual rename, never on routine config churn.
+    // slice itself, so this fires whenever that slice changes while the record is present, a record returning within the removal grace included, and never on
+    // routine config churn.
     this.observeState({ key: "device.name", selector: state => config(state)?.name, title: "the device name" }, () => this.syncNameFromController());
 
     // Device information (model, serial, firmware) is set once at configure; the firmware revision is the only field that changes at runtime, on a Protect firmware
-    // update. A narrow observe on that slice refreshes the AccessoryInformation service when (and only when) firmware changes, re-running configureInfo at
-    // firmware-change cadence.
-    this.observeState({ key: "device.firmwareVersion", selector: state => config(state)?.firmwareVersion, title: "device information" }, () => this.configureInfo());
+    // update. A narrow observe on that slice refreshes the AccessoryInformation service through setInfo alone when (and only when) firmware changes. The name is the
+    // name observer's above, so a firmware update leaves a name the user set in the Home app standing.
+    this.observeState({ key: "device.firmwareVersion", selector: state => config(state)?.firmwareVersion, title: "device information" },
+      () => this.setInfo(this.accessory, this.device.config));
   }
 
   // Publish the per-accessory observer-wake milestone for a slice a composed capability watches. A capability has no accessory identity of its own (it extends the spine,
@@ -740,9 +744,10 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     return this.nvr.client.state.selectors[this.device.modelKey].byId(this.device.id);
   }
 
-  // The controller-side display name this device syncs into HomeKit: the user-assigned name, falling back to the model's market name. This is the single derivation the
-  // two name-sync consumers (configureInfo and syncNameFromController) read, and the one place a leaf overrides to decorate its synced name - the package camera
-  // appends its display suffix here, so every sync path picks the decoration up without the parent fanning anything out.
+  // The controller-side display name this device syncs into HomeKit: the user-assigned name, falling back to the model's market name. This is the single derivation
+  // every name sync hands HBPU's name helper - configureInfo's sync as the device is configured and syncNameFromController's whenever the name slice changes - and
+  // the one place a leaf overrides to decorate its synced name - the package camera appends its display suffix here, so every sync path picks the decoration up
+  // without the parent fanning anything out.
   protected get syncedName(): string {
 
     const config = this.device.peek();
@@ -750,9 +755,12 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     return config?.name ?? config?.marketName ?? this.accessoryName;
   }
 
-  // Sync the controller's device name into HomeKit when the user enabled name syncing. The cooked display name is the syncedName derivation above, and we only touch
-  // HomeKit (and log) when it actually differs from the current accessory name, so a re-read on an unrelated name-slice yield is a harmless no-op. A rename changes the
-  // display name Homebridge's accessory cache holds, so it marks the accessory for the next save.
+  // Sync the controller's device name into HomeKit when the user enabled name syncing. The cooked display name is the syncedName derivation above, and HBPU's name
+  // helper writes only the names that differ and answers whether it wrote any, so a name-slice yield that finds every name matching writes nothing and saves nothing.
+  // Any write changes what Homebridge's accessory cache holds and marks the accessory for the next save, a record returning within the removal grace and restoring the
+  // controller's name over one the user set in the Home app included. The rename line is logged only when the platform accessory's display name moved: the plugin alone
+  // writes that name and the Home app never touches it, so a move means the controller-side name changed, while a restore over a Home app rename logs nothing. The line
+  // names the name HomeKit carries after the write, the controller's name as HomeKit's naming rules clean it.
   protected syncNameFromController(): void {
 
     if(!this.hints.syncName) {
@@ -760,16 +768,19 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       return;
     }
 
+    const previousName = this.accessory.displayName;
     const synced = this.syncedName;
 
-    if(this.accessoryName === synced) {
+    if(!setAccessoryName(this.accessory, synced)) {
 
       return;
     }
 
-    this.log.info("Detected a name change on the controller; updating the HomeKit name to %s.", synced);
+    if(this.accessory.displayName !== previousName) {
 
-    this.accessoryName = synced;
+      this.log.info("Detected a name change on the controller; updating the HomeKit name to %s.", this.accessory.displayName);
+    }
+
     this.platform.persistence.persist(this.accessory);
   }
 
@@ -850,12 +861,6 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
     return (this.accessory.getService(this.hap.Service.AccessoryInformation)?.getCharacteristic(this.hap.Characteristic.Name).value as string | undefined) ??
       (this.device.peek()?.name ?? "Unknown");
-  }
-
-  // Utility function to set the current accessory name of this device.
-  public set accessoryName(name: string) {
-
-    setAccessoryName(this.accessory, name);
   }
 
   // Build the write-through command that sets this device's status indicator light. The command is returned as a thunk so the update is issued against a narrowed

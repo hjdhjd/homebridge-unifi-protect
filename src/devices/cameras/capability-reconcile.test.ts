@@ -27,10 +27,11 @@
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, controllerEvents, makeProtectState, makeTestAccessory, writesTo } from "../../testing.helpers.ts";
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
-import { SAVE_WINDOW_MS, makeTestNvr, restoreAccessories } from "../../nvr/testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { formatLogEntry, logCount, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
+import { makeTestNvr, restoreAccessories } from "../../nvr/testing.helpers.ts";
+import { ACCESSORY_SAVE_WINDOW_MS } from "homebridge-plugin-utils";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
@@ -767,8 +768,8 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
   /* A lock the user turns off stays off across a restart only once Homebridge's accessory cache holds the camera without it, so the reconcile that removes the lock
    * marks the camera, and the save window that mark opens carries it to the cache once. The camera is restored onto the bridge the way Homebridge restores a cached
-   * accessory, because Homebridge saves only an accessory its bridge holds. The window the construction opened is closed first, so the update the row reads after the
-   * reconcile belongs to the reconcile alone.
+   * accessory, because the accessory persistence saves only an accessory the bridge holds. The window the construction opened is closed first, so the update the row
+   * reads after the reconcile belongs to the reconcile alone.
    */
   test("turning the Access lock off saves the camera once, without the lock, when the reconcile's save window closes", async () => {
 
@@ -788,7 +789,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
       assert.ok(accessLock(accessory), "the Access lock was created at adoption");
 
-      clock.advance(SAVE_WINDOW_MS);
+      clock.advance(ACCESSORY_SAVE_WINDOW_MS);
 
       const constructed = saves();
 
@@ -803,7 +804,7 @@ describe("the camera capability reconcile - the UniFi Access lock", () => {
 
       assert.equal(accessLock(accessory), undefined, "the reconcile removed the lock the option turned off");
 
-      clock.advance(SAVE_WINDOW_MS - 1);
+      clock.advance(ACCESSORY_SAVE_WINDOW_MS - 1);
 
       assert.equal(saves(), constructed, "nothing is saved while the reconcile's window is open");
 

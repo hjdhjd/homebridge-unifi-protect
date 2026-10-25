@@ -3,8 +3,9 @@
  * nvr.test.ts: Unit tests for the controller root's pure decision logic - the startup-resilient connect retry policy, the request-outcome classifier, the
  * removal-stability arithmetic, the disruption-expectation gating (the classification, its induced and recency halves, and the episode-latch), the induced-reboot resume
  * decision, the scheduled-reboot arithmetic with the recording-count rule behind its deferral, and the address override rule - plus the NvrHealth connection-input
- * mapping those drive, and the real controller root's disabled-controller path, its stability sweep's liveviews pass, its connect retry, its address override, and
- * the accessory cache saves its adoption asks for.
+ * mapping those drive, and the real controller root's disabled-controller path, its stability sweep's liveviews pass, its connect retry, its address override, the
+ * accessory cache saves its adoption asks for, the name it adds a camera under when the camera's own name sanitizes to nothing, and its removal of a package camera
+ * whose parent is gone.
  *
  * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively owns the entire device and
  * media graph. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and assert those here, exercising the controller's real
@@ -16,10 +17,11 @@
  * over the controller double's platform with a client double answering the port, and the platform's shutdown registration is run at the end of each row so no
  * process-global diagnostics subscription outlives it.
  */
+import { ACCESSORY_SAVE_WINDOW_MS, retry } from "homebridge-plugin-utils";
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError } from "unifi-protect";
 import type { ProtectCameraConfig, ProtectClient, ProtectNvrConfig } from "unifi-protect";
-import { SAVE_WINDOW_MS, TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr,
+import { TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr,
   restoreAccessories } from "./testing.helpers.ts";
 import { TestClock, formatLogEntry, logCount, loggedAt, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import { TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
@@ -36,7 +38,6 @@ import { ProtectNvr } from "./nvr.ts";
 import assert from "node:assert/strict";
 import { makeCameraConfig } from "../devices/testing.helpers.ts";
 import { once } from "node:events";
-import { retry } from "homebridge-plugin-utils";
 
 // The instant each health observer's test clock starts at, so the sliding window is driven by the test rather than wall time. Any nonzero epoch serves: the rows stamp
 // every symptom from the same clock the observer reads, so only the window's arithmetic reaches an assertion.
@@ -963,13 +964,107 @@ describe("the controller root's accessory cache saves", () => {
         "the standalone camera was published outside the bridge");
       assert.equal(api.calls.some((call) => call.kind === "update"), false, "nothing is saved while the adoption's window is open");
 
-      clock.advance(SAVE_WINDOW_MS);
+      clock.advance(ACCESSORY_SAVE_WINDOW_MS);
 
       const saves = api.calls.filter((call) => call.kind === "update");
 
       assert.equal(saves.length, 1, "every mark the adoption made went out in one save");
       assert.ok(saves[0]?.accessories.includes(bridged), "the save names the bridged camera");
       assert.equal(saves.some((call) => call.accessories.includes(standalone)), false, "no save names the standalone camera");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
+  });
+});
+
+describe("the controller root's device names", () => {
+
+  /* HAP refuses an accessory whose display name is empty, and a Protect name that is empty sanitizes to nothing, so the root adds such a camera under its market
+   * name, as it adds a camera reporting no name at all. Each camera is adopted at login and registered on the bridge under the name it was added under.
+   */
+  for(const { name, title } of [ { name: "", title: "a camera whose Protect name is empty is added to HomeKit under its market name" },
+    { name: undefined, title: "a camera reporting no Protect name is added to HomeKit under its market name" } ]) {
+
+    test(title, async () => {
+
+      const clock = new TestClock(TEST_CLOCK_EPOCH);
+      const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+
+      // The camera record carries what the root's membership reconcile reads before it constructs a camera, with its name set after the builder, whose own default
+      // would otherwise stand in for an absent one.
+      const cameraConfig: ProtectCameraConfig = { ...makeCameraConfig({ channels: G2_PRO_CHANNELS }), isAdopted: true, isAdoptedByOther: false, modelKey: "camera",
+        name };
+      const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig], nvr: nvrConfig }));
+      const { api, controller, nvr: double } = makeTestNvr({ clock, store });
+      const client = makeConnectedClient({ nvrConfig, store });
+      const { platform, shutdown } = makeRootPlatform(double);
+      const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
+
+      try {
+
+        await root.login();
+        await settle();
+
+        const accessory = double.platform.accessories.find((candidate) => candidate.UUID === accessoryUuid(cameraConfig.mac));
+
+        assert.ok(accessory, "the root added the camera");
+        assert.equal(accessory.displayName, "Test Camera Model", "the camera was added under its market name");
+        assert.ok(api.calls.some((call) => (call.kind === "register") && call.accessories.includes(accessory)),
+          "the camera was registered on the bridge under that name");
+      } finally {
+
+        shutdown();
+        controller.abort();
+
+        await settle();
+      }
+    });
+  }
+});
+
+describe("the controller root's orphan package camera removal", () => {
+
+  /* A package camera whose parent doorbell is gone carries no MAC of its own, so it has no package camera of its own to take with it. The platform holds the orphan
+   * beside a device accessory of another controller and one of this controller, each restored onto the bridge, and removing the orphan takes it alone. The
+   * controller has only just come up, so the removal gate holds its stability sweep back and nothing but this removal reaches the platform.
+   */
+  test("removing a package camera whose parent is gone removes that accessory alone", async () => {
+
+    const clock = new TestClock(TEST_CLOCK_EPOCH);
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+    const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
+    const { api, controller, logEntries, nvr: double } = makeTestNvr({ clock, store });
+    const orphan = makeTestAccessory("Front Door Package Camera", "74ACB9000001.PackageCamera");
+    const foreign = makeTestAccessory("Other Controller Camera", "74ACB9000002");
+    const own = makeTestAccessory("Garage Camera", "74ACB9000003");
+
+    orphan.context = { nvr: nvrConfig.mac, packageCamera: "74ACB9000001" };
+    foreign.context = { mac: "74ACB9000002", nvr: "AABBCCDDEEFF" };
+    own.context = { mac: "74ACB9000003", nvr: nvrConfig.mac };
+    restoreAccessories(double, [ orphan, foreign, own ]);
+
+    const client = makeConnectedClient({ nvrConfig, store });
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
+
+    try {
+
+      await root.login();
+      await settle();
+
+      const logged = logEntries.length;
+
+      root.removeHomeKitDevice(orphan);
+
+      assert.deepEqual(logEntries.slice(logged).map(formatLogEntry),
+        ["Test Controller [UniFi Dream Machine SE]: Front Door Package Camera: Removing device from HomeKit."], "the removal logs its one line");
+      assert.equal(double.platform.accessories.includes(orphan), false, "the orphan left the platform");
+      assert.ok(double.platform.accessories.includes(foreign) && double.platform.accessories.includes(own), "both bystanders stay on the platform");
+      assert.deepEqual(api.calls.filter((call) => call.kind === "unregister").flatMap((call) => call.accessories), [orphan], "the orphan alone was unregistered");
     } finally {
 
       shutdown();

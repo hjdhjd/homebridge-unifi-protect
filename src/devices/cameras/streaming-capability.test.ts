@@ -20,6 +20,8 @@ import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import type { TestProtectAccessory, TestRecordingDelegate, TestStreamingDelegate, TestStreamingDelegateFactory, TestTimeshiftSupervisor } from "../../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { assertNoUnhandledRejections, expectAt, logCount, settle } from "homebridge-plugin-utils/testing";
+import { makeTestNvr, restoreAccessories } from "../../nvr/testing.helpers.ts";
+import { ACCESSORY_SAVE_WINDOW_MS } from "homebridge-plugin-utils";
 import type { Camera } from "unifi-protect";
 import { ProtectCamera } from "./camera.ts";
 import { ProtectClient } from "unifi-protect";
@@ -29,7 +31,6 @@ import type { StreamingDelegate } from "../../media/stream-delegate.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
-import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // Every harness controller this file opens, aborted once at the end so no observe loop outlives the suite.
 const openControllers: AbortController[] = [];
@@ -286,8 +287,8 @@ describe("the streaming capability's recording-transmitting gate", () => {
 
 /* The derivation's recording-audio probe. Before a camera's first controller is built, its derivation opens the livestream the buffer will run on and reads the
  * recording audio format from the stream's init, then hands the subscription to the delegate for the buffer to adopt. These rows hold the probe's gate term by term,
- * the subscription's ownership across every way a build can fail to happen, and the one line an unread stream earns. Each camera is a real ProtectCamera over the
- * projection double, whose livestream records every call with the subscription double it answered.
+ * the subscription's ownership across every way a build can fail to happen, the one line an unread stream earns, and the save a build asks for once it registers the
+ * controller. Each camera is a real ProtectCamera over the projection double, whose livestream records every call with the subscription double it answered.
  */
 describe("the derivation's recording-audio probe", () => {
 
@@ -501,6 +502,46 @@ describe("the derivation's recording-audio probe", () => {
     assert.equal(factory.createCalls.length, 0, "no delegate was built while the controller shuts down");
     assert.equal(projection.livestreamCalls.length, 1, "the probe had opened its livestream");
     assert.equal(live(projection).length, 0, "the declined build's probe was released");
+  });
+
+  /* The capability marks the accessory for a save once it hands HomeKit the controller, because the controller's services are part of what Homebridge's accessory cache
+   * holds. Construction's own marks share one save window, and a window carries one save however many marks join it, so a controller mark inside that window could go
+   * missing without the count moving. The probe is held at its gate until construction's window has closed, so the window the build opens counts the controller mark
+   * alone. The camera is restored onto the bridge the way Homebridge restores a cached accessory, because the accessory persistence saves only an accessory the bridge
+   * holds.
+   */
+  test("a camera's controller build marks the accessory for a save of its own once construction's save window has closed", async () => {
+
+    const gate = Promise.withResolvers<undefined>();
+    const { accessory, factory, nvr } = constructCamera({ configure: (projection, nvr, accessory) => {
+
+      projection.livestreamGate = gate.promise;
+      restoreAccessories(nvr, [accessory]);
+    } });
+
+    const saves = (): number => nvr.platform.api.calls.filter((call) => (call.kind === "update") && call.accessories.includes(accessory)).length;
+
+    await settle();
+
+    assert.equal(factory.createCalls.length, 0, "the vacuity guard: the derivation still waits on its probe");
+
+    nvr.platform.clock.advance(ACCESSORY_SAVE_WINDOW_MS);
+
+    const constructed = saves();
+
+    gate.resolve(undefined);
+    await settle();
+
+    assert.equal(factory.createCalls.length, 1, "the probe settled and the controller was built");
+    assert.deepEqual(controllerEvents(accessory).map((event) => event.kind), ["configure"], "the build registered the controller once, with no removal beside it");
+
+    nvr.platform.clock.advance(ACCESSORY_SAVE_WINDOW_MS - 1);
+
+    assert.equal(saves(), constructed, "nothing is saved while the build's window is open");
+
+    nvr.platform.clock.advance(1);
+
+    assert.equal(saves(), constructed + 1, "exactly one update names the camera once the build's window closes");
   });
 
   /* A camera removed while its probe waits has nothing left to configure. The operating-mode service is seeded with the camera details the way a restart restores it

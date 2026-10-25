@@ -1,17 +1,17 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * device-descriptor.test.ts: Unit tests for the pure model resolver (describeDeviceModel) and device descriptor (describeDevice) in the importable leaf
- * src/devices/device-descriptor.ts.
+ * device-descriptor.test.ts: Unit tests for the pure model resolver (describeDeviceModel), HomeKit name derivation (deviceDisplayName) and device descriptor
+ * (describeDevice) in the importable leaf src/devices/device-descriptor.ts.
  *
- * Both are pure free functions - a config record in, a rendered string out, no this, no HAP - so the natural coverage is to import the REAL leaf and drive them with
+ * Each is a pure free function - a config record in, a rendered string out, no this, no HAP - so the natural coverage is to import the REAL leaf and drive them with
  * plain config objects, exactly as motion-policy.test.ts / chime-volume.test.ts drive their pure leaves. They reproduce the established device-name format, so the
- * cases cover the resolver's marketName-present, marketName-empty, marketName-absent, and nothing-reported edges, and the descriptor's plain and rich modes plus its
- * marketName-empty, marketName-absent, no-model, no-name, host-empty, and name-override edges. The absent-field cases are what a controller that omits marketName on
- * some units and type on others actually delivers, and they are written as records that simply lack the key rather than carry an empty one, so a fallback chain that
- * only handles the empty spelling fails here.
+ * cases cover the resolver's marketName-present, marketName-empty, marketName-absent, and nothing-reported edges, the name derivation's sanitized-name, empty-name,
+ * model-fallback and unknown-fallback edges, and the descriptor's plain and rich modes plus its marketName-empty, marketName-absent, no-model, no-name, empty-name,
+ * host-empty, and name-override edges. The absent-field cases are what a controller that omits marketName on some units and type on others actually delivers, and
+ * they are written as records that simply lack the key rather than carry an empty one, so a fallback chain that only handles the empty spelling fails here.
  */
 import { describe, test } from "node:test";
-import { describeDevice, describeDeviceModel } from "./device-descriptor.ts";
+import { describeDevice, describeDeviceModel, deviceDisplayName } from "./device-descriptor.ts";
 import assert from "node:assert/strict";
 
 // A representative device config: a named camera carrying a market name, host, and MAC.
@@ -39,6 +39,40 @@ describe("describeDeviceModel", () => {
 
     // The same word the unifi-protect CLI inventory renders for such a unit, so one device shows the same model in both places.
     assert.equal(describeDeviceModel({}), "unknown");
+  });
+});
+
+describe("deviceDisplayName", () => {
+
+  test("a name HomeKit accepts is the accessory's name, and one carrying a character HomeKit disallows is sanitized", () => {
+
+    assert.equal(deviceDisplayName(camera), "Basement Foyer");
+    assert.equal(deviceDisplayName({ ...camera, name: "Basement|Foyer" }), "Basement Foyer", "sanitizeName turns the disallowed character into a space");
+  });
+
+  test("a name that is empty, blank or made only of characters HomeKit disallows falls to the model", () => {
+
+    // Each of these sanitizes to nothing, and HAP refuses an accessory whose display name is empty, so the model names the accessory instead.
+    for(const name of [ "", "  ", "🙂" ]) {
+
+      assert.equal(deviceDisplayName({ ...camera, name }), "G5 Flex", JSON.stringify(name) + " falls to the model");
+    }
+  });
+
+  test("a device with no name falls to the model", () => {
+
+    assert.equal(deviceDisplayName({ ...camera, name: undefined }), "G5 Flex");
+  });
+
+  test("a device with an empty name and no model reads as \"unknown\"", () => {
+
+    assert.equal(deviceDisplayName({ name: "" }), "unknown");
+  });
+
+  test("a nameless device whose model sanitizes to nothing reads as \"unknown\"", () => {
+
+    // The model label is the controller's own string, so it too can carry nothing HomeKit accepts, and the literal last step still names the accessory.
+    assert.equal(deviceDisplayName({ marketName: "🙂" }), "unknown");
   });
 });
 
@@ -78,6 +112,13 @@ describe("describeDevice", () => {
   test("falls back to the model for the name when the device carries no user-assigned name", () => {
 
     assert.equal(describeDevice({ ...camera, name: undefined }), "G5 Flex [G5 Flex]");
+  });
+
+  test("falls back to the model for the name when the device's name is empty, and keeps any other name unsanitized", () => {
+
+    // The log line shows what the controller reports, so only an empty name falls to the model; one HomeKit would sanitize away stays as the controller sent it.
+    assert.equal(describeDevice({ ...camera, name: "" }), "G5 Flex [G5 Flex]");
+    assert.equal(describeDevice({ ...camera, name: "🙂" }), "🙂 [G5 Flex]", "an emoji-only name stays raw in the log");
   });
 
   test("omits the address segment when the host is empty, still emitting the MAC", () => {

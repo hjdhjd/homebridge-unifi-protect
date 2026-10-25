@@ -85,11 +85,6 @@ export interface TestProtectPlatform {
  */
 export const TEST_CLOCK_EPOCH = 1700000000000;
 
-/* How long the accessory persistence's save window stays open, transcribed from HBPU, which keeps the value to itself. A row advances the platform's test clock by this
- * much to close the window its marks opened, so a window that grew would leave the row reading no save rather than passing on a stale number.
- */
-export const SAVE_WINDOW_MS = 1000;
-
 /* The shared recording event-dispatch double: a REAL ProtectEventDispatch whose motion delivery is overridden to record into an array rather than touch HomeKit or arm a
  * reset timer. The override's arity and parameter types mirror production's motionEventHandler (event-dispatch.ts) exactly, so it type-checks as a true override; the two
  * parameters the recording path deliberately does not read carry the underscore prefix the house no-unused-vars rule reserves for intentionally-unused arguments, and

@@ -312,7 +312,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
     }
   });
 
-  test("a firmware push drives the package camera's own configureInfo - the doorbell fan-out is dead", async () => {
+  test("a firmware push drives the package camera's own setInfo - the doorbell fan-out is dead", async () => {
 
     const pushBaseline = wakeLog.length;
 

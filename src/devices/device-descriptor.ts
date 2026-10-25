@@ -1,22 +1,25 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * device-descriptor.ts: The pure consumer-side descriptor for rendering a UniFi Protect device or controller in a log line.
+ * device-descriptor.ts: The pure consumer-side renders of a UniFi Protect device or controller's displayed name, for a log line and for HomeKit.
  *
- * This module owns the pure renders of a Protect device or controller's hardware identity: the model label a unit shows for itself, and the log descriptor composed
- * around it - "Name [Model]" plainly, or "Name [Model] (address: IP mac: MAC)" with its network detail for support triage. It is deliberately pure - `this`-free,
- * free of any device or controller I/O, and free of imports - so any consumer (the nvr composition root or a device class) can import it without forming a value-edge
- * that would couple the device layer to the root or to a sibling device class, keeping the device layer's module graph free of cross-sibling value edges, and both
- * renders are exhaustively testable from a plain config object.
+ * This module owns the pure renders of a Protect device or controller's identity: the model label a unit shows for itself, the name HomeKit shows for an accessory
+ * standing for it, and the log descriptor composed around them - "Name [Model]" plainly, or "Name [Model] (address: IP mac: MAC)" with its network detail for
+ * support triage. It is deliberately pure - `this`-free, free of any device or controller I/O, and holding one value import, HBPU's name sanitizer - so any consumer
+ * (the nvr composition root, the controller's own accessories or a device class) can import it without forming a value-edge that would couple the device layer to the
+ * root or to a sibling device class, keeping the device layer's module graph free of cross-sibling value edges, and every render is exhaustively testable from a
+ * plain config object.
  *
  * Why this lives in the plugin and not in the unifi-protect library: composing a human display string is presentation, which is a consumer concern. The library's job
- * is to expose structured fields (name, marketName, host, mac, type), and how a consumer formats them for a log line is the consumer's choice. This leaf establishes
- * the single source of truth for that format on the correct side of the boundary, so the discovery, unsupported, add, and remove log lines share one descriptor rather
- * than each re-deriving it inline.
+ * is to expose structured fields (name, marketName, host, mac, type), and how a consumer formats them for a log line or a HomeKit name is the consumer's choice. This
+ * leaf establishes the single source of truth for each on the correct side of the boundary, so the discovery, unsupported, add, and remove log lines share one
+ * descriptor, and each accessory standing for a device or the controller itself is named by one rule, which a liveview switch falls back to, rather than each
+ * re-deriving it inline.
  *
  * The format prefers the human marketName for the model label, falls back to the raw wire type, and renders "unknown" when a unit reports neither; the displayed name
- * falls back to the model when a device carries no user-assigned name; and the optional network suffix carries the address (omitted when the host is empty or absent)
- * and the MAC.
+ * falls back to the model when a unit carries no user-assigned name or an empty one, and in HomeKit, where the name is sanitized to what HomeKit accepts, also when the
+ * name sanitizes to nothing; and the optional network suffix carries the address (omitted when the host is empty or absent) and the MAC.
  */
+import { sanitizeName } from "homebridge-plugin-utils";
 
 // The two fields a Protect device or controller reports its hardware by. The controller omits the market name on some units and the hardware type on others, so both
 // members are optional and every model read takes whichever one the unit reports.
@@ -54,11 +57,25 @@ interface DescribeDeviceOptions {
  */
 export function describeDeviceModel(device: DeviceModelConfig): string {
 
-  // The label prefers the human marketName and falls back to the raw wire type. We use `||`, not `??`, deliberately: the wire can deliver either field as an empty
-  // string, and that empty string is the falsy edge we want to fall through on - `??` would keep it. Do not "correct" this to `??`. A unit reporting neither
-  // field reads as "unknown", the same word the unifi-protect CLI inventory renders for it, so one device shows the same model in the CLI and here.
-  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- The falsy fall-through is the rule itself; `??` would keep an empty market name.
-  return device.marketName || device.type || "unknown";
+  // The label prefers the human marketName and falls back to the raw wire type. The wire can deliver either field as an empty string, which falls through as an
+  // absent field does. A unit reporting neither field reads as "unknown", the same word the unifi-protect CLI inventory renders for it, so one device shows the same
+  // model in the CLI and here.
+  return (device.marketName ?? "") || (device.type ?? "") || "unknown";
+}
+
+/**
+ * Derive the name HomeKit shows for each accessory standing for a Protect device or controller itself. An accessory named for more than its device composes its own
+ * name, and a liveview switch falls back to this rule when its composed name sanitizes to nothing.
+ *
+ * @param device - Any record carrying the model fields the label above reads and an optional user-assigned name.
+ *
+ * @returns The sanitized name, the sanitized model label when the name sanitizes to nothing, or "unknown" when the model label does too.
+ */
+export function deviceDisplayName(device: DeviceModelConfig & { name?: string }): string {
+
+  // HAP refuses an accessory whose display name is empty, and a name that is empty, blank or made only of characters HomeKit disallows sanitizes to nothing, so each
+  // step falls through on an empty sanitized result rather than on an absent field alone. The literal last step names the accessory when the model sanitizes away too.
+  return sanitizeName(device.name ?? "") || sanitizeName(describeDeviceModel(device)) || "unknown";
 }
 
 /**
@@ -72,8 +89,9 @@ export function describeDevice(device: DeviceDescriptorConfig, { includeNetwork 
 
   const model = describeDeviceModel(device);
 
-  // The displayed name prefers the explicit override, then the config's own name, and falls back to the model when a device carries no user-assigned name.
-  const label = (name ?? device.name ?? model) + " [" + model + "]";
+  // The displayed name prefers the explicit override, then the config's own name, and falls back to the model when a unit carries no user-assigned name or an empty
+  // one, as the HomeKit name does. The log keeps the raw name rather than the sanitized one, so a line shows what the controller reports.
+  const label = ((name ?? device.name ?? "") || model) + " [" + model + "]";
 
   if(!includeNetwork) {
 

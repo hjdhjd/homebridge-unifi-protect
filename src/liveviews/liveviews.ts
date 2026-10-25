@@ -12,6 +12,7 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import { ProtectSecuritySystem } from "./security-system.ts";
+import { deviceDisplayName } from "../devices/device-descriptor.ts";
 import { mqttTopics } from "../mqtt.ts";
 import { selectLiveviews } from "unifi-protect";
 
@@ -140,7 +141,7 @@ export class ProtectLiveviews extends ProtectBase {
       if((this.securityAccessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
         // We will use the NVR MAC address + ".Security" to create our UUID. That should provide the guaranteed uniqueness we need.
-        this.securityAccessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName(this.nvr.ufp.name ?? this.nvr.ufp.marketName), uuid);
+        this.securityAccessory = new this.api.platformAccessory<ProtectAccessoryContext>(deviceDisplayName(this.nvr.ufp), uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.securityAccessory]);
@@ -223,7 +224,12 @@ export class ProtectLiveviews extends ProtectBase {
 
       if((newAccessory = this.platform.accessories.find(x => x.UUID === uuid)) === undefined) {
 
-        newAccessory = new this.api.platformAccessory<ProtectAccessoryContext>(sanitizeName((this.nvr.ufp.name ?? "") + " " + viewName), uuid);
+        // The switch is named for its controller and its view together, the join rendering an absent controller name as nothing, and the whole name is sanitized at
+        // once, so a character HomeKit refuses only at a name's end stays when the view name follows it. Only a switch whose controller and view names each sanitize to
+        // nothing takes the controller's display name, because HAP refuses an accessory whose display name is empty.
+        const switchName = sanitizeName([ this.nvr.ufp.name, viewName ].join(" ")) || deviceDisplayName(this.nvr.ufp);
+
+        newAccessory = new this.api.platformAccessory<ProtectAccessoryContext>(switchName, uuid);
 
         // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [newAccessory]);

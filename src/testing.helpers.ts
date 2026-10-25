@@ -406,6 +406,20 @@ export class TestStateStore {
     this.store.dispatch({ data: config, id: config.id, kind: "deviceAdded", modelKey: "camera" });
   }
 
+  // Remove a sensor record outright. Presence-free by design, mirroring the reducer's own tolerance for a removal naming an id it does not hold. The fixture for
+  // absence-tolerance tests - a projection's config getter throws once its record is gone, and predicates that must survive that are exercised against exactly this.
+  public removeSensorRecord(id: string): void {
+
+    this.store.dispatch({ id, kind: "deviceRemoved", modelKey: "sensor" });
+  }
+
+  // Add a sensor record outright, exactly as the controller's realtime add packet would - the counterpart to removeSensorRecord, so a test can model a record that
+  // vanishes and returns within the removal grace and assert what the sensor carrier's observers do across the gap.
+  public addSensorRecord(config: ProtectSensorConfig): void {
+
+    this.store.dispatch({ data: config, id: config.id, kind: "deviceAdded", modelKey: "sensor" });
+  }
+
   /* Observe a selector over the state. The real store owns the semantics - lazy registration when iteration begins, a baseline seeded at that moment, an unbounded
    * in-order queue, drain-then-close on abort, and deregistration on every exit path - and this wrapper adds only the count. It repeats the store's own already-aborted
    * check first so the count never moves for an iteration the store declines to register, which keeps observerCount equal to real registration rather than merely

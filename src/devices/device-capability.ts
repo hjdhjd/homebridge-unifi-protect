@@ -4,7 +4,7 @@
  */
 import type { AcquireServiceOptions, AcquireServiceResult, Nullable, ValidServiceOptions, ValidServiceResult } from "homebridge-plugin-utils";
 import type { ProtectAccessory, ProtectServiceOptions } from "../types.ts";
-import { acquireService, validService } from "homebridge-plugin-utils";
+import { acquireService, presenceChanged, validService } from "homebridge-plugin-utils";
 import { ProtectBase } from "./device-base.ts";
 import type { ProtectDeviceContext } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
@@ -174,7 +174,7 @@ export abstract class ProtectDeviceCapability<H extends ProtectCapabilityHost = 
 
     const validated = validService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
 
-    if((validated.transition === "attached") || (validated.transition === "removed")) {
+    if(presenceChanged(validated.transition)) {
 
       this.platform.persistence.persist(this.accessory);
     }

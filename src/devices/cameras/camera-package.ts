@@ -63,8 +63,8 @@ export class ProtectCameraPackage extends ProtectCamera {
   }
 
   // The package camera's display name is the parent's synced name plus the display suffix, single-sourced from the shared live parent projection through the base
-  // syncedName accessor. Every name-sync path (configureInfo at configure time, syncNameFromController on a controller-side rename) reads this derivation, so the suffix
-  // applies uniformly with name syncing on; with it off, the creation-time name persists untouched.
+  // syncedName accessor. Every name-sync path (configureInfo at configure time, syncNameFromController whenever the name slice changes) reads this derivation, so
+  // the suffix applies uniformly with name syncing on; with it off, the creation-time name persists untouched.
   protected override get syncedName(): string {
 
     return super.syncedName + PACKAGE_CAMERA_NAME_SUFFIX;

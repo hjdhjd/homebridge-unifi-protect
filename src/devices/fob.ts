@@ -3,6 +3,7 @@
  * fob.ts: Fob device class for UniFi Protect.
  */
 import { USL_FOB_BUTTONS, resolveFobButtons } from "./fob-buttons.ts";
+import { presenceChanged, validCharacteristic } from "homebridge-plugin-utils";
 import type { Fob } from "unifi-protect";
 import type { FobButton } from "./fob-buttons.ts";
 import type { ProtectAccessory } from "../types.ts";
@@ -10,7 +11,6 @@ import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { describeDeviceModel } from "./device-descriptor.ts";
-import { validCharacteristic } from "homebridge-plugin-utils";
 
 // Projects one UniFi Protect LoRa fob's fixed button set and battery state onto a HomeKit accessory.
 export class ProtectFob extends ProtectDevice<Fob> {
@@ -135,7 +135,7 @@ export class ProtectFob extends ProtectDevice<Fob> {
       const transition = validCharacteristic({ characteristic: this.hap.Characteristic.ServiceLabelIndex, service, validate: grouped });
 
       // An index the gate attached or removed changes the switch Homebridge's accessory cache holds, so the accessory is marked for the next save.
-      if((transition === "attached") || (transition === "removed")) {
+      if(presenceChanged(transition)) {
 
         this.platform.persistence.persist(this.accessory);
       }

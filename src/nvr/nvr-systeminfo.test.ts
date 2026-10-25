@@ -128,6 +128,22 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
     assert.ok(loggedAt(built.logEntries, "info", "Enabled system information sensor: cpu temperature."), "the one enabled sensor logs the singular enabled-sensor line");
   });
 
+  test("a controller with an empty name adds the system information accessory under its market name", async () => {
+
+    // HAP refuses an accessory whose display name is empty, and the controller's empty name sanitizes to nothing, so the accessory takes the market name.
+    const built = buildSystemInfo({ name: "" }, { userOptions: ["Enable.Nvr.SystemInfo"] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const accessory = built.accessory;
+
+    assert.ok(accessory, "the owner self-created its accessory under a controller with an empty name");
+    assert.equal(accessory.displayName, "UniFi Dream Machine SE", "the accessory was added under the controller's market name");
+    assert.ok(built.api.calls.some((call) => (call.kind === "register") && call.accessories.includes(accessory)), "the accessory was registered under that name");
+  });
+
   test("the initial pass binds the temperature read-through, so a pull answers the live temperature over a stale cached value", async () => {
 
     const built = buildSystemInfo({ temperature: 36 }, { userOptions: ["Enable.Nvr.SystemInfo"] });

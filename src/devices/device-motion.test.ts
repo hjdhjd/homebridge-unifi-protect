@@ -23,11 +23,12 @@
  * base services are HAP- and MQTT-driven, not observeState-driven, so there is no observer-wake subscription here (unlike the family suites).
  */
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
-import { SAVE_WINDOW_MS, TestRecordingDispatch, makeTestNvr, restoreAccessories } from "../nvr/testing.helpers.ts";
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import type { TestClock, TestHomebridgeApi, TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
+import { TestRecordingDispatch, makeTestNvr, restoreAccessories } from "../nvr/testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import { loggedAt, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
+import { ACCESSORY_SAVE_WINDOW_MS } from "homebridge-plugin-utils";
 import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../settings.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
@@ -185,12 +186,12 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       assert.ok(motionSwitch, "the Motion.Switch feature materializes the SWITCH_MOTION_SENSOR switch");
 
-      built.clock.advance(SAVE_WINDOW_MS);
+      built.clock.advance(ACCESSORY_SAVE_WINDOW_MS);
 
       const constructed = saves();
 
       await triggerSet(motionSwitch.getCharacteristic(Characteristic.On), false);
-      built.clock.advance(SAVE_WINDOW_MS - 1);
+      built.clock.advance(ACCESSORY_SAVE_WINDOW_MS - 1);
 
       assert.equal(saves(), constructed, "nothing is saved while the toggle's window is open");
 
@@ -212,16 +213,16 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       assert.ok(motionSwitch, "the Motion.Switch feature materializes the SWITCH_MOTION_SENSOR switch");
 
-      built.clock.advance(SAVE_WINDOW_MS);
+      built.clock.advance(ACCESSORY_SAVE_WINDOW_MS);
 
       const constructed = saves();
       const on = motionSwitch.getCharacteristic(Characteristic.On);
 
       await triggerSet(on, false);
-      built.clock.advance(SAVE_WINDOW_MS / 2);
+      built.clock.advance(ACCESSORY_SAVE_WINDOW_MS / 2);
       await triggerSet(on, true);
       await triggerSet(on, false);
-      built.clock.advance(SAVE_WINDOW_MS / 2);
+      built.clock.advance(ACCESSORY_SAVE_WINDOW_MS / 2);
 
       assert.equal(saves(), constructed + 1, "the toggles inside the window were saved in exactly one update");
       assert.equal(built.accessory.context.detectMotion, false, "the one save carries the last toggle's value");

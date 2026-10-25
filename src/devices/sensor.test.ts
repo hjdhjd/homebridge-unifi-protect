@@ -43,11 +43,12 @@ import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAcce
 import type { CharacteristicKind, TestProtectAccessory } from "../testing.helpers.ts";
 import { ProtectSensor, narratesTransition } from "./sensor.ts";
 import type { ProtectSensorAirQuality, Sensor } from "unifi-protect";
-import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
-import { TestRecordingDispatch, makeTestNvr } from "../nvr/testing.helpers.ts";
+import type { TestClock, TestHomebridgeApi, TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
+import { TestRecordingDispatch, makeTestNvr, restoreAccessories } from "../nvr/testing.helpers.ts";
 import { TestSensorProjection, makeSensorConfig, makeSmokeStatus } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import { logCount, loggedAt, settle, triggerGet } from "homebridge-plugin-utils/testing";
+import { ACCESSORY_SAVE_WINDOW_MS } from "homebridge-plugin-utils";
 import type { CharacteristicValue } from "homebridge";
 import { NOT_CAPABLE_AIR_QUALITY } from "./air-quality-policy.ts";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -89,18 +90,19 @@ const controllers: AbortController[] = [];
 // dispatch-injection point so the motionDetectedAt observer's firehose routing is asserted against the REAL ProtectEventDispatch contract (the recording subclass arms no
 // reset timer). The casts are confined to where the class is constructed exactly as the light / chime suites do; the instance under test is the production class,
 // running its real configureHints / configureDevice / spawnObservers paths. The accessory factory is injectable so the moisture mode-flip test can pre-seed a LeakSensor
-// before construction. The injected recording dispatch is read off nvr.events after construction rather than captured from the factory closure - reading it back avoids
-// both the assignment-expression smell and a TS2454 definite-assignment error on a factory-captured binding.
+// before construction, and restored places the accessory on the bridge first, as Homebridge restores a cached one, so the persistence saves what the sensor marks. The
+// injected recording dispatch is read off nvr.events after construction rather than captured from the factory closure - reading it back avoids both the
+// assignment-expression smell and a TS2454 definite-assignment error on a factory-captured binding.
 function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {},
-  harnessOptions: { accessory?: TestProtectAccessory; disconnected?: boolean; userOptions?: string[] } = {}): {
-  accessory: TestProtectAccessory; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; projection: TestSensorProjection; recording: TestRecordingDispatch;
-  sensor: ProtectSensor; store: TestStateStore;
+  harnessOptions: { accessory?: TestProtectAccessory; disconnected?: boolean; restored?: boolean; userOptions?: string[] } = {}): {
+  accessory: TestProtectAccessory; api: TestHomebridgeApi; clock: TestClock; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; projection: TestSensorProjection;
+  recording: TestRecordingDispatch; sensor: ProtectSensor; store: TestStateStore;
 } {
 
   const sensorConfig = makeSensorConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));
-  const { controller, logEntries, mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr), mqtt: true,
-    store, userOptions: harnessOptions.userOptions });
+  const { api, clock, controller, logEntries, mqtt, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr),
+    mqtt: true, store, userOptions: harnessOptions.userOptions });
 
   controllers.push(controller);
 
@@ -112,6 +114,12 @@ function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {},
 
   const recording = nvr.events as TestRecordingDispatch;
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Sensor", sensorConfig.mac);
+
+  if(harnessOptions.restored) {
+
+    restoreAccessories(nvr, [accessory]);
+  }
+
   const projection = new TestSensorProjection(sensorConfig.id, store);
   const sensor = new ProtectSensor(nvr as unknown as ProtectNvr, accessory, projection as unknown as Sensor);
 
@@ -122,7 +130,7 @@ function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {},
     throw new Error("The MQTT recording double was not installed despite mqtt: true.");
   }
 
-  return { accessory, logEntries, mqtt, projection, recording, sensor, store };
+  return { accessory, api, clock, logEntries, mqtt, projection, recording, sensor, store };
 }
 
 describe("real ProtectSensor construction and family behavior", () => {
@@ -1837,6 +1845,82 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.equal(service.testCharacteristic(Characteristic.CarbonDioxideLevel), true, "the level held through the offline window despite its metric reading quiet");
     assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).value, 800, "the held level still reports the last reading");
     assert.ok(built.accessory.getService(Service.CarbonDioxideSensor), "the service itself held too");
+
+    built.sensor.cleanup();
+  });
+
+  test("a density or carbon dioxide level appearing or leaving marks the accessory for one save, while a changed reading marks nothing", async () => {
+
+    // The start holds every leg to one transition: the AirQualitySensor service stands through its index alone with neither density on it, and the carbon dioxide
+    // metric is live but pending, so its CarbonDioxideSensor service stands with no level. Each leg pushes the whole block with one metric moved from that start, then
+    // closes the save window it opened. The carbon dioxide removal reaches past its level: a metric that stops reporting fails the service's own gate, which removes
+    // the whole CarbonDioxideSensor service and saves it, so that leg's save is the service gate's rather than the level's.
+    const start: Partial<ProtectSensorAirQuality> = { aqi: { status: "neutral", value: 42 }, co2: { status: "neutral", value: null } };
+    const built = buildSensor({ airQuality: start, co2Enabled: true, co2Threshold: 1000 }, { restored: true });
+    const saveCount = (): number => built.api.calls.filter((call) => (call.kind === "update") && call.accessories.includes(built.accessory)).length;
+
+    // What the accessory carries across its air quality and carbon dioxide services, in one fixed order, so each leg asserts the one change it made and nothing else.
+    const carried = (): string[] => {
+
+      const airQuality = built.accessory.getService(Service.AirQualitySensor);
+      const co2 = built.accessory.getService(Service.CarbonDioxideSensor);
+      const parts: [ string, boolean ][] = [ [ "AirQualitySensor", airQuality !== undefined ],
+        [ "PM2_5Density", airQuality?.testCharacteristic(Characteristic.PM2_5Density) === true ],
+        [ "PM10Density", airQuality?.testCharacteristic(Characteristic.PM10Density) === true ], [ "CarbonDioxideSensor", co2 !== undefined ],
+        [ "CarbonDioxideLevel", co2?.testCharacteristic(Characteristic.CarbonDioxideLevel) === true ] ];
+
+      return parts.filter(([ , present ]) => present).map(([name]) => name);
+    };
+
+    const legs: { carries: string[]; label: string; readings: Partial<ProtectSensorAirQuality>; saves: number }[] = [
+
+      { carries: [ "AirQualitySensor", "PM2_5Density", "CarbonDioxideSensor" ], label: "a first PM2.5 reading", readings: { pm2p5: { status: "neutral", value: 12 } },
+        saves: 1 },
+      { carries: [ "AirQualitySensor", "PM2_5Density", "CarbonDioxideSensor" ], label: "a changed PM2.5 reading", readings: { pm2p5: { status: "neutral", value: 18 } },
+        saves: 0 },
+      { carries: [ "AirQualitySensor", "CarbonDioxideSensor" ], label: "an absent PM2.5 reading", readings: {}, saves: 1 },
+      { carries: [ "AirQualitySensor", "PM10Density", "CarbonDioxideSensor" ], label: "a first PM10 reading", readings: { pm10p0: { status: "neutral", value: 20 } },
+        saves: 1 },
+      { carries: [ "AirQualitySensor", "PM10Density", "CarbonDioxideSensor" ], label: "a changed PM10 reading", readings: { pm10p0: { status: "neutral", value: 25 } },
+        saves: 0 },
+      { carries: [ "AirQualitySensor", "CarbonDioxideSensor" ], label: "an absent PM10 reading", readings: {}, saves: 1 },
+      { carries: [ "AirQualitySensor", "CarbonDioxideSensor", "CarbonDioxideLevel" ], label: "a first carbon dioxide reading from pending",
+        readings: { co2: { status: "neutral", value: 800 } }, saves: 1 },
+      { carries: [ "AirQualitySensor", "CarbonDioxideSensor", "CarbonDioxideLevel" ], label: "a changed carbon dioxide reading",
+        readings: { co2: { status: "neutral", value: 900 } }, saves: 0 },
+      { carries: ["AirQualitySensor"], label: "an absent carbon dioxide reading, saved by the service gate", readings: { co2: NOT_CAPABLE_AIR_QUALITY.co2 }, saves: 1 }
+    ];
+
+    await settle();
+    built.clock.advance(ACCESSORY_SAVE_WINDOW_MS);
+
+    assert.deepEqual(carried(), [ "AirQualitySensor", "CarbonDioxideSensor" ],
+      "the start carries the air quality and carbon dioxide services with no density and no level");
+
+    const observed: string[] = [];
+
+    for(const { carries, label, readings } of legs) {
+
+      const before = saveCount();
+
+      built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ ...start, ...readings }) });
+
+      // eslint-disable-next-line no-await-in-loop -- Each leg moves the accessory from where the previous leg left it, so the legs are serial by intent.
+      await settle();
+
+      assert.deepEqual(carried(), carries, label + " leaves the accessory carrying exactly " + carries.join(", "));
+
+      built.clock.advance(ACCESSORY_SAVE_WINDOW_MS - 1);
+
+      assert.equal(saveCount(), before, label + " saves nothing while its save window is open");
+
+      built.clock.advance(1);
+      observed.push(label + ": " + String(saveCount() - before));
+    }
+
+    // Every leg's saves are compared at once, so a mark that goes missing or appears where none belongs names each leg it touches.
+    assert.deepEqual(observed, legs.map(({ label, saves }) => label + ": " + String(saves)),
+      "one update names the accessory for each characteristic or service appearing or leaving, and none for a changed reading");
 
     built.sensor.cleanup();
   });

@@ -13,7 +13,7 @@ import type { ProtectAirQualityMetric, ProtectAirQualityThresholdSettings, Prote
 import { SMOKE_ALARM_TYPES, carbonMonoxideDetected, carbonMonoxideFault, carbonMonoxideFaultReasons, smokeAlarmCapable, smokeDetected, smokeDetectorHardware,
   smokeFault, smokeFaultReasons } from "./smoke-policy.ts";
 import type { SmokeAlarmType, SmokeFaultReason } from "./smoke-policy.ts";
-import { capabilityGate, mqttGetTopic, sameEntries, updatePresenceCharacteristic, updateServices } from "homebridge-plugin-utils";
+import { capabilityGate, mqttGetTopic, presenceChanged, sameEntries, updatePresenceCharacteristic, updateServices } from "homebridge-plugin-utils";
 import type { LeakChannelContext } from "./leak-policy.ts";
 import type { ProtectConfigurePass } from "./device.ts";
 import { ProtectDevice } from "./device.ts";
@@ -350,10 +350,17 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // actually answer for. The gas readings stay off this service entirely - Protect reports VOC, TVOC, and NOx as baseline-relative indexes carrying no unit, while
     // HomeKit's density characteristics describe a mass concentration, and there is no honest conversion from one to the other. They ride the MQTT telemetry instead,
     // where a subscriber sees them for what they are. Revisit the moment Protect reports a gas reading as a real concentration.
-    updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.PM2_5Density, reachable: this.isReachable,
+    const pm25 = updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.PM2_5Density, reachable: this.isReachable,
       read: () => airQualityMetricReading(this.airQuality.pm2p5), service });
-    updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.PM10Density, reachable: this.isReachable,
+    const pm10 = updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.PM10Density, reachable: this.isReachable,
       read: () => airQualityMetricReading(this.airQuality.pm10p0), service });
+
+    // A density attached or removed changes the service Homebridge's accessory cache holds, so the accessory is marked for the next save. Every density reconciles
+    // before the test reads any answer, so one density's change never skips another's reconcile.
+    if([ pm25, pm10 ].some(presenceChanged)) {
+
+      this.platform.persistence.persist(this.accessory);
+    }
 
     // Update the state characteristics.
     this.configureStateCharacteristics(service);
@@ -465,8 +472,16 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     service.updateCharacteristic(this.hap.Characteristic.CarbonDioxideDetected, co2AlertDetected(airQuality.co2, this.co2Settings));
 
     // The measured level, present only while the sensor is actually reporting a number.
-    updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.CarbonDioxideLevel, reachable: this.isReachable,
+    const co2 = updatePresenceCharacteristic({ characteristic: this.hap.Characteristic.CarbonDioxideLevel, reachable: this.isReachable,
       read: () => airQualityMetricReading(this.airQuality.co2), service });
+
+    // A level attached or removed changes the service Homebridge's accessory cache holds, so the accessory is marked for the next save. A metric that stops reporting
+    // fails the service gate above before the level is reached, and that gate removes the whole service and marks the accessory itself, so this mark is the one that
+    // saves the level a live metric gains when its first reading arrives.
+    if(presenceChanged(co2)) {
+
+      this.platform.persistence.persist(this.accessory);
+    }
 
     // Update the state characteristics.
     this.configureStateCharacteristics(service);

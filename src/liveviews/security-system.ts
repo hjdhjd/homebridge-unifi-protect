@@ -2,7 +2,7 @@
  *
  * security-system.ts: Security system accessory for UniFi Protect.
  */
-import { acquireService, validService } from "homebridge-plugin-utils";
+import { acquireService, presenceChanged, validService } from "homebridge-plugin-utils";
 import type { CharacteristicValue } from "homebridge";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectBase } from "../devices/device-base.ts";
@@ -247,7 +247,7 @@ export class ProtectSecuritySystem extends ProtectBase {
     const { service, transition } = validService({ accessory: this.accessory, name: this.accessory.displayName + " Security Alarm",
       serviceType: this.hap.Service.Switch, validate: this.nvr.hasFeature("SecuritySystem.Alarm") });
 
-    if((transition === "attached") || (transition === "removed")) {
+    if(presenceChanged(transition)) {
 
       this.platform.persistence.persist(this.accessory);
     }
