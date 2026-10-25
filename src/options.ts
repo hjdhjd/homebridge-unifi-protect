@@ -363,12 +363,29 @@ const capabilityMap: Record<string, string> = {
   "isDoorbell": "Protect devices that have a doorbell",
   "isMotionDetected": "Protect devices that have a motion sensor",
   "isPirMotionDetected": "Protect devices that have a motion sensor",
-  "ledSettings": "Protect devices that have a status indicator light",
+  "ledSettings": "Protect sensors that have a status indicator light",
   "licensePlate": "Protect devices that support license plate smart detection",
+  "lightDeviceSettings": "Protect lights",
+  "lightSettings": "Protect sensors that have an ambient light sensor",
   "supportUnlock": "Protect cameras paired with a UniFi Access reader that supports remote unlock"
 };
 
-// Module-scope list formatter for the category device-scope sentence. It handles "X", "X and Y", and "X, Y, and Z" uniformly.
+// The capability keys an option can be gated on, in the ranks the option hook reads them. The property gate, which applies to every device model, reads ahead of
+// the per-family gates, so an option scoped across device models that also gates cameras on a camera feature names its cross-model scope rather than the narrower
+// camera phrase. The per-family gates share one rank because each gates a different device family, so an option carrying several of them names every family it
+// applies to.
+type ProtectScopeKey = "hasAccessFeature" | "hasCameraFeature" | "hasFeature" | "hasLightProperty" | "hasProperty" | "hasSensorProperty" | "hasSmartObjectType";
+
+const scopeRanks: readonly (readonly ProtectScopeKey[])[] = [
+
+  ["hasFeature"],
+  ["hasProperty"],
+  [ "hasCameraFeature", "hasLightProperty", "hasSensorProperty" ],
+  ["hasSmartObjectType"],
+  ["hasAccessFeature"]
+];
+
+// Module-scope list formatter for the scope sentence each hook builds. It handles "X", "X and Y", and "X, Y, and Z" uniformly.
 const lf = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
 
 /**
@@ -392,11 +409,10 @@ export const describeCategoryScope = (category: FeatureCategoryEntry<ProtectCate
 };
 
 /**
- * Documentation hook: returns the "Supported on ..." suffix appended to an option's description cell, naming the capability or device model the option is gated on, or
- * `undefined` when the option declares no scope. The capability flags fall through in priority order, with the device model as the catch-all when none is set. The
- * property gate, which applies to every device model, reads ahead of the per-model gates, so an option scoped across device models that also gates cameras on a camera
- * feature names its cross-model scope rather than the narrower camera phrase. We use graceful map fallback (`?? cap` / `?? model`) so an unmapped key surfaces
- * verbatim rather than the literal "undefined".
+ * Documentation hook: returns the "Supported on ..." suffix appended to an option's description cell, naming every capability or every device model the option is
+ * gated on, or `undefined` when the option declares no scope. The first capability rank the option carries describes it, with the device models as the catch-all when
+ * it carries none. Each list is read whole, so an option gated on several flags or scoped to several models names every one of them, and flags sharing one phrase name
+ * it once. We use graceful map fallback (`?? flag` / `?? model`) so an unmapped key surfaces verbatim rather than the literal "undefined".
  *
  * @param option - The option entry whose `meta` scope to describe.
  *
@@ -404,21 +420,9 @@ export const describeCategoryScope = (category: FeatureCategoryEntry<ProtectCate
  */
 export const describeOptionScope = (option: FeatureOptionEntry<ProtectOptionMeta>): string | undefined => {
 
-  const m = option.meta;
-  const cap = m?.hasFeature?.[0] ?? m?.hasProperty?.[0] ?? m?.hasCameraFeature?.[0] ?? m?.hasLightProperty?.[0] ?? m?.hasSensorProperty?.[0] ??
-    m?.hasSmartObjectType?.[0] ?? m?.hasAccessFeature?.[0];
+  const meta: ProtectOptionMeta = option.meta ?? {};
+  const capabilities = scopeRanks.map(rank => [...new Set(rank.flatMap(key => (meta[key] ?? []).map(flag => capabilityMap[flag] ?? flag)))]).find(prose => prose.length);
+  const named = capabilities ?? [...new Set((meta.modelKey ?? []).map(model => modelMap[model] ?? model))];
 
-  if(cap) {
-
-    return " <BR>*Supported on " + (capabilityMap[cap] ?? cap) + ".*";
-  }
-
-  const model = m?.modelKey?.[0];
-
-  if(model) {
-
-    return " <BR>*Supported on " + (modelMap[model] ?? model) + ".*";
-  }
-
-  return undefined;
+  return named.length ? (" <BR>*Supported on " + lf.format(named) + ".*") : undefined;
 };

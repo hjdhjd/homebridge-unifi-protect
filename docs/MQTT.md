@@ -115,7 +115,7 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 |---------------------------------------|------------------------|----------------------------------
 | `airquality/get`                      | Sensor                 | `true` will trigger a publish event of the current air quality metrics for a UniFi Protect sensor.
 | `alarm/get`                           | Sensor                 | `true` will trigger a publish event of the current alarm state for a UniFi Protect sensor.
-| `ambientlight/get`                    | Camera, Sensor         | `true` will trigger a publish event of the ambient light level, in lux, for a UniFi Protect sensor.
+| `ambientlight/get`                    | Sensor                 | `true` will trigger a publish event of the ambient light level, in lux, for a UniFi Protect sensor.
 | `carbonmonoxide/get`                  | Sensor                 | `true` will trigger a publish event of the current carbon monoxide alarm state for a UniFi Protect smoke detector.
 | `chime/get`                           | Doorbell               | `true` will trigger a publish event of the volume level for a UniFi Protect doorbell.
 | `chime/set`                           | Doorbell               | A number between 0 and 100 that will set the volume level for a UniFi Protect doorbell.

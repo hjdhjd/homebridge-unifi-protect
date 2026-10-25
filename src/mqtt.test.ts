@@ -154,6 +154,20 @@ describe("the MQTT topic catalog", () => {
     });
   });
 
+  test("credits the ambient-light get to the sensor alone and narrows no other verb", () => {
+
+    /* The camera publishes its ambient light level but never answers the get, which the sensor alone subscribes to, so the entry's narrowing is what keeps the
+     * document from crediting that get to the camera. The second assertion holds the set of narrowed entries fixed, so narrowing a verb anywhere else in the
+     * catalog is a conscious edit in this file as well as in the declaration.
+     */
+    assert.deepEqual(mqttTopics.ambientlight.getDevices, ["sensor"], "the sensor is the one kind that answers the ambient light get");
+
+    const narrowings = [ "getDevices", "publishDevices", "setDevices" ];
+
+    assert.deepEqual(Object.entries(mqttTopics).filter(([ , entry ]) => narrowings.some((field) => Object.hasOwn(entry, field))).map(([key]) => key),
+      ["ambientlight"], "the ambient light entry is the one entry in the catalog that narrows a verb");
+  });
+
   test("resolves a template only against the parameter name it carries", () => {
 
     // A template resolved against the name it declares puts the caller's value on the wire, which is the relay output's whole numbering scheme.

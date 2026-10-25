@@ -107,6 +107,23 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       assert.equal(built.projection.luxCalls.length, 1, "the construction-time init issued the lux query exactly once, proving the projection's lux() is wired");
     });
 
+    test("a camera's ambient light sensor publishes its reading and answers no ambient-light get", async () => {
+
+      // The camera states its reading on the ambientlight topic and never subscribes to that topic's get, which the sensor alone answers. The MQTT catalog credits
+      // the get to the sensor on exactly that basis, so a get registered here would put the reference in disagreement with the camera.
+      built = await buildLuxCamera();
+
+      const mqtt = built.nvr.mqtt;
+
+      // The standing sensor, the MQTT double and the camera's publish come first, because a camera whose sensor never stood, or a double that never saw the
+      // camera's traffic, would also show no get.
+      assert.ok(built.accessory.getService(Service.LightSensor), "featureFlags.hasLuxCheck materializes the ambient LightSensor");
+      assert.ok(mqtt, "the NVR double carries an MQTT client double");
+      assert.deepEqual(mqtt.publishedTo("/ambientlight").map((entry) => entry.payload), ["100"], "the camera states its first reading on the ambientlight topic");
+      assert.deepEqual(mqtt.subscriptions.filter((subscription) => (subscription.kind === "get") && subscription.topic.endsWith("/ambientlight/get")), [],
+        "the camera registers no ambientlight get, which the sensor alone answers");
+    });
+
     test("without hasLuxCheck, no LightSensor is configured (the featureFlag absence pair)", async () => {
 
       // The featureFlag without-pair: with the Device.AmbientLightSensor toggle on (the default) but hasLuxCheck false and no existing service, the capabilityGate

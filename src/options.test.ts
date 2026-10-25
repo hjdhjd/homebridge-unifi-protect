@@ -1,7 +1,8 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * options.test.ts: Coverage of the catalog surface - the standing-buffer options, the direct-RTSP pins, the absence of the superseded streaming and HKSV-record option
- * names, the landing of every setting that migrated from the configuration schema onto a feature option, and the motion surface's scoping on the camera's motion report.
+ * names, the landing of every setting that migrated from the configuration schema onto a feature option, the motion surface's scoping on the camera's motion report,
+ * and the scope prose the option reference publishes.
  *
  * The catalog is plain data (featureOptionCategories plus the featureOptions map), so these are pure structure assertions. The end-to-end resolution of the new names
  * through the engine is proven where it steers behavior (the doorbell-construction pixel-ceiling test pins a real timeshift channel pin, and the ring-delay and
@@ -422,5 +423,43 @@ describe("the settings page scoping of the motion surface", () => {
     assert.ok(motion && hksv, "the motion and HKSV log options exist");
     assert.equal(describeOptionScope(motion), " <BR>*Supported on Protect devices that have a motion sensor.*", "the motion log keeps its cross-model scope");
     assert.equal(describeOptionScope(hksv), " <BR>*Supported on Protect cameras that have a motion sensor.*", "the HKSV log renders the motion report's phrase");
+  });
+});
+
+describe("the option reference's scope prose", () => {
+
+  // An option gated per device family names each family through that family's own gate, so the published reference lists every kind of device the option reaches
+  // rather than whichever gate its entry happens to list first.
+  test("an option gated on more than one device family names every family's gate", () => {
+
+    const ambient = optionEntry("Device", "AmbientLightSensor");
+    const statusLed = optionEntry("Device", "StatusLed.Switch");
+
+    assert.ok(ambient && statusLed, "the ambient light sensor and status light switch options exist");
+    assert.equal(describeOptionScope(ambient),
+      " <BR>*Supported on Protect cameras that have an ambient light sensor and Protect sensors that have an ambient light sensor.*",
+      "the ambient light sensor names its camera gate and its sensor gate");
+    assert.equal(describeOptionScope(statusLed),
+      " <BR>*Supported on Protect devices with a status LED, Protect lights, and Protect sensors that have a status indicator light.*",
+      "the status light switch names its camera, light, and sensor gates");
+  });
+
+  // The motion properties share one phrase, so an option gated on more than one of them reads the phrase once rather than joining it to itself.
+  test("flags that share one phrase name it once", () => {
+
+    const motionSwitch = optionEntry("Motion", "Switch");
+
+    assert.ok(motionSwitch, "the motion switch option exists");
+    assert.deepEqual(motionSwitch.meta?.hasProperty, [ "isMotionDetected", "isPirMotionDetected" ], "the motion switch gates on each motion property");
+    assert.equal(describeOptionScope(motionSwitch), " <BR>*Supported on Protect devices that have a motion sensor.*", "the shared phrase is named once");
+  });
+
+  // The device models are the catch-all behind the capability gates, and they too are read whole.
+  test("an option scoped to several models and gated on no capability names every model", () => {
+
+    const entry: FeatureOptionEntry<ProtectOptionMeta> = { default: false, description: "A scoped option.", meta: { modelKey: [ "camera", "light" ] }, name: "Scoped" };
+
+    assert.equal(describeOptionScope(entry), " <BR>*Supported on Protect cameras and Protect lights.*", "every model is named");
+    assert.equal(describeOptionScope({ default: false, description: "An unscoped option.", name: "Unscoped" }), undefined, "an option with no scope has no suffix");
   });
 });

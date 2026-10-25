@@ -16,7 +16,8 @@ import { mqttTopicCatalog } from "homebridge-plugin-utils";
  * An entry's label is the noun the client's get and set log lines carry: it reaches subscribeGet and subscribeSet as the name of the thing being read or written,
  * and the user reads it in the sentence the client writes. The device column is documentation alone, projected into each row's device cell and read by nothing at
  * runtime, so its vocabulary fixes both the spelling of every device kind and the order each cell lists them in. A published topic and its get and set children are
- * one entry, so a topic whose get is answered by only one of the kinds that touch it still names every one of them.
+ * one entry under one device list, and when only some of the listed kinds perform a verb, its narrowing names those kinds, so the document credits each verb to the
+ * kinds that perform it.
  */
 export const mqttTopics = mqttTopicCatalog({
 
@@ -27,7 +28,8 @@ export const mqttTopics = mqttTopicCatalog({
   alarm: { devices: ["sensor"], get: "`true` will trigger a publish event of the current alarm state for a UniFi Protect sensor.", label: "alarm sound",
     publish: "`true` or `false` when a UniFi Protect sensor detects a recognized alarm sound.", topic: "alarm" },
   ambientlight: { devices: [ "camera", "sensor" ], get: "`true` will trigger a publish event of the ambient light level, in lux, for a UniFi Protect sensor.",
-    label: "ambient light", publish: "Ambient light level, in lux, from a UniFi Protect sensor or a camera's ambient light sensor.", topic: "ambientlight" },
+    getDevices: ["sensor"], label: "ambient light", publish: "Ambient light level, in lux, from a UniFi Protect sensor or a camera's ambient light sensor.",
+    topic: "ambientlight" },
   authenticate: { devices: ["doorbell"], label: "authentication",
     publish: "`{type: \"fingerprint\"}` or `{type: \"nfc\", id: cardId}`. Publishes upon a successful authentication using fingerprint or NFC. `id` is included " +
       "only for NFC and contains the card ID as detected by the doorbell.", topic: "authenticate" },
