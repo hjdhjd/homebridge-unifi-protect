@@ -23,7 +23,7 @@ import type { TestApiCall, TestStreamingDelegate, TestStreamingDelegateFactory }
 import { TestCameraProjection, makeCameraConfig, makeChimeConfig } from "../testing.helpers.ts";
 import { TestRecordingDispatch, makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { after, afterEach, before, describe, test } from "node:test";
-import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
+import { assertNoUnhandledRejections, formatLogEntry, logCount, settle } from "homebridge-plugin-utils/testing";
 import type { Camera } from "unifi-protect";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import type { ProtectAccessory } from "../../types.ts";
@@ -647,6 +647,39 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
     await settle();
 
     emptyHarness.controller.abort();
+  });
+
+  /* An override address carrying an IPv6 zone cannot stand in an RTSP URL, so the controller sets it aside with one warning and each camera resolves its URLs through
+   * the rest of the chain: the doorbell's own channel profiles and its package camera's alike compose against the camera's connection host. Composing against the zoned
+   * address instead refuses it inside the camera's construction, where nothing would handle the refusal, so the row also holds that construction raises nothing
+   * unhandled.
+   */
+  test("an override address carrying an IPv6 zone is set aside with one warning, and the URLs fall through to the connection host", async () => {
+
+    const zonedConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true } });
+    const zonedStore = new TestStateStore(makeProtectState({ cameras: [zonedConfig] }));
+    const zonedHarness = makeTestNvr({ overrideAddress: "fe80::1%en0", store: zonedStore });
+
+    await assertNoUnhandledRejections(async () => {
+
+      const zonedDoorbell = constructDoorbell(zonedHarness.nvr, makeTestAccessory(), new TestCameraProjection(zonedConfig.id, zonedStore));
+
+      await settle();
+
+      assert.match(zonedDoorbell.selectChannel(3024, 4096)?.url ?? "", /^rtsps:\/\/camera\.test:7441\/alias\d\?enableSrtp$/,
+        "the doorbell's channel profiles resolve against its connection host");
+      assert.equal(zonedDoorbell.packageCamera?.selectChannel()?.url, "rtsps://camera.test:7441/alias3?enableSrtp",
+        "and so do its package camera's");
+
+      zonedDoorbell.cleanup();
+
+      await settle();
+    });
+
+    assert.equal(logCount(zonedHarness.logEntries, "warn", "The override address fe80::1%en0 carries an IPv6 zone"), 1,
+      "the controller said once that it set the override aside");
+
+    zonedHarness.controller.abort();
   });
 
   test("a finite substrate pixel ceiling drops channels above the cap from selectSubstrateChannel", async () => {

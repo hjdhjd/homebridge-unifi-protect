@@ -244,6 +244,25 @@ describe("real ProtectSensor construction and family behavior", () => {
     }
   });
 
+  // The occupancy sensor's smart detection list is the device base's derivation, which answers none for every family but the camera, so the occupancy sensor a motion
+  // sensor wires carries no smart detection types and its enabling line names none.
+  test("the occupancy sensor a sensor wires carries no smart detection types", async () => {
+
+    const built = buildSensor({ motionEnabled: true }, { userOptions: ["Enable.Motion.OccupancySensor"] });
+
+    await settle();
+
+    try {
+
+      assert.ok(built.accessory.getService(Service.OccupancySensor), "the occupancy sensor exists");
+      assert.deepEqual(built.sensor.hints.smartOccupancy, [], "a non-camera's occupancy list is the base derivation's empty answer");
+      assert.ok(loggedAt(built.logEntries, "info", "Enabling occupancy sensor."), "the enabling line names no smart detection");
+    } finally {
+
+      built.sensor.cleanup();
+    }
+  });
+
   test("cleanup unwinds all seven observers, and a value-changing push afterward wakes nothing", async () => {
 
     sensor?.cleanup();

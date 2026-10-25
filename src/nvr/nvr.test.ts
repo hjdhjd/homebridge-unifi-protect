@@ -2,8 +2,8 @@
  *
  * nvr.test.ts: Unit tests for the controller root's pure decision logic - the startup-resilient connect retry policy, the request-outcome classifier, the
  * removal-stability arithmetic, the disruption-expectation gating (the classification, its induced and recency halves, and the episode-latch), the induced-reboot resume
- * decision, and the scheduled-reboot arithmetic with the recording-count rule behind its deferral - plus the NvrHealth connection-input mapping those drive, and the
- * real controller root's disabled-controller path, its stability sweep's liveviews pass, and its connect retry.
+ * decision, the scheduled-reboot arithmetic with the recording-count rule behind its deferral, and the address override rule - plus the NvrHealth connection-input
+ * mapping those drive, and the real controller root's disabled-controller path, its stability sweep's liveviews pass, its connect retry, and its address override.
  *
  * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively owns the entire device and
  * media graph. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and assert those here, exercising the controller's real
@@ -17,18 +17,22 @@
  */
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError } from "unifi-protect";
-import type { ProtectClient, ProtectNvrConfig, ProtectNvrLiveviewConfig } from "unifi-protect";
-import { TEST_CLOCK_EPOCH, TestConnection, makeNvrConfig, makeRootPlatform, makeTestNvr } from "./testing.helpers.ts";
+import type { ProtectCameraConfig, ProtectClient, ProtectNvrConfig } from "unifi-protect";
+import { TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr } from "./testing.helpers.ts";
 import { TestClock, formatLogEntry, logCount, loggedAt, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, countActiveRecordingViews, createConnectRetryPolicy,
   createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption, isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest,
-  isWithinRebootRecency, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+  isWithinRebootRecency, resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describe, test } from "node:test";
+import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
+import type { Nullable } from "homebridge-plugin-utils";
 import { NvrHealth } from "./nvr-health.ts";
 import type { NvrPhase } from "./nvr.ts";
+import { ProtectCamera } from "../devices/cameras/camera.ts";
 import { ProtectNvr } from "./nvr.ts";
 import assert from "node:assert/strict";
+import { makeCameraConfig } from "../devices/testing.helpers.ts";
 import { once } from "node:events";
 import { retry } from "homebridge-plugin-utils";
 
@@ -155,6 +159,39 @@ describe("connect retry policy", () => {
     const { reports } = await walkConnectRetry([ networkError, networkError, refusalError, refusalError, networkError ]);
 
     assert.deepEqual(reports, [ "connection refused", "bad credentials", "connection refused" ]);
+  });
+});
+
+describe("the address override rule", () => {
+
+  /* The option outranks the legacy per-controller property. An option that sets nothing - unset, turned off, or enabled with an empty value - leaves the answer to
+   * the legacy property, so an emptied field never resolves the cameras against nothing, and with neither source configured there is no override at all.
+   */
+  test("the option outranks the legacy property, and an option that sets nothing leaves the answer to it", () => {
+
+    assert.deepEqual(resolveOverrideAddress({ legacy: "legacy.example", option: "option.example" }), { address: "option.example", kind: "resolved" },
+      "the option outranks the legacy property");
+
+    for(const option of [ undefined, null, "" ]) {
+
+      const label = "option " + JSON.stringify(option);
+
+      assert.deepEqual(resolveOverrideAddress({ legacy: "legacy.example", option }), { address: "legacy.example", kind: "resolved" },
+        label + ": the legacy property answers");
+      assert.deepEqual(resolveOverrideAddress({ legacy: undefined, option }), { kind: "absent" }, label + ": with no legacy property there is no override");
+    }
+  });
+
+  /* A plain IPv6 address resolves as it stands, bracketed only where a URL is composed from it. One carrying an IPv6 zone cannot stand in a URL, so it is refused,
+   * naming the address, whichever source supplies it, and a refused option never falls through to the legacy property it outranks.
+   */
+  test("an address carrying an IPv6 zone is refused whichever source supplies it, and a plain IPv6 address resolves as it stands", () => {
+
+    assert.deepEqual(resolveOverrideAddress({ legacy: undefined, option: "fd00::1" }), { address: "fd00::1", kind: "resolved" }, "a plain IPv6 address resolves");
+    assert.deepEqual(resolveOverrideAddress({ legacy: "fe80::1%en0", option: null }), { address: "fe80::1%en0", kind: "refused" },
+      "a zoned legacy property is refused");
+    assert.deepEqual(resolveOverrideAddress({ legacy: "legacy.example", option: "fe80::1%en0" }), { address: "fe80::1%en0", kind: "refused" },
+      "a zoned option is refused rather than falling through to the legacy property");
   });
 });
 
@@ -667,29 +704,10 @@ describe("the controller root's stability sweep", () => {
     ghost.context = { liveviewDerived: true, nvr: nvrConfig.mac };
     double.platform.accessories.push(ghost);
 
-    // The client a connected controller reads: the controller record, the store, and the liveview collection read through it, which holds no liveview at all.
-    const client = {
-
-      [Symbol.asyncDispose]: async (): Promise<void> => {
-
-        // No-op: the double owns no resources to release.
-      },
-      connection: new TestConnection(),
-      controllerName: "Test Controller",
-      async *events(): AsyncGenerator<never> {
-
-        // None: the activity stream carries no event, so the root's router finds none and ends.
-      },
-      get liveviews(): readonly ProtectNvrLiveviewConfig[] {
-
-        return [...store.snapshot().liveviews.values()];
-      },
-      nvr: { config: nvrConfig },
-      state: store
-    };
-
+    // The client a connected controller reads, whose store holds no liveview at all.
+    const client = makeConnectedClient({ nvrConfig, store });
     const { platform, shutdown } = makeRootPlatform(double);
-    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client as unknown as ProtectClient);
+    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
     const removalReason = "No plugin-specific liveviews found. Disabling the security system accessory associated with this UniFi Protect controller.";
 
     try {
@@ -793,6 +811,111 @@ describe("the controller root's connect retry", () => {
       assert.equal(attempts.length, 4, "shutdown ends the run without another attempt");
       assert.deepEqual(logEntries.slice(reported).filter((entry) => entry.level === "error").map(formatLogEntry), [],
         "and the attempt the shutdown aborted is not reported, so the run ends with nothing at error");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
+  });
+});
+
+describe("the controller root's address override", () => {
+
+  /* The address the cameras' RTSP URLs are composed against when the user overrides it, resolved by the real root as it logs in: the option outranks the legacy
+   * property, an option enabled but left empty falls through to that property, and a plain IPv6 address is kept for the URL composition to bracket. An address carrying
+   * an IPv6 zone cannot stand in a URL, so it is set aside with one warning naming it, and the cameras fall through to the address the controller reports for each of
+   * them, never to the legacy property an option outranks. The root is read twice after its login, and neither read may move the answer or say the warning again. The
+   * controller double resolves the override through the same rule as it is built, and warns on its own, so each case counts only the lines logged after that.
+   */
+  test("the override address is resolved once at login, and one carrying an IPv6 zone is set aside with one warning", async () => {
+
+    const zoneWarning = "The override address fe80::1%en0 carries an IPv6 zone, which a camera stream address cannot include. Cameras on this controller will use the " +
+      "address the controller reports for each of them instead.";
+    const cases: { expected: Nullable<string>; legacy?: string; option?: string; warnings: number }[] = [
+
+      { expected: null, warnings: 0 },
+      { expected: "option.example", legacy: "legacy.example", option: "option.example", warnings: 0 },
+      { expected: "legacy.example", legacy: "legacy.example", option: "", warnings: 0 },
+      { expected: "fd00::1", option: "fd00::1", warnings: 0 },
+      { expected: null, legacy: "fe80::1%en0", warnings: 1 },
+      { expected: null, legacy: "legacy.example", option: "fe80::1%en0", warnings: 1 }
+    ];
+
+    for(const { expected, legacy, option, warnings } of cases) {
+
+      const label = "option " + (option ?? "absent") + ", legacy property " + (legacy ?? "absent");
+      const clock = new TestClock(TEST_CLOCK_EPOCH);
+      const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+      const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
+      const { controller, logEntries, nvr: double } = makeTestNvr({ clock, ...((legacy !== undefined) ? { overrideAddress: legacy } : {}), store,
+        userOptions: (option !== undefined) ? ["Enable.Nvr.OverrideAddress." + nvrConfig.mac + "=" + option] : [] });
+      const built = logEntries.length;
+      const client = makeConnectedClient({ nvrConfig, store });
+      const { platform, shutdown } = makeRootPlatform(double);
+      const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
+
+      try {
+
+        // eslint-disable-next-line no-await-in-loop -- Each case logs in a root of its own and ends its run before the next case builds one.
+        await root.login();
+
+        assert.equal(root.overrideAddress, expected, label + ": the override the cameras resolve against");
+        assert.equal(root.overrideAddress, expected, label + ": a second read gives the same answer");
+        assert.equal(logCount(logEntries.slice(built), "warn", zoneWarning), warnings, label + ": the warning is said once for a zoned address, and never otherwise");
+
+        shutdown();
+
+        // eslint-disable-next-line no-await-in-loop -- Each case logs in a root of its own and ends its run before the next case builds one.
+        await settle();
+
+        assert.equal(store.observerCount, 0, label + ": every observe loop the root started ended with its shutdown");
+      } finally {
+
+        shutdown();
+        controller.abort();
+
+        // eslint-disable-next-line no-await-in-loop -- Each case logs in a root of its own and ends its run before the next case builds one.
+        await settle();
+      }
+    }
+  });
+
+  /* Each camera bakes its RTSP URLs into its channel profiles as it is built, so the root resolves the override before it adopts any camera. A root whose store carries
+   * one camera and whose configuration carries an override logs in, and the camera's channel profiles compose against the override rather than against the camera's
+   * connection host, which a resolution made only after the device observers start would leave them composed against.
+   */
+  test("the override address is resolved before the cameras are adopted, so a camera's channel profiles compose against it", async () => {
+
+    const clock = new TestClock(TEST_CLOCK_EPOCH);
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+
+    // The camera record carries what the root's membership reconcile reads before it constructs a camera, its category and its adoption by this controller, on top of
+    // the construction read set makeCameraConfig builds.
+    const cameraConfig: ProtectCameraConfig = { ...makeCameraConfig({ channels: G2_PRO_CHANNELS }), isAdopted: true, isAdoptedByOther: false, modelKey: "camera" };
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig], nvr: nvrConfig }));
+    const { controller, nvr: double } = makeTestNvr({ clock, overrideAddress: "override.example", store });
+    const client = makeConnectedClient({ nvrConfig, store });
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
+
+    try {
+
+      await root.login();
+      await settle();
+
+      const camera = root.getDeviceById(cameraConfig.id);
+
+      assert.ok(camera instanceof ProtectCamera, "the root adopted the camera its store carries");
+      assert.match(camera.selectChannel(1920, 1080)?.url ?? "", /^rtsps:\/\/override\.example:7441\/alias\d\?enableSrtp$/,
+        "the camera's channel profiles compose against the override, not its connection host");
+
+      shutdown();
+
+      await settle();
+
+      assert.equal(store.observerCount, 0, "every observe loop the root and its camera started ended with its shutdown");
     } finally {
 
       shutdown();

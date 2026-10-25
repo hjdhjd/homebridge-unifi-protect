@@ -4,20 +4,20 @@
  *
  * This module is the home for all of the controller root's pure decision logic, separated from the ProtectNvr composition root that acts on it. It holds the
  * startup-resilient connect retry policy, the request-outcome classifier that feeds NvrHealth, induced-disruption and reboot-recency gating, the induced-reboot resume
- * decision, the per-episode livestream-recovery quiet latch, the scheduled-reboot deferral decision with its initial-delay arithmetic and its recording-count rule, and
- * the removal-stability arithmetic. Each is a pure function of its inputs. They live here, in a dependency-light leaf, rather than inside the ProtectNvr composition
- * root, for the same reason the unifi-protect library keeps its reducer pure and apart from its client and the plugin keeps the NvrHealth reducer apart from its
- * event-sink wrapper: a decision separated from the effect it drives is independently testable, and the test is the proof the separation is real. ProtectNvr
- * transitively imports the entire device and media graph (cameras, streaming, snapshots); a pure predicate should never have to stand that up to be exercised. This
- * module imports only what its decisions read - the library's auth-error type and recovery schedule, HBPU's error formatter, and the plugin's refusal schedule - so
- * it loads and tests in isolation.
+ * decision, the per-episode livestream-recovery quiet latch, the scheduled-reboot deferral decision with its initial-delay arithmetic and its recording-count rule, the
+ * removal-stability arithmetic, and the rule that resolves the address override the cameras' RTSP URLs are composed against. Each is a pure function of its inputs. They
+ * live here, in a dependency-light leaf, rather than inside the ProtectNvr composition root, for the same reason the unifi-protect library keeps its reducer pure and
+ * apart from its client and the plugin keeps the NvrHealth reducer apart from its event-sink wrapper: a decision separated from the effect it drives is independently
+ * testable, and the test is the proof the separation is real. ProtectNvr transitively imports the entire device and media graph (cameras, streaming, snapshots); a pure
+ * predicate should never have to stand that up to be exercised. This module imports only what its decisions read - the library's auth-error type and recovery schedule,
+ * HBPU's error and URL-host formatters, and the plugin's refusal schedule - so it loads and tests in isolation.
  */
 import type { Nullable, RetryBackoff } from "homebridge-plugin-utils";
 import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError } from "unifi-protect";
+import { formatErrorMessage, formatUrlHost } from "homebridge-plugin-utils";
 import type { ConnectionState } from "unifi-protect";
 import type { NvrPhase } from "./nvr.ts";
 import { PROTECT_CONNECT_REFUSAL_SCHEDULE_MS } from "../settings.ts";
-import { formatErrorMessage } from "homebridge-plugin-utils";
 
 // The library's recovery schedule for a fault it cannot explain, its staged delays and its steady floor composed into the shape the refusal schedule is held in, so
 // the connect retry holds each schedule the same way. It reads the library's numbers rather than restating them.
@@ -324,4 +324,51 @@ export function countActiveRecordingViews(views: Iterable<{ streaming?: Nullable
   }
 
   return count;
+}
+
+/**
+ * The answer the address override rule gives for one controller: absent when no override is configured, resolved with the address the cameras' RTSP URLs are composed
+ * against, or refused with the configured address a URL cannot carry, which the caller names in its warning.
+ */
+export type OverrideAddressResolution = { kind: "absent" } | { address: string; kind: "resolved" } | { address: string; kind: "refused" };
+
+/**
+ * The warning a caller says once for an override the address override rule refuses, as a format string logged with the refused address. It lives beside the rule
+ * rather than in the rule's answer, which stays a pure resolution, so every caller that resolves an override says the one sentence.
+ */
+export const OVERRIDE_ADDRESS_ZONE_WARNING = "The override address %s carries an IPv6 zone, which a camera stream address cannot include. Cameras on this controller " +
+  "will use the address the controller reports for each of them instead.";
+
+/**
+ * Resolve the address override for a controller's cameras: the address override option, else the legacy per-controller override property, with an option enabled but
+ * left empty counting as absent, so an emptied field falls through to the legacy property rather than resolving against nothing. The address is free text, and an
+ * IPv6 address carrying a zone cannot stand in a URL, so such an override is refused, and each camera resolves its RTSP URLs against the address the controller
+ * reports for it instead. formatUrlHost is the judge of what a URL can carry, the same formatter the RTSP URLs are composed through, so the check and the composition
+ * can never disagree. The controller root resolves through this one rule, and so does the test double the device suites run against.
+ *
+ * @param options        - Override inputs.
+ * @param options.legacy - The legacy per-controller override property, undefined when it is not set.
+ * @param options.option - The address override option's value at controller scope, null or undefined when the option sets none.
+ *
+ * @returns The resolution: absent, resolved with the address, or refused with the address set aside.
+ */
+export function resolveOverrideAddress(options: { legacy: string | undefined; option: Nullable<string | undefined> }): OverrideAddressResolution {
+
+  const { legacy, option } = options;
+  const address = (option?.length ? option : undefined) ?? legacy;
+
+  if(address === undefined) {
+
+    return { kind: "absent" };
+  }
+
+  try {
+
+    formatUrlHost(address);
+  } catch {
+
+    return { address, kind: "refused" };
+  }
+
+  return { address, kind: "resolved" };
 }

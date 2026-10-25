@@ -20,6 +20,7 @@ import type { Nullable } from "homebridge-plugin-utils";
 import { PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../settings.ts";
 import type { ProtectCameraChannelConfig } from "unifi-protect";
 import type { Resolution } from "homebridge";
+import { formatUrlHost } from "homebridge-plugin-utils";
 
 // One RTSP entry: a camera channel mapped to a HomeKit resolution, with the friendly display name and the FFmpeg `-i` input URL the media path consumes. The full
 // shape carries the whole transport contract - the URL flows to live streaming, RTSP snapshots, and the livestream RTSP fallback, and splitting it would break each
@@ -107,9 +108,13 @@ export function formatResolution(resolution: Resolution): string {
 // Compose a channel's RTSP URL from host, port, and alias. Pure string composition - the host and port are supplied by the caller (the device owns the host chain), and
 // the alias is the channel's own. No I/O. By default we emit the secure SRTP-enabled stream URL (rtsps://...?enableSrtp) the plugin connects to; pass secure: false for
 // the plain RTSP catalog URL (rtsp://...) the M3U playlist publishes for external app consumers.
+//
+// The host goes through formatUrlHost, so an IPv6 address is bracketed and its colons are never read as the port separator, while an IPv4 address, a hostname, and an
+// address the caller already bracketed pass through unchanged. An IPv6 address carrying a zone is refused, because no URL can carry one...the controller root sets
+// such an override address aside before it reaches a camera's host chain, and the hosts the controller reports never carry a zone.
 export function rtspUrl(channel: ProtectCameraChannelConfig, urlHost: string, rtspPort: number, secure = true): string {
 
-  return (secure ? "rtsps://" : "rtsp://") + urlHost + ":" + rtspPort.toString() + "/" + channel.rtspAlias + (secure ? "?enableSrtp" : "");
+  return (secure ? "rtsps://" : "rtsp://") + formatUrlHost(urlHost) + ":" + rtspPort.toString() + "/" + channel.rtspAlias + (secure ? "?enableSrtp" : "");
 }
 
 // Whether a channel is the doorbell's secondary package-camera channel.

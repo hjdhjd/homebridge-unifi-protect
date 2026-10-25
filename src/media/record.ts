@@ -682,14 +682,33 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
       }
     }
 
-    // Let's figure out the reason why we're stopping, if we have one, and it's noteworthy.
+    // Let's describe why HomeKit ended the recording. Each reason HomeKit defines for ending a recording early has its own sentence, and the default covers any reason
+    // we don't recognize, so the early-end line below always says why.
     let reasonDescription;
 
     switch(reason) {
 
+      case HDSProtocolSpecificErrorReason.NOT_ALLOWED:
+
+        reasonDescription = "HomeKit stopped allowing the camera to record, as it does when the camera is turned off in the Home app.";
+
+        break;
+
+      case HDSProtocolSpecificErrorReason.BUSY:
+
+        reasonDescription = "HomeKit reported that it was busy.";
+
+        break;
+
       case HDSProtocolSpecificErrorReason.CANCELLED:
 
         reasonDescription = "HomeKit canceled the request.";
+
+        break;
+
+      case HDSProtocolSpecificErrorReason.UNSUPPORTED:
+
+        reasonDescription = "HomeKit reported that the recording request is unsupported.";
 
         break;
 
@@ -705,7 +724,27 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
         break;
 
+      case HDSProtocolSpecificErrorReason.BAD_DATA:
+
+        reasonDescription = "HomeKit could not use the recording data it received.";
+
+        break;
+
+      case HDSProtocolSpecificErrorReason.PROTOCOL_ERROR:
+
+        reasonDescription = "HomeKit reported a protocol error in the recording stream.";
+
+        break;
+
+      case HDSProtocolSpecificErrorReason.INVALID_CONFIGURATION:
+
+        reasonDescription = "HomeKit reported that the camera's recording configuration is invalid.";
+
+        break;
+
       default:
+
+        reasonDescription = "HomeKit did not report a reason we recognize.";
 
         break;
     }

@@ -4,7 +4,7 @@
  */
 import type { API, CharacteristicValue, Service } from "homebridge";
 import type { AcquireServiceOptions, AcquireServiceResult, HomebridgePluginLogging, Nullable, ValidServiceOptions, ValidServiceResult } from "homebridge-plugin-utils";
-import type { DeviceCollectionKey, ProtectCameraConfig, ProtectDeviceConfig, ProtectState } from "unifi-protect";
+import type { DeviceCollectionKey, ProtectDeviceConfig, ProtectState } from "unifi-protect";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, ProtectServiceOptions, WithoutIdentity } from "../types.ts";
 import { acquireService, mqttGetTopic, mqttSetTopic, setAccessoryName, updateServices, validService } from "homebridge-plugin-utils";
@@ -489,10 +489,6 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
     if(dressing) {
 
-      // Reset the resolved smart-occupancy type list before rebuilding it, so a live re-creation of the service repopulates from empty rather than accumulating
-      // duplicates across runs.
-      this.hints.smartOccupancy = [];
-
       // Initialize the state of the occupancy sensor.
       service.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
       service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
@@ -502,20 +498,9 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
         return this.isReachable;
       });
 
-      // If we have smart motion detection, allow users to choose which object types determine occupancy.
-      if(this.hints.smartDetect) {
-
-        // The smart-occupancy object types live on the camera-specific feature flags. We read them off the live STATE view narrowed to the camera config; device identity
-        // still flows only through the dedicated accessors. Hoisting to one local reads the side-effect-free getter once and single-sources the narrowed cast. This
-        // method is shared by every device family, but this branch is reachable only when hints.smartDetect is true, and hints.smartDetect is set exclusively by
-        // ProtectCamera's own configureHints override - no light or sensor ever sets it - so this.ufp is guaranteed to be a camera config whenever this line runs.
-        const cameraConfig = this.ufp as Readonly<WithoutIdentity<ProtectCameraConfig>>;
-
-        // The detection types the user selected, read against everything this camera reports it can detect. The wrapper answers in the domain's own spelling, which is
-        // the wire casing the firehose delivers, so the occupancy gate can match a delivered event's type against this list directly.
-        this.hints.smartOccupancy = this.getFeatureList("Motion.OccupancySensor",
-          [ ...cameraConfig.featureFlags.smartDetectAudioTypes, ...cameraConfig.featureFlags.smartDetectTypes ]);
-      }
+      // Resolve which smart detection types determine occupancy through the family's one derivation. It answers a fresh list that is assigned whole, so a live
+      // re-creation of the service starts from the current answer rather than adding to the previous one.
+      this.hints.smartOccupancy = this.deriveSmartOccupancy();
 
       // Configure our MQTT support.
       this.subscribeGet(mqttTopics.occupancy.topic, mqttTopics.occupancy.label,
@@ -530,6 +515,14 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     }
 
     return true;
+  }
+
+  // The smart detection types that determine this device's occupancy. Only a camera reports smart detections, so the base answers none and the camera family overrides
+  // this with the delivered types its owner selected. Every write of the hint goes through this one method - the occupancy configure above and the camera's live
+  // reconcile alike - so the list has a single derivation.
+  protected deriveSmartOccupancy(): readonly string[] {
+
+    return [];
   }
 
   // Configure a switch to turn on or off the status indicator light for HomeKit.

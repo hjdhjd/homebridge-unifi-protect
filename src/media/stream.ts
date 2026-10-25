@@ -6,7 +6,7 @@
  */
 import { AudioRecordingCodecType, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
   FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites, StreamRequestTypes,
-  VideoCodecType, formatBps, formatErrorMessage, guardedDispatch, isHbpuAbortReason, mqttTopic } from "homebridge-plugin-utils";
+  VideoCodecType, formatBps, formatErrorMessage, formatUrlHost, guardedDispatch, isHbpuAbortReason, mqttTopic } from "homebridge-plugin-utils";
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { Clock, HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
@@ -970,23 +970,40 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // srtp_out_params=params           Specify the output encoding parameters. This is negotiated by HomeKit. The value is safe within tee's sink syntax: the suite's
     //                                  fixed 30-byte key and salt encode to exactly 40 base64 characters with no "=" padding, and the remainder of the base64 alphabet
     //                                  carries no meaning to tee's option parser.
-    const videoSink = "[f=rtp:select=v:payload_type=" + request.video.pt.toString() + ":ssrc=" + sessionInfo.videoSSRC.toString() +
-      ":flush_packets=1:packetsize=1200:srtp_out_suite=AES_CM_128_HMAC_SHA1_80:srtp_out_params=" + sessionInfo.videoSRTP.toString("base64") +
-      "]srtp://" + sessionInfo.address + ":" + sessionInfo.videoPort.toString() + "?rtcpport=" + sessionInfo.videoPort.toString();
+    //
+    // Each sink sends to the destination srtpDestination composes from the HomeKit client's address. It refuses an IPv6 address carrying a zone, which no destination
+    // can hold, and that refusal ends the start the way every other start failure here does: the error is logged, HomeKit is answered, and the prepared session is
+    // disposed, which releases its ports and turns off a package-camera flashlight this session lit. Letting the refusal escape instead would answer HomeKit without
+    // ever disposing the session, because HomeKit sends no stop for a start that failed.
+    try {
 
-    const audioSink = !sessionInfo.hasAudioSupport ? "" :
-      "|[f=rtp:select=a:onfail=ignore:payload_type=" + request.audio.pt.toString() + ":ssrc=" + sessionInfo.audioSSRC.toString() +
-      ":flush_packets=1:packetsize=384:srtp_out_suite=AES_CM_128_HMAC_SHA1_80:srtp_out_params=" + sessionInfo.audioSRTP.toString("base64") +
-      "]srtp://" + sessionInfo.address + ":" + sessionInfo.audioPort.toString() + "?rtcpport=" + sessionInfo.audioPort.toString();
+      const videoSink = "[f=rtp:select=v:payload_type=" + request.video.pt.toString() + ":ssrc=" + sessionInfo.videoSSRC.toString() +
+        ":flush_packets=1:packetsize=1200:srtp_out_suite=AES_CM_128_HMAC_SHA1_80:srtp_out_params=" + sessionInfo.videoSRTP.toString("base64") +
+        "]" + srtpDestination(sessionInfo.address, sessionInfo.videoPort);
 
-    ffmpegArgs.push(
+      const audioSink = !sessionInfo.hasAudioSupport ? "" :
+        "|[f=rtp:select=a:onfail=ignore:payload_type=" + request.audio.pt.toString() + ":ssrc=" + sessionInfo.audioSSRC.toString() +
+        ":flush_packets=1:packetsize=384:srtp_out_suite=AES_CM_128_HMAC_SHA1_80:srtp_out_params=" + sessionInfo.audioSRTP.toString("base64") +
+        "]" + srtpDestination(sessionInfo.address, sessionInfo.audioPort);
 
-      "-f", "tee",
-      videoSink + audioSink
-    );
+      ffmpegArgs.push(
+
+        "-f", "tee",
+        videoSink + audioSink
+      );
+    } catch {
+
+      const errorMessage = "Unable to start video stream: the HomeKit client's IPv6 address carries a zone, which a streaming destination cannot include.";
+
+      this.log.error(errorMessage, { address: sessionInfo.address });
+      callback(new Error(this.protectCamera.accessoryName + ": " + errorMessage));
+      this.disposePreparedSession(request.sessionID, sessionInfo);
+
+      return;
+    }
 
     // Additional logging, but only if we're debugging.
-    if(this.protectCamera.hasFeature("Log.FFmpeg") || this.protectCamera.hasFeature("Debug.Video.FFmpeg") || this.platform.config.verboseFfmpeg) {
+    if(isFfmpegVerbose(this.protectCamera)) {
 
       ffmpegArgs.push("-loglevel", "level+verbose");
     }
@@ -1166,14 +1183,27 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
     if(this.protectCamera.hints.twoWayAudioDirect) {
 
-      ffmpegReturnAudioCmd.push("udp://" + this.protectCamera.ufp.host + ":" + this.protectCamera.ufp.talkbackSettings.bindPort.toString());
+      // The return audio goes straight to the camera, at the destination talkbackDestination composes from the address the controller reports for it. A refusal there
+      // costs this session its return audio alone: the video session is already running and HomeKit has its answer, so we say why and return before a return-audio
+      // process is spawned, and the session goes on without return audio. The demuxer's readiness promise then goes unread, which is safe: HBPU marks it handled, so its
+      // rejection when the session ends raises nothing.
+      try {
+
+        ffmpegReturnAudioCmd.push(talkbackDestination(this.protectCamera.ufp.host, this.protectCamera.ufp.talkbackSettings.bindPort));
+      } catch {
+
+        this.log.error("Unable to start two-way audio: the camera's IPv6 address carries a zone, which a return audio destination cannot include.",
+          { address: this.protectCamera.ufp.host });
+
+        return;
+      }
     } else {
 
       ffmpegReturnAudioCmd.push("pipe:1");
     }
 
     // Additional logging, but only if we're debugging.
-    if(this.protectCamera.hasFeature("Log.FFmpeg") || this.platform.config.verboseFfmpeg) {
+    if(isFfmpegVerbose(this.protectCamera)) {
 
       ffmpegReturnAudioCmd.push("-loglevel", "level+verbose");
     }
@@ -1471,6 +1501,54 @@ export function liveAudioFilterArgs(host: Pick<ProtectCameraHost, "getAudioFilte
   const afOptions = host.getAudioFilters(requestedKhz * 1000);
 
   return afOptions.length ? [ "-filter:a", afOptions.join(", ") ] : [];
+}
+
+/**
+ * The SRTP destination a live-view sink sends to: the HomeKit client's address and the port it negotiated for that sink, with the RTCP port set to the same port.
+ * The address goes through formatUrlHost, so an IPv6 address is bracketed and its colons are never read as the port separator, while an IPv4 address passes through
+ * unchanged. Pure, so the destination a live view spawns with is testable without spawning one.
+ *
+ * @param address - The HomeKit client's address for this session.
+ * @param port    - The port the HomeKit client negotiated for this sink.
+ *
+ * @returns The srtp:// destination for the sink.
+ *
+ * @throws {TypeError} If the address is an IPv6 address carrying a zone (fe80::1%en0), which a destination has no place for.
+ */
+export function srtpDestination(address: string, port: number): string {
+
+  return "srtp://" + formatUrlHost(address) + ":" + port.toString() + "?rtcpport=" + port.toString();
+}
+
+/**
+ * The UDP destination the return-audio FFmpeg sends to when two-way audio talks to the camera directly: the camera's address and the port its talkback settings
+ * bind. The address goes through formatUrlHost exactly as srtpDestination's does, so an IPv6 address is bracketed and an IPv4 address passes through unchanged. Pure,
+ * so the destination a two-way audio session spawns with is testable without spawning one.
+ *
+ * @param address - The camera's address.
+ * @param port    - The port the camera's talkback settings bind.
+ *
+ * @returns The udp:// destination for the return audio.
+ *
+ * @throws {TypeError} If the address is an IPv6 address carrying a zone (fe80::1%en0), which a destination has no place for.
+ */
+export function talkbackDestination(address: string, port: number): string {
+
+  return "udp://" + formatUrlHost(address) + ":" + port.toString();
+}
+
+/**
+ * Whether FFmpeg logs verbosely for a camera: its FFmpeg logging option, its video FFmpeg debugging option, or the platform's verbose FFmpeg setting turns it on. Every
+ * FFmpeg process a live view spawns, its two-way audio return included, reads this one answer, so a session's processes all log at the same level. Pure over its
+ * host, so the decision is testable without spawning a process.
+ *
+ * @param host - The camera whose FFmpeg processes are logging.
+ *
+ * @returns True when the camera's FFmpeg processes log verbosely.
+ */
+export function isFfmpegVerbose(host: Pick<ProtectCameraHost, "hasFeature" | "platform">): boolean {
+
+  return host.hasFeature("Log.FFmpeg") || host.hasFeature("Debug.Video.FFmpeg") || host.platform.config.verboseFfmpeg;
 }
 
 // The production StreamingDelegateFactory: builds the concrete FFmpeg-backed delegate. The platform holds this typed as the abstraction; a test platform substitutes a

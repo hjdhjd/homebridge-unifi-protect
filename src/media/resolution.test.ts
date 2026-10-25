@@ -278,3 +278,32 @@ describe("resolution: rtspUrl - the two scheme branches", () => {
     assert.equal(rtspUrl(channel, "h", 7447, false), "rtsp://h:7447/" + channel.rtspAlias);
   });
 });
+
+/* The host a URL is composed against, in each form it can arrive in. An IPv6 address has to be bracketed or an RTSP client cannot tell its colons from the port
+ * separator, an IPv4 address reaches the URL unchanged, an address already bracketed is not bracketed again, and an IPv6 address carrying a zone is refused, because
+ * no URL can carry one. Each scheme branch composes the host the same way, so the rows alternate between them.
+ */
+describe("resolution: rtspUrl - the host forms", () => {
+
+  const channel = makeChannel({ fps: 30, height: 1080, id: 0, name: "High", width: 1920 });
+
+  test("an IPv4 address passes through unchanged", () => {
+
+    assert.equal(rtspUrl(channel, "192.168.1.10", 7441), "rtsps://192.168.1.10:7441/" + channel.rtspAlias + "?enableSrtp");
+  });
+
+  test("a bare IPv6 address is bracketed so its colons are not read as the port separator", () => {
+
+    assert.equal(rtspUrl(channel, "fd00::1:2", 7447, false), "rtsp://[fd00::1:2]:7447/" + channel.rtspAlias);
+  });
+
+  test("an IPv6 address the caller already bracketed is not bracketed twice", () => {
+
+    assert.equal(rtspUrl(channel, "[fd00::1:2]", 7441), "rtsps://[fd00::1:2]:7441/" + channel.rtspAlias + "?enableSrtp");
+  });
+
+  test("an IPv6 address carrying a zone is refused", () => {
+
+    assert.throws(() => rtspUrl(channel, "fe80::1%en0", 7441), TypeError, "a zone has no place in a URL");
+  });
+});

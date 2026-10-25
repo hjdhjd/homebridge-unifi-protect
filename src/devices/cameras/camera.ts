@@ -197,15 +197,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return this.doorbell?.packageCamera ?? null;
   }
 
-  // The host the camera's RTSP(S) URLs resolve against: the address override feature option for this controller, else the legacy per-controller override property, else
-  // the camera's own controller-reported connection host, else the controller's host. An override that is enabled but left empty counts as absent, so an emptied field
-  // falls through the rest of the chain rather than resolving against nothing. Protected so the package camera subclass resolves its own RTSP URLs through the exact
-  // same chain as the parent's, rather than the controller's raw address.
+  // The host the camera's RTSP(S) URLs resolve against: the controller's address override, else the camera's own controller-reported connection host, else the
+  // controller's host. The controller root owns the override, resolving it from the configuration once and setting aside one no URL can carry, so an override that is
+  // absent or unusable falls through the rest of the chain here. Protected so the package camera subclass resolves its own RTSP URLs through the exact same chain as
+  // the parent's, rather than the controller's raw address.
   protected get rtspHost(): string {
 
-    const override = this.nvr.getFeatureValue("Nvr.OverrideAddress");
-
-    return (override?.length ? override : undefined) ?? this.nvr.config.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host;
+    return this.nvr.overrideAddress ?? this.ufp.connectionHost ?? this.nvr.ufp.host;
   }
 
   // Whether a streaming delegate may be stood up for this camera at all. A delegate is never built for a camera that is being removed, nor once the controller has begun
@@ -886,15 +884,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       return false;
     }
 
-    /* The detection types this camera actually delivers: the INTERSECTION of what the hardware advertises (featureFlags) with what the user has switched on in Protect
-     * (smartDetectSettings). Both halves are needed. The capability alone would keep a sensor for a detection the user turned off, and that sensor could never trip -
-     * delivery keys off the event's own type, and the controller sends no event for a disabled detection - so it would sit at no-detection forever and any automation
-     * bound to it would silently never run. Audio types intersect with audio types and object types with object types; the controller keeps the audio and object lists
-     * separate and so do we. It is derived once, here, and every consumer reads it - the occupancy list, both license-plate terms, the per-type prune, and the per-type
-     * add - so "which detections does this camera deliver?" has a single answer.
-     */
-    const smartDetectTypes = new Set([ ...this.ufp.featureFlags.smartDetectAudioTypes.filter(type => this.ufp.smartDetectSettings.audioTypes.includes(type)),
-      ...this.ufp.featureFlags.smartDetectTypes.filter(type => this.ufp.smartDetectSettings.objectTypes.includes(type)) ]);
+    // The detection types this camera actually delivers, read once for this pass, so the license-plate terms, the per-type prune, and the per-type add below all test
+    // membership in the same set.
+    const smartDetectTypes = this.deliveredSmartDetectTypes();
 
     // Which of those delivered types the user wants a contact sensor for. It is read once, here, and both the prune and the create below test membership in it, so
     // "which per-type sensors should this camera advertise?" has a single answer that cannot drift between the two loops.
@@ -904,7 +896,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // live (a type the controller adds or drops, or the user enables or disables), so a once-only fill would trade the flag's staleness for the list's. It sits BELOW the
     // short-circuit, unlike the additive refreshes above: an assignment is not a no-op, so running it during a withdrawal would empty the list against a withdrawn type
     // set and silently stop occupancy delivery - the very deletion the keep-on-withdrawal rule exists to prevent.
-    this.hints.smartOccupancy = this.deriveSmartOccupancy(smartDetectTypes);
+    this.hints.smartOccupancy = this.deriveSmartOccupancy();
 
     // Get any license plates the user has configured for detection, if any. The list reads through the shared list grammar, so the stored text and every other
     // list-valued option are parsed by one definition; plates are matched in upper case, which is what the detection events carry.
@@ -1017,29 +1009,38 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return true;
   }
 
-  /* The smart-detect object types the user has selected to drive the occupancy sensor: the selection the Motion.OccupancySensor option holds, read against every
-   * detection type this camera DELIVERS. It takes the delivered set rather than re-deriving one, so a detection the user has switched off in Protect is absent here for
-   * the same reason it grows no contact sensor - one answer to "which detections does this camera deliver?", read by every consumer. The list is returned fresh rather
-   * than pushed into the hint, so the caller assigns it and no pass can accumulate.
-   *
-   * It exists because the derived hint bag caches this list and the base configureOccupancySensor fills it only when it CREATES the service - at construction, before the
-   * reconcile chokepoint runs - so a camera whose smart-detect capability arrives after adoption would otherwise carry an empty list for the rest of the session while
-   * hints.smartDetect read true, and the delivery gate would then match no detection type at all. The base method keeps its own fill for its own contract (a live
-   * re-creation of the occupancy service, on any device family); this is the camera's live refresher, and it deliberately expresses the same rule rather than a new one.
-   *
-   * It takes smartDetectTypes, the detection types this camera currently delivers (the intersection the reconcile pass derives once), and returns the delivered
-   * detection types the user has selected for occupancy, empty when smart detection is not this camera's source of truth.
+  /* The detection types this camera actually delivers: the INTERSECTION of what the hardware advertises (featureFlags) with what the user has switched on in Protect
+   * (smartDetectSettings). Both halves are needed. The capability alone would keep a sensor for a detection the user turned off, and that sensor could never trip -
+   * delivery keys off the event's own type, and the controller sends no event for a disabled detection - so it would sit at no-detection forever and any automation
+   * bound to it would silently never run. Audio types intersect with audio types and object types with object types; the controller keeps the audio and object lists
+   * separate and so do we. Every consumer reads it through this one method - the occupancy list, the license-plate terms, the per-type prune, and the per-type add - so
+   * "which detections does this camera deliver?" has a single answer.
    */
-  private deriveSmartOccupancy(smartDetectTypes: ReadonlySet<string>): readonly string[] {
+  private deliveredSmartDetectTypes(): ReadonlySet<string> {
 
-    // Being past the withdrawal short-circuit establishes only that the HARDWARE reports smart detection. This hint is that flag AND the user's Motion.SmartDetect
-    // option, so a camera whose owner has the option off reaches here with it false and must carry no occupancy types at all - the base method's own contract.
+    return new Set([ ...this.ufp.featureFlags.smartDetectAudioTypes.filter(type => this.ufp.smartDetectSettings.audioTypes.includes(type)),
+      ...this.ufp.featureFlags.smartDetectTypes.filter(type => this.ufp.smartDetectSettings.objectTypes.includes(type)) ]);
+  }
+
+  /* The smart-detect object types the user has selected to drive the occupancy sensor: the selection the Motion.OccupancySensor option holds, read against every
+   * detection type this camera DELIVERS, so a detection the user has switched off in Protect is absent here for the same reason it grows no contact sensor. The wrapper
+   * answers in the domain's own spelling, which is the wire casing the firehose delivers, so the occupancy gate matches a delivered event's type against this list
+   * directly. The list is returned fresh rather than pushed into the hint, so each caller assigns it and no pass can accumulate.
+   *
+   * This is the camera's answer to the device base's one derivation. The base's occupancy configure assigns the hint through it when it creates the service, and the
+   * reconcile pass assigns it again on every pass, so a camera whose smart-detect capability or detection types change after adoption carries a list that matches
+   * rather than one that leaves the delivery gate matching no detection type at all while hints.smartDetect reads true.
+   */
+  protected override deriveSmartOccupancy(): readonly string[] {
+
+    // The hint is the hardware's smart-detect report AND the user's Motion.SmartDetect option, so a camera whose owner has the option off carries no occupancy types at
+    // all, and so does one whose hardware has never reported smart detection.
     if(!this.hints.smartDetect) {
 
       return [];
     }
 
-    return this.getFeatureList("Motion.OccupancySensor", [...smartDetectTypes]);
+    return this.getFeatureList("Motion.OccupancySensor", [...this.deliveredSmartDetectTypes()]);
   }
 
   // Reconcile the StatusTampered characteristic on the camera's motion sensor against the controller-reported tamper capability and the user setting. A

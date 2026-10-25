@@ -17,16 +17,16 @@
 import { AudioRecordingCodecType, AudioRecordingSamplerate, HDSProtocolSpecificErrorReason, HKSV_TIMEOUT } from "homebridge-plugin-utils";
 import type { CameraRecordingConfiguration, RecordingPacket } from "homebridge";
 import type { LivestreamDescription, LivestreamInit, LivestreamSubscriptionState, Segment } from "unifi-protect";
+import type { Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import type { TestClock, TestLogEntry, TestRecordingProcessInit } from "homebridge-plugin-utils/testing";
-import { TestRecordingProcess, TestRecordingProcessFactory, logCount, settle } from "homebridge-plugin-utils/testing";
+import { TestRecordingProcess, TestRecordingProcessFactory, formatLogEntry, logCount, present, settle } from "homebridge-plugin-utils/testing";
 import { after, describe, test } from "node:test";
 import { makeChannelProfile, makeLivestreamSubscriptionDouble, makeTestCameraHost } from "./testing.helpers.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
-import type { RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { TestCameraHost } from "./testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import { TestStreamingDelegate } from "../testing.helpers.ts";
@@ -724,5 +724,60 @@ describe("the recording's audio: copied when the stream is the selected format, 
     const audioLines = logEntries.filter((entry) => [ "info", "warn" ].includes(entry.level) && /audio/i.test(entry.message));
 
     assert.deepEqual(audioLines, [], "no line at info or warn names the recording's audio");
+  });
+});
+
+/* The early-end line says why HomeKit ended a recording. Each reason HomeKit defines for an early end carries its own sentence, and a reason outside them reads the
+ * default's, so the line never prints an empty description. The line fires only for a reason HomeKit gave: a close with none is the acknowledgment path, which logs
+ * no early-end line at all, so the default is reached on the line only by a reason HomeKit gives that we do not recognize.
+ */
+describe("the early-end line describes every reason HomeKit gives for ending a recording early", () => {
+
+  // A reason value outside every member HomeKit defines, the shape a reason we do not recognize arrives in. The home hub sends the reason as a number on the wire, so
+  // a value the enum does not name is one the delegate can receive, and the cast is the only way to hand the delegate one.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-assignment -- A wire value outside the enum is the case under test.
+  const UNRECOGNIZED_REASON = 99 as HDSProtocolSpecificErrorReason;
+
+  // Drive one accepted recording event, close it with the given reason, and return the early-end line as the log renders it, or null when no early-end line fired.
+  async function endedEarlyLine(reason?: HDSProtocolSpecificErrorReason): Promise<Nullable<string>> {
+
+    const recordingProcessFactory = new TestRecordingProcessFactory(new TestRecordingProcess({ initSegment: Buffer.from("init"), segments: [Buffer.from("seg1")] }));
+    const { clock, delegate, logEntries } = await buildTransmittingDelegate(recordingProcessFactory);
+
+    await drainPaced(delegate.handleRecordingStreamRequest(1, new AbortController().signal), clock);
+    delegate.closeRecordingStream(1, reason);
+
+    const entry = logEntries.find((e) => (e.level === "error") && e.message.includes("ended early"));
+
+    return entry ? formatLogEntry(entry) : null;
+  }
+
+  const rows: { name: string; reason: HDSProtocolSpecificErrorReason; sentence: string }[] = [
+
+    { name: "not allowed", reason: HDSProtocolSpecificErrorReason.NOT_ALLOWED,
+      sentence: "HomeKit stopped allowing the camera to record, as it does when the camera is turned off in the Home app." },
+    { name: "busy", reason: HDSProtocolSpecificErrorReason.BUSY, sentence: "HomeKit reported that it was busy." },
+    { name: "unsupported", reason: HDSProtocolSpecificErrorReason.UNSUPPORTED, sentence: "HomeKit reported that the recording request is unsupported." },
+    { name: "bad data", reason: HDSProtocolSpecificErrorReason.BAD_DATA, sentence: "HomeKit could not use the recording data it received." },
+    { name: "protocol error", reason: HDSProtocolSpecificErrorReason.PROTOCOL_ERROR, sentence: "HomeKit reported a protocol error in the recording stream." },
+    { name: "invalid configuration", reason: HDSProtocolSpecificErrorReason.INVALID_CONFIGURATION,
+      sentence: "HomeKit reported that the camera's recording configuration is invalid." },
+    { name: "unrecognized", reason: UNRECOGNIZED_REASON, sentence: "HomeKit did not report a reason we recognize." }
+  ];
+
+  for(const { name, reason, sentence } of rows) {
+
+    test("the " + name + " reason is described by its own sentence, never as undefined", async () => {
+
+      const line = present(await endedEarlyLine(reason), "an early-end line for the " + name + " reason");
+
+      assert.ok(line.startsWith("HKSV recording event ended early: " + sentence), "the early-end line carries the reason's sentence: " + line);
+      assert.ok(!line.includes("undefined"), "the early-end line never reads undefined: " + line);
+    });
+  }
+
+  test("a close with no reason logs no early-end line", async () => {
+
+    assert.equal(await endedEarlyLine(), null, "the acknowledgment path's close is not an early end");
   });
 });

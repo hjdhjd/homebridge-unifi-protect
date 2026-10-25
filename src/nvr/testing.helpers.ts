@@ -9,24 +9,25 @@
  * RemovalStabilityGate behind removals, and the RebootScheduler behind reboot. So a routed event, a removal decision, and a reboot attempt alike travel the production
  * path. makeTestNvr is the composition root of the harness: it wires a store, a platform, a dispatch, and the streaming-delegate
  * factory into a controller a real device class can be constructed against end to end, with no FFmpeg and no live HAP. A row that runs the real controller root
- * itself builds it over the same double's platform through makeRootPlatform, with a client double answering its connect port and TestConnection as its connection
- * monitor.
+ * itself builds it over the same double's platform through makeRootPlatform, with a client double answering its connect port, makeConnectedClient's for a connected
+ * controller, and TestConnection as its connection monitor.
  *
  * Fidelity to the cited contracts, not invention, is the line these doubles hold: the removal decision IS ProtectNvr's own gate class and the MQTT surface is
  * homebridge-plugin-utils'. The cross-cutting core - the HAP double, the state store, and the streaming-delegate stub - lives in the root harness this file imports
  * from.
  */
 import { APIEvent, FeatureOptions } from "homebridge-plugin-utils";
-import type { Camera, Chime, ProtectCameraConfig, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectRingtoneConfig } from "unifi-protect";
+import type { Camera, Chime, ProtectCameraConfig, ProtectClient, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig,
+  ProtectRingtoneConfig } from "unifi-protect";
 import { Characteristic, Service, TestAccessory, TestCameraController, TestStreamingDelegateFactory } from "../testing.helpers.ts";
 import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { NvrPhase, ProtectNvr } from "./nvr.ts";
+import { OVERRIDE_ADDRESS_ZONE_WARNING, countActiveRecordingViews, isDisruptionExpected, resolveOverrideAddress } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "../options.ts";
 import type { TestApiCall, TestStateStore } from "../testing.helpers.ts";
 import { TestClock, TestLivestreamProcessFactory, TestMqttClient, TestRecordingProcessFactory, capturingLog } from "homebridge-plugin-utils/testing";
-import { countActiveRecordingViews, isDisruptionExpected } from "./nvr-policy.ts";
 import { featureOptionCategories, featureOptions } from "../options.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
@@ -42,6 +43,7 @@ import type { ProtectPlatform } from "../platform.ts";
 import { RebootScheduler } from "./nvr-reboot.ts";
 import { RemovalStabilityGate } from "./nvr-removal.ts";
 import { StreamingCapability } from "../devices/cameras/streaming.ts";
+import { TestCameraProjection } from "../devices/testing.helpers.ts";
 import type { TestChimeProjection } from "../devices/testing.helpers.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
@@ -182,6 +184,9 @@ export class TestProtectNvr {
   };
 
   public readonly mqtt: Nullable<TestMqttClient>;
+  // The address override the camera's RTSP host chain reads, resolved once at construction through the same nvr-policy rule the production root resolves it by while
+  // configuring the controller, so a test configures it through makeTestNvr's overrideAddress and userOptions alone.
+  public readonly overrideAddress: Nullable<string>;
 
   // The NVR lifecycle phase, settable and defaulting to the organic "running" state. The recording delegate reads nvr.phase to suppress its induced-disruption (reboot /
   // shutdown) error logs, so a transmit test that asserts the early-end telemetry log fires needs this to be "running".
@@ -220,6 +225,16 @@ export class TestProtectNvr {
     this.mqtt = init.mqtt;
     this.platform = init.platform;
     this.signal = init.signal;
+
+    // Resolve the address override through the production rule, and say the production warning when the rule refuses the configured address.
+    const override = resolveOverrideAddress({ legacy: this.config.overrideAddress, option: this.getFeatureValue("Nvr.OverrideAddress") });
+
+    if(override.kind === "refused") {
+
+      this.log.warn(OVERRIDE_ADDRESS_ZONE_WARNING, override.address);
+    }
+
+    this.overrideAddress = (override.kind === "resolved") ? override.address : null;
 
     /* The REAL health bridge, wired the way ProtectNvr wires its own (nvr.ts): the double's controller address scoping the request feed, its recording log carrying
      * the narration, its configured-device registry answering the camera-ownership question, the platform's test clock every symptom is stamped from, and the
@@ -362,7 +377,8 @@ export class TestProtectNvr {
   }
 
   // The production controller-scoped feature-value read, mirrored down to the argument slot: the mac rides the controller argument, because the options this serves
-  // declare controller scope and resolve through that slot alone. The camera's RTSP host chain reaches it, so every camera-family test drives the real resolution.
+  // declare controller scope and resolve through that slot alone. The override-address resolution reaches it, so every camera-family test resolves its override
+  // through the real engine.
   public getFeatureValue(option: string): Nullable<string | undefined> {
 
     return this.platform.featureOptions.value(option, undefined, this.ufp.mac);
@@ -786,6 +802,44 @@ export class TestConnection {
 
     return { [Symbol.dispose]: (): void => void listeners.delete(listener) };
   }
+}
+
+/**
+ * Build the client a connected controller root reads, for a row that runs the real root through its connect port: the controller record, the store, the liveview
+ * collection and each camera's projection read through that store, a TestConnection as its connection monitor, and an activity stream that carries no event, so the
+ * root's router finds none and ends. The client owns no resources, so its disposal does nothing.
+ *
+ * @param options           - Client inputs.
+ * @param options.nvrConfig - The controller record the root reads through client.nvr.config.
+ * @param options.store     - The state-store double the root reads its devices and liveviews through.
+ *
+ * @returns The client, presented as the library's, for the connect port to answer with.
+ */
+export function makeConnectedClient(options: { nvrConfig: ProtectNvrConfig; store: TestStateStore }): ProtectClient {
+
+  const { nvrConfig, store } = options;
+  const client = {
+
+    [Symbol.asyncDispose]: async (): Promise<void> => {
+
+      // No-op: the double owns no resources to release.
+    },
+    camera: (id: string): TestCameraProjection => new TestCameraProjection(id, store),
+    connection: new TestConnection(),
+    controllerName: "Test Controller",
+    async *events(): AsyncGenerator<never> {
+
+      // None: the activity stream carries no event.
+    },
+    get liveviews(): readonly ProtectNvrLiveviewConfig[] {
+
+      return [...store.snapshot().liveviews.values()];
+    },
+    nvr: { config: nvrConfig },
+    state: store
+  };
+
+  return client as unknown as ProtectClient;
 }
 
 /**

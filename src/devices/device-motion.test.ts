@@ -310,12 +310,11 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
         "StatusActive carries an onGet reading isReachable after the re-creation");
     });
 
-    test("re-creating the occupancy service does not accumulate duplicate smart-occupancy types", async () => {
+    test("the base answers no smart-occupancy types for a non-camera, on the first configure and on a re-created service", async () => {
 
-      // The smart-detect occupancy branch (only cameras reach it in production) is driven here on the base carrier by seeding the config's smart-detect type
-      // list and flipping hints.smartDetect true, so the init block's selection read runs. The creation-detection reset must clear smartOccupancy before each re-run, so
-      // a re-created service repopulates from empty rather than accumulating a duplicate - a latent hazard today, since the reachable runtime re-entry carries
-      // smartDetect false.
+      // Only a camera reports smart detections, so the base derivation answers none. The carrier is seeded with smart-detect types and hints.smartDetect is forced
+      // true, the arrangement under which a camera-shaped read of the configuration would find a type to select, and the list stays empty on the first configure and
+      // again when the init block re-runs on a re-created service.
       const sensorConfig = makeSensorConfig();
       const seededFlags = sensorConfig.featureFlags as unknown as Record<string, unknown>;
 
@@ -339,69 +338,15 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       built.configureHintsFor();
       built.hints.smartDetect = true;
 
-      // The first configure resolves the single smart-occupancy type.
       built.configureOccupancySensorFor({ enabled: true, initialized: false });
 
-      assert.deepEqual(built.hints.smartOccupancy, ["person"], "the first configure resolved the single smart-occupancy type");
+      assert.deepEqual(built.hints.smartOccupancy, [], "the first configure resolved no smart-occupancy types for a non-camera");
 
-      // Disable, then reconcile-create so the init block runs a SECOND time; the reset must keep the resolved list free of duplicates.
+      // Disable, then reconcile-create so the init block runs a SECOND time through the same derivation.
       built.configureOccupancySensorFor({ enabled: false, initialized: false });
       built.configureOccupancySensorFor({ enabled: true, initialized: true });
 
-      assert.deepEqual(built.hints.smartOccupancy, ["person"], "the re-created service repopulated smartOccupancy from empty rather than accumulating a duplicate");
-    });
-
-    /* The end-to-end row for the occupancy selection: a canonical selection string resolves through the list-read wrapper into hints.smartOccupancy, and the REAL event
-     * dispatcher's occupancy gate matches a delivered detection against exactly that array. The two halves are what make it an integration row rather than two
-     * restatements - the gate compares wire strings the controller sends against the strings the wrapper answered with, so a wrapper that returned catalog-cased names
-     * would leave the array looking right and the gate matching nothing. The dispatcher here is the production one, not the recording double the rest of this suite
-     * injects, because the double replaces the very handler under test.
-     */
-    test("the wrapper-resolved occupancy selection is what the dispatcher's occupancy gate matches a delivered detection against", async () => {
-
-      const sensorConfig = makeSensorConfig();
-      const seededFlags = sensorConfig.featureFlags as unknown as Record<string, unknown>;
-
-      seededFlags["smartDetectAudioTypes"] = [];
-      seededFlags["smartDetectTypes"] = [ "person", "vehicle" ];
-
-      const store = new TestStateStore(makeProtectState({ sensors: [sensorConfig] }));
-      const { controller, nvr } = makeTestNvr({ mqtt: true, store, userOptions: ["Enable.Motion.OccupancySensor=person"] });
-
-      controllers.push(controller);
-
-      const accessory = makeTestAccessory("Test Sensor", "uuid:test-sensor");
-
-      accessory.context["mac"] = sensorConfig.mac;
-
-      const projection = new TestSensorProjection(sensorConfig.id, store) as unknown as Sensor;
-      const built = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory as unknown as ProtectAccessory, projection);
-
-      device = built;
-
-      built.configureHintsFor();
-      built.hints.smartDetect = true;
-      built.configureMotionSensorFor({ enabled: true });
-      built.configureOccupancySensorFor({ enabled: true });
-
-      // The wrapper answered in the domain's own spelling, which for a camera's reported detection types is the wire casing the controller sends.
-      assert.deepEqual(built.hints.smartOccupancy, ["person"], "the canonical selection resolves to the wire-cased type the controller delivers");
-
-      const occupancy = accessory.getService(Service.OccupancySensor);
-
-      assert.ok(occupancy, "the occupancy service exists to be tripped");
-
-      // A vehicle is a genuine smart detection outside the selection, so the gate leaves occupancy clear.
-      nvr.events.motionEventHandler(built, ["vehicle"]);
-
-      assert.notEqual(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "a detection outside the selection leaves occupancy clear");
-
-      // The selected type trips it, which is the match the gate performs against the wrapper's own answer.
-      nvr.events.motionEventHandler(built, ["person"]);
-
-      assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "the selected type trips occupancy through the production gate");
-
-      nvr.events.clearEventTimersForDevice(built.id);
+      assert.deepEqual(built.hints.smartOccupancy, [], "the re-created service resolved none either");
     });
   });
 

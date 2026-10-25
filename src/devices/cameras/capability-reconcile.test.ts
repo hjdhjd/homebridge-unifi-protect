@@ -2476,6 +2476,51 @@ describe("the camera capability reconcile - the smart-detect contact sensors", (
     }
   });
 
+  /* The camera's occupancy list has one derivation, read by the occupancy configure when it creates the service and by every reconcile pass after it, so the line the
+   * configure logs at construction names the same delivered selection the reconcile holds. The hardware advertises person, vehicle, and animal; the user has vehicle
+   * switched off in Protect; the occupancy selection names person and vehicle. A configure reading the hardware's list instead narrates "Person, Vehicle" -> RED.
+   *
+   * The row then carries the selection end to end: a canonical selection string resolves through the list-read wrapper in the wire casing the controller sends, and
+   * the REAL event dispatcher's occupancy gate matches a delivered detection against exactly that list. A wrapper that answered catalog-cased names would leave the
+   * list looking right and the gate matching nothing.
+   */
+  test("the occupancy configure and the reconcile read one derivation, and the dispatcher's occupancy gate matches against it", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "person", "vehicle", "animal" ] },
+      smartDetectSettings: { objectTypes: [ "person", "animal" ] } });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { logEntries, nvr } = buildTestNvr({ store, userOptions: [ "Enable.Motion.OccupancySensor=person,vehicle", "Enable.Motion.SmartDetect" ] });
+    const accessory = makeTestAccessory("Test Camera", "uuid:smart-detect-14");
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+
+    await settle();
+
+    try {
+
+      assert.deepEqual(camera.hints.smartOccupancy, ["person"], "the occupancy list is the delivered selection, in the wire casing the controller sends");
+      assert.equal(logCount(logEntries, "info", "Enabling occupancy sensor using smart motion detection: Person."), 1,
+        "the occupancy configure narrated the delivered selection at construction");
+
+      const occupancy = accessory.getService(Service.OccupancySensor);
+
+      assert.ok(occupancy, "the occupancy service exists to be tripped");
+      assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, false, "the occupancy sensor is at rest before the detections");
+
+      // An animal is a detection the camera delivers that the selection does not name, so the gate leaves occupancy clear.
+      nvr.events.motionEventHandler(camera, ["animal"]);
+
+      assert.notEqual(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "a delivered detection outside the selection leaves occupancy clear");
+
+      // The selected type trips it, which is the match the gate performs against the derivation's own answer.
+      nvr.events.motionEventHandler(camera, ["person"]);
+
+      assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, true, "the selected type trips occupancy through the production gate");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
   /* The end-to-end translation row for the occupancy selection, written in the retired grammar this plugin used before the selection was a picker: one option per
    * detection type, with mixed defaults - face and person on, everything else off. It is the only row in this file written that way, and it carries both the global
    * and the device-scoped shapes, because the two reach the runtime by different routes: a global retired entry is rescued by the current catalog's own reading of the

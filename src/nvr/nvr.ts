@@ -10,10 +10,10 @@ import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryExh
 import { DEVICE_COLLECTION_KEYS, ProtectClient, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, MqttClient, Nullable } from "homebridge-plugin-utils";
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnostics.ts";
+import { OVERRIDE_ADDRESS_ZONE_WARNING, canTransition, countActiveRecordingViews, createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected,
+  resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, ProtectDevices, ProtectProjectionMap } from "../types.ts";
-import { canTransition, countActiveRecordingViews, createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected,
-  shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describeDevice, describeDeviceModel } from "../devices/device-descriptor.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
@@ -111,6 +111,9 @@ export class ProtectNvr {
   public readonly log: HomebridgePluginLogging;
   public mqtt: Nullable<MqttClient>;
   private name: string;
+  // The address override this controller's cameras resolve their RTSP URLs against, or null when none is configured or the configured one was set aside. Resolved once,
+  // while the controller is configured at login.
+  #overrideAddress: Nullable<string>;
   // The scheduled reboot: when it fires, how long an active HKSV recording may hold it back, and how a command that took no effect is recognized. Handed the recording
   // count and the connection health as suppliers it pulls at its own fire time; the reboot command itself and both phase moves run back here through its actions.
   public readonly reboot: RebootScheduler;
@@ -160,6 +163,7 @@ export class ProtectNvr {
     this.liveviews = null;
     this.mqtt = null;
     this.name = nvrOptions.address;
+    this.#overrideAddress = null;
     this._phase = "connecting";
     this.platform = platform;
     this.#shutdownController = new AbortController();
@@ -446,6 +450,16 @@ export class ProtectNvr {
   public get ufp(): Readonly<ProtectNvrConfig> {
 
     return this.client.nvr.config;
+  }
+
+  /**
+   * The address this controller's cameras are reached at for their RTSP streams when the user overrides it, or null when no usable override is configured. The camera's
+   * RTSP host chain reads it ahead of the address the controller reports for each camera. It is the answer configureOverrideAddress settled on at login, so a read
+   * costs nothing and never checks the configuration again.
+   */
+  public get overrideAddress(): Nullable<string> {
+
+    return this.#overrideAddress;
   }
 
   /**
@@ -860,7 +874,29 @@ export class ProtectNvr {
     // Configure scheduled reboots if enabled.
     this.configureScheduledReboot();
 
+    // Resolve the address override our cameras' RTSP URLs are composed against.
+    this.configureOverrideAddress();
+
     return true;
+  }
+
+  /* Resolve the address override for this controller's cameras through the shared rule, resolveOverrideAddress, which reads the address override option ahead of the
+   * legacy per-controller property. An override the rule refuses, an IPv6 address carrying a zone that cannot stand in a URL, is set aside with one warning naming it,
+   * and each camera resolves its RTSP URLs against the address the controller reports for it instead.
+   *
+   * This runs once per login, after the connect that makes the controller-scoped option readable and before any camera is adopted. The configuration is fixed for the
+   * life of the process, so one resolution serves every channel-profile derivation and RTSP URL request that follows, and the warning is said once per controller.
+   */
+  private configureOverrideAddress(): void {
+
+    const resolution = resolveOverrideAddress({ legacy: this.config.overrideAddress, option: this.getFeatureValue("Nvr.OverrideAddress") });
+
+    if(resolution.kind === "refused") {
+
+      this.log.warn(OVERRIDE_ADDRESS_ZONE_WARNING, resolution.address);
+    }
+
+    this.#overrideAddress = (resolution.kind === "resolved") ? resolution.address : null;
   }
 
   // Configure scheduled reboots of the Protect controller.
