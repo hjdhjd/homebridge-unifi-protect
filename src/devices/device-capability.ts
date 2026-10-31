@@ -110,14 +110,6 @@ export abstract class ProtectDeviceCapability<H extends ProtectCapabilityHost = 
     this.host = init.host;
   }
 
-  // Stand this capability's HomeKit surface up: the attach-once moment, called by the owner that decided to attach it, after construction. It is deliberately NOT
-  // re-runnable, so it is the home for work that registers something exactly once - spawning observers, registering MQTT handlers, standing up a service that must exist
-  // once. A capability with no attach-once work leaves this default alone and overrides reconcile() instead.
-  public configure(): void {
-
-    // No-op by default; a capability whose whole body is convergence has nothing to register once.
-  }
-
   // Converge this capability's HomeKit surface against the controller's live state: the recurring moment, called by the owner's reconcile chokepoint at attach and again
   // whenever a slice the capability reads may have changed. Re-runnable by contract, which makes every operation in an override a get-or-create or a replace rather than
   // an add. The return type is a uniform promise rather than a void union deliberately: a union compiles at a call site whether or not it is awaited, so nothing would

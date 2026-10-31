@@ -27,6 +27,7 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectViewer } from "./viewer.ts";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "./device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
@@ -65,7 +66,7 @@ function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {},
   harnessOptions.seedAccessory?.(accessory);
 
   const projection = new TestViewerProjection(viewerConfig.id, store);
-  const viewer = new ProtectViewer(nvr as unknown as ProtectNvr, accessory, projection as unknown as Viewer);
+  const viewer = configured(new ProtectViewer(nvr as unknown as ProtectNvr, accessory, projection as unknown as Viewer));
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast (either of which the house lint preset forbids in opposite directions), and fails loudly if the opt-in ever stops installing the double.

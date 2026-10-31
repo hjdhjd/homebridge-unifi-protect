@@ -39,6 +39,8 @@ import { RebootScheduler } from "./nvr-reboot.ts";
 import { RemovalStabilityGate } from "./nvr-removal.ts";
 import { StreamingCapability } from "../devices/cameras/streaming.ts";
 import { channels } from "../diagnostics.ts";
+import { configured } from "../devices/device-base.ts";
+import { isolateAccessoryChange } from "./nvr-accessory-change.ts";
 import { livestreamRecoveryDecision } from "../media/livestream-recovery-policy.ts";
 import { servePlaylist } from "./nvr-playlist.ts";
 
@@ -147,7 +149,7 @@ export class ProtectNvr {
   private readonly deviceDescriptors: { readonly [K in DeviceCollectionKey]: DeviceDescriptor<K> } = {
 
     // The camera row builds a ProtectCamera for both plain cameras and doorbells: a device the controller reports as a doorbell attaches its DoorbellCapability through
-    // ProtectCamera's own construction-time reconcile, so there is one construction path for both arrival timings (doorbell-at-adoption and a late isDoorbell flip).
+    // ProtectCamera's own setup-time reconcile, so there is one attach path for both arrival timings (doorbell-at-adoption and a late isDoorbell flip).
     camera: { construct: (accessory, camera) => new ProtectCamera(this, accessory, camera), projection: (client, id) => client.camera(id) },
     chime: { construct: (accessory, chime) => new ProtectChime(this, accessory, chime), projection: (client, id) => client.chime(id) },
     fob: { construct: (accessory, fob) => new ProtectFob(this, accessory, fob), projection: (client, id) => client.fob(id) },
@@ -811,20 +813,22 @@ export class ProtectNvr {
 
       // Unregister all the accessories for this controller from Homebridge. Homebridge restores every cached accessory before it signals that launching has finished,
       // and we log in only after that signal, so the platform's accessory list is complete when we get here...the sweep runs at once, and none of ours arrive later.
+      // Each removal runs through the shared isolation, so one accessory that cannot leave HomeKit is said once and costs the accessories behind it nothing, where a
+      // throw would otherwise end the sweep and reject login().
       for(const accessory of this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac)) {
 
-        this.removeHomeKitDevice(accessory);
+        isolateAccessoryChange({ act: "remove", change: () => this.removeHomeKitDevice(accessory), log: this.log, name: accessory.displayName });
       }
 
       // removeHomeKitDevice's ownership guards early-return the system-information, liveview, and security-system accessories, deferring their removal to
       // ProtectNvrSystemInfo and ProtectLiveviews. On the disabled path those owners are never constructed, so nothing else will ever reclaim those accessories - this
-      // sweep is their removal path. The filter yields an independent snapshot to iterate, so the shared tail is free to splice the live platform list as it removes
-      // each one. The narration is deliberately short: these accessories are always bridged and carry no model key, so removeHomeKitDevice's fuller "Removing <model>
-      // from HomeKit" line would render malformed here.
+      // sweep is their removal path, and it also takes any accessory a failed removal above left on the platform. The filter yields an independent snapshot to iterate,
+      // so the shared tail is free to splice the live platform list as it removes each one. The narration is deliberately short: these accessories are always bridged
+      // and carry no model key, so removeHomeKitDevice's fuller "Removing <model> from HomeKit" line would render malformed here.
       for(const accessory of this.platform.accessories.filter(x => x.context.nvr === this.ufp.mac)) {
 
         this.log.info("%s: Removing from HomeKit.", accessory.displayName);
-        this.removeAccessoryFromHomeKit(accessory);
+        isolateAccessoryChange({ act: "remove", change: () => this.removeAccessoryFromHomeKit(accessory), log: this.log, name: accessory.displayName });
       }
 
       // A controller disabled in HomeKit serves nothing, so it holds no console session either. The sweep above needed the live client to know which accessories are
@@ -838,10 +842,10 @@ export class ProtectNvr {
     // Configure any NVR-specific settings.
     this.configureNvr();
 
-    /* Initialize MQTT before constructing the accessory owners. Their constructor-time MQTT subscriptions (system information, and liveviews on its initial reconcile)
-     * bind through nvr.mqtt, so the client must exist first or those subscriptions would silently no-op against a not-yet-created client and never be retried. The
-     * client binds to the NVR's terminal shutdown signal, so it is an AsyncDisposable whose connection ends on plugin shutdown rather than leaking past it. The
-     * resolution runs post-connect, where this.ufp is safe to read for the controller scope it resolves at.
+    /* Initialize MQTT before building the accessory owners. The MQTT subscriptions they make as they are configured (system information, and liveviews on its initial
+     * reconcile) bind through nvr.mqtt, so the client must exist first or those subscriptions would silently no-op against a not-yet-created client and never be
+     * retried. The client binds to the NVR's terminal shutdown signal, so it is an AsyncDisposable whose connection ends on plugin shutdown rather than leaking past it.
+     * The resolution runs post-connect, where this.ufp is safe to read for the controller scope it resolves at.
      *
      * The library resolves both settings in one place, applying the rule that a configured option answers in every state it can be in: an option the user turned
      * off, or enabled without giving it a value, is the user saying MQTT is off for this controller, the controller's own configuration properties answer only
@@ -852,10 +856,10 @@ export class ProtectNvr {
     this.mqtt ??= mqttSettings && createMqttClient({ ...mqttSettings, log: this.log }, { signal: this.signal });
 
     // Initialize our liveviews.
-    this.liveviews = new ProtectLiveviews(this);
+    this.liveviews = configured(new ProtectLiveviews(this));
 
     // Initialize our NVR system information.
-    this.systemInfo = new ProtectNvrSystemInfo(this);
+    this.systemInfo = configured(new ProtectNvrSystemInfo(this));
 
     // Initialize our playlist service, if enabled.
     if(this.hasFeature("Nvr.Service.Playlist")) {
@@ -879,7 +883,7 @@ export class ProtectNvr {
 
     // Perform the initial device population and spawn the observe loops that keep us in sync. Membership is an observe over the content-memoized adopted-id selectors,
     // controller health an observe over the connection monitor, and the controller-scoped accessories (system information, liveviews) each observe their own slice of the
-    // unifi-protect projection from their own constructors - the subject owns its reactivity, the same model the per-device leaves use. Orphan cleanup does not run
+    // unifi-protect projection from their own configure passes - the subject owns its reactivity, the same model the per-device leaves use. Orphan cleanup does not run
     // here: the stability sweep owns it, so a cached accessory is removed only once the controller has been good for the stability window (immediately at startup for a
     // controller already up past it, via the uptime backdate).
     this.startDeviceObservers();
@@ -967,14 +971,18 @@ export class ProtectNvr {
 
     const { toAdd, toRemove } = membershipDelta(adoptedIds, this.devices(category).map(device => device.protectId));
 
-    // Add any adopted id we have not yet configured, resolving its live config record from the projection.
+    /* Add any adopted id we have not yet configured, resolving its live config record from the projection. Each add runs through the shared isolation, so one device's
+     * fault costs its siblings nothing: a throw would otherwise unwind the whole pass, out of login() for the startup seed, through superviseLoop's terminal catch for an
+     * observer pass, which ends that category's adds and removals until a restart, and out of the stability sweep's bare timer. A device whose add failed is still
+     * outside the configured set, so the next pass over its category retries it.
+     */
     for(const id of toAdd) {
 
       const config = this.deviceConfig(category, id);
 
       if(config) {
 
-        this.addHomeKitDevice(config);
+        isolateAccessoryChange({ act: "add", change: () => this.addHomeKitDevice(config), log: this.log, name: describeDevice(config) });
       }
     }
 
@@ -1141,9 +1149,9 @@ export class ProtectNvr {
 
   /* Construct a doorbell capability for a camera that the controller reports as a doorbell. Constructing a device-family object is graph-assembly knowledge, which lives
    * at the composition root - the camera keeps the entire lifecycle DECISION (it observes the flag and decides WHEN to attach), and only the new lands here. This method
-   * holds zero policy: one new, on request, by the decision-owner. Routing construction upward rides the codebase rule that device-layer objects reach the NVR only
-   * through inherited fields, never value-imports - so the camera calling this DURING its own construction forms no module import edge, and the device layer is
-   * structurally cycle-proof. It is safe to call mid-construction because the method has no dependence on NVR state being mutated at that time.
+   * holds zero policy: one new, on request, by the decision-owner, which configures what it receives. Routing construction upward follows the codebase rule that
+   * device-layer objects reach the NVR only through inherited fields, never value-imports - so the camera calling this DURING its own setup forms no module import edge,
+   * and the device layer is structurally cycle-proof. It is safe to call mid-setup because the method has no dependence on NVR state being mutated at that time.
    */
   public createDoorbellCapability(camera: ProtectCamera, device: Camera, signal: AbortSignal): DoorbellCapability {
 
@@ -1167,7 +1175,7 @@ export class ProtectNvr {
   }
 
   // Construct a streaming capability for a camera. The same graph-assembly reasoning as createDoorbellCapability: the camera keeps the entire lifecycle decision (it
-  // acquires the capability on its construct pass and drives every reconcile from its own observers), and only the one new lands here, holding no policy. It takes no
+  // acquires the capability when it is configured and drives every reconcile from its own observers), and only the one new lands here, holding no policy. It takes no
   // projection handle because the capability reads the camera's own live projection through its host.
   public createStreamingCapability(camera: ProtectCamera, signal: AbortSignal): StreamingCapability {
 
@@ -1188,9 +1196,11 @@ export class ProtectNvr {
     }
   }
 
-  // Construct the HomeKit device for a freshly-adopted id in one category, wiring its live unifi-protect projection into the accessory. The projection-acquisition and
-  // construction policy lives here at the composition root, which knows the concrete type at the point of adoption; both come off the category's descriptor row. The
-  // projection handle is undefined only when the record has not yet reduced, in which case there is nothing to adopt yet, so we bail without configuring the accessory.
+  // Construct and configure the HomeKit device for a freshly-adopted id in one category, wiring its live unifi-protect projection into the accessory. The
+  // projection-acquisition and construction policy lives here at the composition root, which knows the concrete type at the point of adoption; both come off the
+  // category's descriptor row. The projection handle is undefined only when the record has not yet reduced, in which case there is nothing to adopt yet, so we bail
+  // without configuring the accessory. The device is recorded only once configured() returns, so the map holds configured devices alone and one whose setup threw is
+  // released rather than recorded.
   #adoptDevice<K extends DeviceCollectionKey>(key: K, id: string, accessory: ProtectAccessory): Nullable<ProtectDeviceTypes[K]> {
 
     const descriptor = this.deviceDescriptors[key];
@@ -1201,7 +1211,7 @@ export class ProtectNvr {
       return null;
     }
 
-    const device = descriptor.construct(accessory, projection);
+    const device = configured(descriptor.construct(accessory, projection));
 
     this.configuredDevices.set(accessory.UUID, device);
 

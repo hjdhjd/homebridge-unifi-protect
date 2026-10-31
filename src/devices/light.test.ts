@@ -33,6 +33,7 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "./device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 
 // The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
@@ -73,7 +74,7 @@ function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {},
   // The projection is named (not cast inline) so the MQTT SET-body tests read its updateCalls / set its updateRejection on the SAME instance the light's onSet
   // write-through reaches; the lone cast at construction is confined to the new ProtectLight(...) call.
   const projection = new TestLightProjection(lightConfig.id, store);
-  const light = new ProtectLight(nvr as unknown as ProtectNvr, accessory, projection as unknown as Light);
+  const light = configured(new ProtectLight(nvr as unknown as ProtectNvr, accessory, projection as unknown as Light));
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast (either of which the house lint preset forbids in opposite directions), and fails loudly if the opt-in ever stops installing the double.

@@ -25,6 +25,7 @@ import { ProtectCamera } from "../devices/cameras/camera.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import assert from "node:assert/strict";
 import { classifyTeardownFailure } from "./stream-ffmpeg-process.ts";
+import { configured } from "../devices/device-base.ts";
 import { makeTestCameraHost } from "./testing.helpers.ts";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 import { settle } from "homebridge-plugin-utils/testing";
@@ -116,8 +117,8 @@ describe("liveAudioFilterArgs - the live view's -filter:a at the requested rate"
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { controller, nvr } = makeTestNvr({ store, userOptions });
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Porch", cameraConfig.mac),
-      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+    const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Porch", cameraConfig.mac),
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
     controllers.push(controller);
     await settle();

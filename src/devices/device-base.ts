@@ -81,6 +81,16 @@ export abstract class ProtectBase {
     this.timers = new TimerRegistry({ clock: nvr.platform.clock, signal: this.signal });
   }
 
+  // Stand this owner's HomeKit surface up: the attach-once moment, run through configured() by whatever built the owner, straight after construction. It is deliberately
+  // NOT re-runnable, so it is the home for work that registers something exactly once - spawning observers, registering MQTT handlers, standing up a service that must
+  // exist once. Keeping that work out of the constructor is what lets a setup that throws part way be released, since a constructor that throws leaves no instance whose
+  // cleanup() could end what it started. An owner with no attach-once work leaves this default alone, and a capability whose whole body is convergence overrides
+  // reconcile() instead.
+  public configure(): void {
+
+    // No-op by default; an owner with nothing to register once has nothing to stand up here.
+  }
+
   // Tear this owner down. Aborting the owner controller unwinds every observe loop and MQTT registration bound to the composed signal and drains the timer registry, so
   // teardown releases exactly this owner's state and nothing another owner holds. An owner that also holds owned children or latched state of its own overrides this and
   // calls super.
@@ -325,4 +335,24 @@ export abstract class ProtectBase {
 
     this.platform.clock.schedule(reflect, PROTECT_HOMEKIT_REFLECT_DELAY);
   }
+}
+
+/* Configure a freshly built owner and hand it back, the one way every builder takes an owner into service. A setup that throws part way has already started observers,
+ * MQTT handlers, timers or a camera controller bound to the owner's lifetime, and the builder never receives the instance to end them, so the owner is released through
+ * its own cleanup() before the error leaves here unchanged. That release is what keeps a later attempt on the same accessory from standing a second live owner beside
+ * the one that failed.
+ */
+export function configured<T extends ProtectBase>(owner: T): T {
+
+  try {
+
+    owner.configure();
+  } catch(error) {
+
+    owner.cleanup();
+
+    throw error;
+  }
+
+  return owner;
 }

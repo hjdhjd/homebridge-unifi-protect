@@ -38,6 +38,7 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // Confine the lone partial-config cast here, mirroring camera-reactions.test.ts: pushCameraPatch's patch is typed as a Partial of the full wire record, whose nested
@@ -75,7 +76,7 @@ async function buildCamera(options: { featureFlags?: Partial<ProtectCameraConfig
   const { clock, controller, factory, logEntries, nvr } = makeTestNvr({ store, userOptions: options.userOptions });
   const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
   const projection = new TestCameraProjection(cameraConfig.id, store);
-  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+  const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
   // Settle the floating configure IIFE and the observe loops' lazy registration before any drive so the camera is fully wired when the onSet is triggered.
   await settle();

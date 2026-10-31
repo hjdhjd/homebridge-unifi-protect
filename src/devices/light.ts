@@ -4,23 +4,11 @@
  */
 import type { CharacteristicValue } from "homebridge";
 import type { Light } from "unifi-protect";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
-import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { mqttTopics } from "../mqtt.ts";
 
 export class ProtectLight extends ProtectDevice<Light> {
-
-  // Create an instance.
-  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Light) {
-
-    super(nvr, accessory, device);
-
-    this.configureHints();
-    this.configureDevice();
-    this.spawnObservers();
-  }
 
   // The light's power state, read non-throwing through the record. An absent record (a light lingering in the removal grace) reports off rather than throwing.
   private get isLightOn(): boolean {
@@ -36,7 +24,7 @@ export class ProtectLight extends ProtectDevice<Light> {
   }
 
   // Initialize and configure the light accessory for HomeKit.
-  private configureDevice(): boolean {
+  protected override configureDevice(): boolean {
 
     // Reset the persisted context to a clean slate, discarding any stray keys left over from a prior configuration of this same accessory, while preserving the user's
     // motion-detection choice across the restart - a persisted detectMotion of false must survive rather than being wiped back to the default.
@@ -155,8 +143,8 @@ export class ProtectLight extends ProtectDevice<Light> {
       this.accessory.getService(this.hap.Service.Lightbulb)?.setCharacteristic(this.hap.Characteristic.Brightness, brightness);
     });
 
-    // State the light's held state as it is built, since its construction publishes nothing else, and again at the start of every later broker session, through the
-    // methods its observers publish with.
+    // State the light's held state as it is set up, since its setup publishes nothing else, and again at the start of every later broker session, through the methods
+    // its observers publish with.
     const restate = (): void => {
 
       this.publishLightState();

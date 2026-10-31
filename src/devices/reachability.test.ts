@@ -7,10 +7,10 @@
  * on-disk ".ts" sibling under the project's "node --strip-types" test runner (the shared tsconfig's rewriteRelativeImportExtensions rewrites it back to ".js" on
  * emit), and the lone non-erasable construct - the ProtectReservedNames string identifiers - is an erasable "as const" object.
  *
- * The abstract base is exercised through the smallest possible concrete leaf: ProtectDevice declares no abstract members, so the subclass adds nothing but a window
- * onto the protected composed signal, and every method under test is the base's own. It is constructed against the minimal mocks isReachable / refreshReachability /
- * cleanup actually read, and the rig hands production the runtime's HAP, whose classes the accessory's own characteristics come from, so the production fan-out
- * reaches the very characteristics the test materialized.
+ * The abstract base is exercised through the smallest possible concrete leaf: beside the empty configureDevice ProtectDevice requires, which never runs because the
+ * leaf is built without being configured, the subclass adds nothing but a window onto the protected composed signal, and every method under test is the base's own.
+ * It is constructed against the minimal mocks isReachable / refreshReachability / cleanup actually read, and the rig hands production the runtime's HAP, whose classes
+ * the accessory's own characteristics come from, so the production fan-out reaches the very characteristics the test materialized.
  */
 import { Characteristic, Service, hap, makeTestAccessory, writesTo } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
@@ -23,10 +23,15 @@ import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import { composeSignals } from "homebridge-plugin-utils";
 
-// The smallest concrete leaf of the abstract base. ProtectDevice declares no abstract members, so a near-empty subclass is a faithful, fully real instance of the
-// production class - isReachable, refreshReachability, and cleanup are all the base's own, inherited unchanged. The lone addition exposes the protected composed
-// signal so the teardown assertion can observe exactly what cleanup() aborts.
+// The smallest concrete leaf of the abstract base. Its configureDevice is the empty body ProtectDevice requires and never runs, so a near-empty subclass is a
+// faithful, fully real instance of the production class - isReachable, refreshReachability, and cleanup are all the base's own, inherited unchanged. The one other
+// addition exposes the protected composed signal so the teardown assertion can observe exactly what cleanup() aborts.
 class TestProtectDevice extends ProtectDevice {
+
+  protected override configureDevice(): boolean {
+
+    return true;
+  }
 
   public get composedSignal(): AbortSignal {
 

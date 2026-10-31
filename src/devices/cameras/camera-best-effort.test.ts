@@ -32,6 +32,7 @@ import { ProtectReservedNames } from "../../types.ts";
 import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // The construction handle a lux test holds: the camera's accessory (the LightSensor lives here), the NVR double (its mqtt double carries the poll's publish, its
@@ -81,7 +82,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
       const projection = new TestCameraProjection(cameraConfig.id, store);
 
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+      const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
       // Settle the floating configure IIFE (which awaits the init getLux) and the observe loops' lazy registration before any drive.
       await settle();
@@ -133,7 +134,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       const { controller, nvr } = makeTestNvr({ store });
       const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
       const projection = new TestCameraProjection(cameraConfig.id, store);
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+      const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
       await settle();
 
@@ -159,7 +160,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       projection.luxReading = 0;
 
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+      const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
       await settle();
 
@@ -190,7 +191,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
       const projection = new TestCameraProjection(cameraConfig.id, store);
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+      const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
       await settle();
 
@@ -223,7 +224,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       projection.luxReading = 42;
 
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+      const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
       await settle();
 
@@ -264,7 +265,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       projection.luxReading = 42;
 
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+      const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
       await settle();
 
@@ -306,7 +307,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       projection.luxReading = 100;
 
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+      const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
       await settle();
 
@@ -368,8 +369,8 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       const projection = new TestCameraProjection(cameraConfig.id, store);
 
       harnessController = controller;
-      doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
-        projection as unknown as Camera);
+      doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
+        projection as unknown as Camera));
 
       await settle();
 
@@ -392,7 +393,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
     test("not dark: the On set issues no pulse and reflects off after the 50ms window", async () => {
 
-      // The dark-guard (configureFlashlight in camera-package.ts): isDark false short-circuits with no pulse and a deferred reflect of On false.
+      // The dark-guard (#configureFlashlight in camera-package.ts): isDark false short-circuits with no pulse and a deferred reflect of On false.
       const { clock, projection } = await buildFlashlightFamily({ isDark: false });
 
       const onChar = flashlightOn();
@@ -411,7 +412,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
     test("dark: the On set pulses, lights On, and the 20-second heartbeat re-pulses", async () => {
 
-      // The happy path (configureFlashlight in camera-package.ts): isDark true pulses via the retry, reflects On true, and arms the 20-second heartbeat that re-pulses.
+      // The happy path (#configureFlashlight in camera-package.ts): isDark true pulses via the retry, reflects On true, and arms the 20-second heartbeat that re-pulses.
       const { clock, projection } = await buildFlashlightFamily({ isDark: true });
 
       const onChar = flashlightOn();
@@ -422,10 +423,10 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       assert.equal(projection.flashlightCalls.length, 1, "the dark On set issues exactly one flashlight pulse");
       assert.ok(projection.flashlightCalls[0]?.opts?.signal, "the pulse threads the retry's abort signal");
 
-      // The reflection: flashlightState is true, read through the On onGet (configureFlashlight in camera-package.ts) which is robust to HAP's stored write.
+      // The reflection: flashlightState is true, read through the On onGet (#configureFlashlight in camera-package.ts) which is robust to HAP's stored write.
       assert.equal(await triggerGet(onChar), true, "a successful pulse lights the flashlight On");
 
-      // The 20-second heartbeat (configureFlashlight in camera-package.ts) re-pulses; settle() drains the async () => void activateFlashlight() the advance fired.
+      // The 20-second heartbeat (#configureFlashlight in camera-package.ts) re-pulses; settle() drains the async () => void activateFlashlight() the advance fired.
       clock.advance(20000);
 
       await settle();
@@ -435,7 +436,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
     test("the Off set clears the heartbeat and reflects off without issuing a command", async () => {
 
-      // The off path (configureFlashlight in camera-package.ts): value false clears the timer, sets flashlightState false, and returns without any pulse.
+      // The off path (#configureFlashlight in camera-package.ts): value false clears the timer, sets flashlightState false, and returns without any pulse.
       const { projection } = await buildFlashlightFamily({ isDark: true });
 
       const onChar = flashlightOn();
@@ -543,8 +544,8 @@ describe("the camera's ambient-light reading restated per broker session", () =>
       projection.luxReading = options.reading;
     }
 
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Test Camera", "74ACB9000001"),
-      projection as unknown as Camera);
+    const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Test Camera", "74ACB9000001"),
+      projection as unknown as Camera));
 
     try {
 
@@ -606,7 +607,7 @@ describe("the camera's ambient-light reading restated per broker session", () =>
       projection.luxReading = reading;
     }
 
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+    const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
     const capability = (camera as unknown as { ambientLight: { reconcile: () => Promise<void> } }).ambientLight;
 
     return {

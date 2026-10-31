@@ -37,6 +37,7 @@ import type { ProtectNvr } from "./nvr.ts";
 import { ProtectNvrSystemInfo } from "./nvr-systeminfo.ts";
 import type { TestProtectNvr } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../devices/device-base.ts";
 
 // The deterministic accessory UUID the owner composes: the owner seeds HAP's generator with nvr.ufp.mac + ".NVRSystemInfo" against the makeNvrConfig mac, so the
 // UUID is fixed. A literal seed rather than a derivation so a drift in the identity composition breaks loudly.
@@ -74,7 +75,7 @@ function buildSystemInfo(configOptions: Parameters<typeof makeNvrConfig>[0] = {}
     restoreAccessories(nvr, [new PlatformAccessory("Cached System Info", SYSTEMINFO_UUID)]);
   }
 
-  const owner = new ProtectNvrSystemInfo(nvr as unknown as ProtectNvr);
+  const owner = configured(new ProtectNvrSystemInfo(nvr as unknown as ProtectNvr));
   const accessory = nvr.platform.accessories.find((candidate) => candidate.UUID === SYSTEMINFO_UUID);
 
   return { accessory, api, controller, logEntries, mqtt, nvr, owner, store };

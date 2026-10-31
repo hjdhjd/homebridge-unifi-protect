@@ -4,26 +4,14 @@
  */
 import type { CharacteristicValue, Service } from "homebridge";
 import type { Nullable } from "homebridge-plugin-utils";
-import type { ProtectAccessory } from "../types.ts";
 import type { ProtectConfigurePass } from "./device.ts";
 import { ProtectDevice } from "./device.ts";
-import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { Viewer } from "unifi-protect";
 import { membershipDelta } from "homebridge-plugin-utils";
 import { mqttTopics } from "../mqtt.ts";
 import { selectLiveviews } from "unifi-protect";
 
 export class ProtectViewer extends ProtectDevice<Viewer> {
-
-  // Create an instance.
-  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Viewer) {
-
-    super(nvr, accessory, device);
-
-    this.configureHints();
-    this.configureDevice();
-    this.spawnObservers();
-  }
 
   // The viewer's currently-active liveview id, read non-throwing through the record. An absent record (a viewer lingering in the removal grace) reports no active
   // liveview rather than throwing; the switch state, the onGet, and the MQTT getValue all read this single source.
@@ -33,7 +21,7 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
   }
 
   // Initialize and configure the viewer accessory for HomeKit.
-  private configureDevice(): boolean {
+  protected override configureDevice(): boolean {
 
     // Reset the persisted context to a clean slate and reseed identity. Homebridge persists this context across restarts, so a viewer recovered from an earlier plugin
     // version, or one whose UUID HomeKit reused for a different device, can still carry stale keys; resetting keeps key presence a reliable signal for this accessory's
@@ -235,8 +223,8 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
       this.log.info("Liveview set via MQTT to %s.", liveview.name);
     });
 
-    // State the active liveview as the viewer is built, since its construction publishes nothing else, and again at the start of every later broker session, through
-    // the method its observers publish with.
+    // State the active liveview as the viewer is set up, since its setup publishes nothing else, and again at the start of every later broker session, through the
+    // method its observers publish with.
     this.publishLiveviewState();
     this.restateOnConnect(() => this.publishLiveviewState());
 

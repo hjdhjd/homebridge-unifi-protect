@@ -37,6 +37,7 @@ import { ProtectSecuritySystem } from "./security-system.ts";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../devices/device-base.ts";
 import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
 
 // The controller MAC the makeNvrConfig record carries, and the MQTT topic scope (the mqttId is the controller MAC for a ProtectBase owner). A literal so a drift in the
@@ -119,7 +120,7 @@ function buildSecuritySystem(
 
   harnessOptions.seed?.(nvr);
 
-  const owner = new ProtectSecuritySystem(nvr as unknown as ProtectNvr, accessory);
+  const owner = configured(new ProtectSecuritySystem(nvr as unknown as ProtectNvr, accessory));
 
   return { accessory, controller, logEntries, mqtt, nvr, owner, store };
 }

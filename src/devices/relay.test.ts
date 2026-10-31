@@ -28,6 +28,7 @@ import { ProtectReservedNames } from "../types.ts";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
 import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
 import assert from "node:assert/strict";
+import { configured } from "./device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
@@ -68,7 +69,7 @@ function buildRelay(configOptions: Parameters<typeof makeRelayConfig>[0] = {}, h
   // The projection is named (not cast inline) so the toggle / status-LED tests read its toggleCalls / updateCalls - and set its rejection levers - on the SAME instance
   // the relay's onSet write-through reaches; the lone cast at construction is confined to the new ProtectRelay(...) call.
   const projection = new TestRelayProjection(relayConfig.id, store);
-  const relay = new ProtectRelay(nvr as unknown as ProtectNvr, accessory, projection as unknown as Relay);
+  const relay = configured(new ProtectRelay(nvr as unknown as ProtectNvr, accessory, projection as unknown as Relay));
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast, and fails loudly if the opt-in ever stops installing the double.

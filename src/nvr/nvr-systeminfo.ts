@@ -10,6 +10,7 @@ import { ProtectBase } from "../devices/device-base.ts";
 import type { ProtectConfigurePass } from "../devices/device.ts";
 import type { ProtectNvr } from "./nvr.ts";
 import { deviceDisplayName } from "../devices/device-descriptor.ts";
+import { isolateAccessoryChange } from "./nvr-accessory-change.ts";
 import { mqttTopics } from "../mqtt.ts";
 import { selectNvr } from "unifi-protect";
 
@@ -17,8 +18,8 @@ import { selectNvr } from "unifi-protect";
  * from the controller's MAC address (the MAC plus ".NVRSystemInfo") rather than receiving one from device discovery, and its lifetime is the whole controller
  * connection: nothing invokes the cleanup() it inherits from the spine, because the accessory lives and dies with the controller and the controller's own shutdown
  * ends this owner's composed lifetime. That inherited method is reachable in principle, so a caller that invoked it would sever exactly this owner's observer and MQTT
- * registrations while the controller kept running - the accepted price of giving every owner the same lifecycle machinery. After construction, its only source of
- * reactivity is the systemInfo observer set up below, which refreshes the temperature sensor whenever the controller's system information changes. Turning off the
+ * registrations while the controller kept running - the accepted price of giving every owner the same lifecycle machinery. After its configure pass, its only source
+ * of reactivity is the systemInfo observer set up there, which refreshes the temperature sensor whenever the controller's system information changes. Turning off the
  * feature option removes the accessory outright rather than merely hiding it.
  */
 export class ProtectNvrSystemInfo extends ProtectBase {
@@ -26,23 +27,27 @@ export class ProtectNvrSystemInfo extends ProtectBase {
   private accessory: Nullable<ProtectAccessory> | undefined;
   private isConfigured: boolean;
 
-  // Configure our NVR sensor capability.
+  // Create an instance.
   constructor(nvr: ProtectNvr) {
 
     // Let the base class get us set up.
     super(nvr);
 
-    // Initialize the class. The constructor owns the initial configuration; subsequent refreshes are driven by this owner's own narrow observer below.
+    // Initialize the class. configure() below owns the initial configuration; subsequent refreshes are driven by this owner's own narrow observer.
     this.accessory = null;
     this.isConfigured = false;
+  }
+
+  // Configure our NVR sensor capability.
+  public override configure(): void {
 
     this.configureAccessory();
     this.configureMqtt();
 
     // Subject owns its reactivity: observe the controller record's systemInfo slice and refresh the temperature sensor on each change. The narrow selector wakes only on
-    // a systemInfo change - never on the lastSeen/storage churn the whole NVR record carries - and the store yields only on change, so the constructor's initial pass
-    // above stands on its own and this loop handles only subsequent updates. It binds to the controller lifetime (ProtectBase.observeSignal) and re-reads through
-    // this.nvr.ufp rather than trusting the yielded slice.
+    // a systemInfo change - never on the lastSeen/storage churn the whole NVR record carries - and the store yields only on change, so the initial pass above stands
+    // on its own and this loop handles only subsequent updates. It binds to the controller lifetime (ProtectBase.observeSignal) and re-reads through this.nvr.ufp
+    // rather than trusting the yielded slice.
     this.observeState({ key: "nvr.systemInfo", selector: state => selectNvr(state)?.systemInfo, title: "system information" },
       () => this.updateDevice({ initialized: true }));
   }
@@ -67,15 +72,20 @@ export class ProtectNvrSystemInfo extends ProtectBase {
       }
     }
 
-    // If we've disabled NVR system information, remove the accessory if it exists.
+    /* If we've disabled NVR system information, remove the accessory if it exists, and otherwise add it. Each branch runs its change to HomeKit through the shared
+     * isolation, so a removal or an add that throws is said once and the controller's login() goes on to its devices and its liveviews rather than ending there.
+     * Nothing constructs this owner again while the controller runs, so a failed change is retried at the next restart.
+     */
     if(!this.nvr.hasFeature("NVR.SystemInfo")) {
 
       if(this.accessory) {
 
+        const accessory = this.accessory;
+
         this.log.info("Removing UniFi Protect controller system information sensors.");
 
         // Remove the accessory through the controller root's shared removal tail, which drops any save still pending for it, takes it off the bridge, and forgets it.
-        this.nvr.removeAccessoryFromHomeKit(this.accessory);
+        isolateAccessoryChange({ act: "remove", change: () => this.nvr.removeAccessoryFromHomeKit(accessory), log: this.log, name: "the system information sensors" });
       }
 
       this.accessory = null;
@@ -84,15 +94,23 @@ export class ProtectNvrSystemInfo extends ProtectBase {
       return;
     }
 
+    isolateAccessoryChange({ act: "add", change: () => this.#addAccessory(uuid), log: this.log, name: "the system information sensors" });
+  }
+
+  // Find or create the system information accessory, registering one it creates, and configure the sensors on it. The accessory is held only once its registration
+  // returns, so a registration that throws leaves none held, and this owner's observer refreshes no sensor on an accessory HomeKit never took.
+  #addAccessory(uuid: string): void {
+
     // Create the accessory if it doesn't already exist.
     if(!this.accessory) {
 
       // We will use the NVR MAC address + ".NVRSystemInfo" to create our UUID. That should provide the guaranteed uniqueness we need.
-      this.accessory = new this.api.platformAccessory<ProtectAccessoryContext>(deviceDisplayName(this.nvr.ufp), uuid);
+      const accessory = new this.api.platformAccessory<ProtectAccessoryContext>(deviceDisplayName(this.nvr.ufp), uuid);
 
       // Register this accessory with homebridge and add it to the platform accessory array so we can track it.
-      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
-      this.platform.accessories.push(this.accessory);
+      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      this.platform.accessories.push(accessory);
+      this.accessory = accessory;
     }
 
     // We have the system information accessory, now let's configure it. We clean out the context object in case it's been polluted somehow, write our bookkeeping
@@ -118,8 +136,8 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     this.isConfigured = true;
   }
 
-  // Update accessory services and characteristics. Private: every caller is this class - the constructor's initial pass, which binds the handlers, and this owner's
-  // own systemInfo observer, a later pass that refreshes the characteristic on each change.
+  // Update accessory services and characteristics. Private: every caller is this class - configure()'s initial pass, which binds the handlers, and this owner's own
+  // systemInfo observer, a later pass that refreshes the characteristic on each change.
   private updateDevice({ initialized }: Required<Pick<ProtectConfigurePass, "initialized">>): string[] {
 
     const enabledSensors: string[] = [];

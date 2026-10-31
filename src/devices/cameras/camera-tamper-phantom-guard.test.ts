@@ -25,6 +25,7 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { settle } from "homebridge-plugin-utils/testing";
 
@@ -33,7 +34,7 @@ import { settle } from "homebridge-plugin-utils/testing";
 // getter.
 function construct(nvr: TestProtectNvr, accessory: TestProtectAccessory, projection: TestCameraProjection): ProtectCamera {
 
-  return new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+  return configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 }
 
 describe("the StatusTampered phantom guard - camera availability and tamper-event push sites", () => {

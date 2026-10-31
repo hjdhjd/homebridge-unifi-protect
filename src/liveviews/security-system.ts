@@ -13,7 +13,7 @@ import { mqttTopics } from "../mqtt.ts";
 /* The security system accessory synthesized from the controller's Protect-* liveviews. It is the one controller-scoped owner whose lifetime is shorter than the
  * controller connection: its accessory comes and goes with those liveviews, so the inherited composed lifetime is exactly what its MQTT registrations need. Deleting the
  * last Protect-* liveview removes the accessory and calls the inherited cleanup(), which unwinds exactly this owner's securitysystem get/set handlers so they stop
- * commanding the cameras; a later re-add builds a fresh instance whose constructor subscribes anew.
+ * commanding the cameras; a later re-add builds a fresh instance whose configure() subscribes anew.
  */
 export class ProtectSecuritySystem extends ProtectBase {
 
@@ -27,6 +27,10 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     this.accessory = accessory;
     this.isAlarmTriggered = false;
+  }
+
+  // Set the security system up for HomeKit.
+  public override configure(): void {
 
     this.configureDevice();
   }
@@ -162,7 +166,7 @@ export class ProtectSecuritySystem extends ProtectBase {
       this.setSecurityState(targetState);
     });
 
-    // State the security system's current state as it is built, since its construction publishes nothing else, and again at the start of every later broker session.
+    // State the security system's current state as it is set up, since its setup publishes nothing else, and again at the start of every later broker session.
     // The liveviews owner can build a security system while a session is held, when a matching liveview appears, so the statement here is what that session hears.
     const restate = (): void => this.publish(mqttTopics.securitysystem.topic, this.currentSecuritySystemState);
 

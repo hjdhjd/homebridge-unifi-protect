@@ -4,9 +4,7 @@
  */
 import type { CharacteristicValue } from "homebridge";
 import { PROTECT_RELAY_COMMAND_TIMEOUT } from "../settings.ts";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
-import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { Relay } from "unifi-protect";
 import { mqttTopics } from "../mqtt.ts";
@@ -19,16 +17,6 @@ export class ProtectRelay extends ProtectDevice<Relay> {
   // intent (or a bounded safety timer fires), so a lost broadcast can never wedge the switch. This is transient runtime state, deliberately NOT persisted to
   // accessory.context.
   readonly #pendingDesired = new Map<number, boolean>();
-
-  // Create an instance.
-  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Relay) {
-
-    super(nvr, accessory, device);
-
-    this.configureHints();
-    this.configureDevice();
-    this.spawnObservers();
-  }
 
   // The current on/off state of one relay output, read non-throwing through the record. An absent record (a relay lingering in the removal grace) reports off rather than
   // throwing, and an unknown output id likewise reports off.
@@ -57,7 +45,7 @@ export class ProtectRelay extends ProtectDevice<Relay> {
   }
 
   // Initialize and configure the relay accessory for HomeKit.
-  private configureDevice(): boolean {
+  protected override configureDevice(): boolean {
 
     // Reset the persisted context to a clean slate and reseed identity. This accessory may be the object Homebridge restored from its persisted accessory cache, which
     // can still carry context keys left behind by an earlier plugin version or a different accessory type sharing this device's cached identity; the relay persists no
@@ -199,8 +187,8 @@ export class ProtectRelay extends ProtectDevice<Relay> {
       });
     }
 
-    // State each output's held state as the relay is built, since its construction publishes nothing else, and again at the start of every later broker session,
-    // through the method its observers publish with.
+    // State each output's held state as the relay is set up, since its setup publishes nothing else, and again at the start of every later broker session, through the
+    // method its observers publish with.
     const restate = (): void => {
 
       for(const output of this.ufp.outputs) {

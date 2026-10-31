@@ -150,10 +150,10 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   // supplied by each family's class header, and the NVR root injects the projection itself at adoption, where it knows the concrete type. The parameter defaults to the
   // full category union, so a bare ProtectDevice reference (the NVR's deviceEndpoints iterator, a test stand-in) reads the whole projection union.
   protected readonly device: D;
-  // The per-device resolved feature-hint bag, declared with definite assignment rather than seeded: every device leaf's constructor calls configureHints() synchronously
-  // right after super(), before spawnObservers() or any HomeKit callback can read this.hints, so no consumer ever observes the bag before it holds every hint. That
-  // template contract is what makes the definite-assignment declaration sound, and it is the reason the derivation can build the bag as one literal below rather than
-  // filling a pre-seeded object field by field.
+  // The per-device resolved feature-hint bag, declared with definite assignment rather than seeded: configure() calls configureHints() first, before configureDevice(),
+  // spawnObservers() or any HomeKit callback can read this.hints, so no consumer ever observes the bag before it holds every hint. That template contract is what makes
+  // the definite-assignment declaration sound, and it is the reason the derivation can build the bag as one literal below rather than filling a pre-seeded object field
+  // by field.
   public hints!: ProtectHints;
   // The parts held to the name the plugin owns for this device, keyed by service type and subtype (see holdPartName). The registry assumes no subtype-less service is
   // acquired beside subtyped siblings of its kind, because HBPU makes room for one by detaching and re-adding those siblings, which clears the watch's listener from a
@@ -161,8 +161,8 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   private readonly ownedParts = new Map<string, OwnedPart>();
 
   // The constructor captures the accessory and the live projection handle. A device's lifetime is its accessory's: it supplies no parent signal, so the spine composes
-  // its per-accessory controller against nvr.signal and the accessory's observers, MQTT registrations, and timers all bind to the result. The hints bag is derived by the
-  // leaf's own configureHints() call, and device configuration is wired separately by the NVR root after construction.
+  // its per-accessory controller against nvr.signal and the accessory's observers, MQTT registrations, and timers all bind to the result. The hints bag, the device's
+  // configuration, and its observers are set up by configure() below, which the builder runs through configured() once construction returns.
   constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: D) {
 
     super(nvr);
@@ -170,6 +170,20 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     this.accessory = accessory;
     this.device = device;
   }
+
+  /* Set this device up for HomeKit, the template every family shares: the hints first, because every service acquisition reads them to decide whether the plugin owns
+   * the part's name, then the family's own configuration, then its observers. A family supplies configureDevice and extends spawnObservers; it never overrides this
+   * order.
+   */
+  public override configure(): void {
+
+    this.configureHints();
+    this.configureDevice();
+    this.spawnObservers();
+  }
+
+  // Configure the family's HomeKit services, characteristics, and MQTT interface on this device's accessory, the family's half of the configure() template above.
+  protected abstract configureDevice(): boolean;
 
   /* Read-through to the live STATE projection, narrowed to drop device identity (id/mac/modelKey): identity is immutable and flows through the dedicated non-throwing
    * accessors (protectId/modelKey/.id/.mac), never this throwing getter, so narrowing makes a this.ufp.<identity> dot-access a compile error rather than a latent throw
@@ -948,7 +962,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
   // The text a leaf adds to the name homeKitName derives from the record or the custom name, the one place a leaf decorates the name the plugin applies. The base adds
   // none, and the package camera adds its display suffix.
-  // eslint-disable-next-line @typescript-eslint/class-literal-property-style -- Overridden by a getter the construction chain reads; the base cannot be a readonly field.
+  // eslint-disable-next-line @typescript-eslint/class-literal-property-style -- Overridden by the package camera's getter; the base cannot be a readonly field.
   protected get homeKitNameSuffix(): string {
 
     return "";

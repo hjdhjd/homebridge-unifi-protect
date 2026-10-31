@@ -33,11 +33,12 @@ import { ProtectReservedNames } from "../../types.ts";
 import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 
 // Construct a real ProtectCamera, with the casts confined to this one boundary - the instance under test is the production class and its composed capability.
 function construct(nvr: TestProtectNvr, accessory: TestProtectAccessory, projection: TestCameraProjection): ProtectCamera {
 
-  return new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+  return configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 }
 
 describe("live-attach reclassification (suite C)", () => {

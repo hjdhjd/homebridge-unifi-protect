@@ -36,6 +36,7 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "./device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
@@ -65,7 +66,7 @@ function buildChime(configOptions: Parameters<typeof makeChimeConfig>[0] = {},
 
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Chime", chimeConfig.mac);
   const projection = new TestChimeProjection(chimeConfig.id, store);
-  const chime = new ProtectChime(nvr as unknown as ProtectNvr, accessory, projection as unknown as Chime);
+  const chime = configured(new ProtectChime(nvr as unknown as ProtectNvr, accessory, projection as unknown as Chime));
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast (either of which the house lint preset forbids in opposite directions), and fails loudly if the opt-in ever stops installing the double.

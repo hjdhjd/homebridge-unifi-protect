@@ -32,6 +32,7 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // The authorization warn the degraded arm logs, asserted verbatim so the user-facing guidance is pinned, not paraphrased.
@@ -87,7 +88,7 @@ async function buildCamera(options: { channels: ProtectCameraConfig["channels"];
   projection.updateRejection = options.updateRejection ?? null;
 
   const accessory = makeTestAccessory("RTSP Enable Camera", cameraConfig.mac);
-  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+  const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
   // Settle the floating configure IIFE and the observe loops' lazy registration before any assertion, so the enable write and any delegate construction complete.
   await settle();
@@ -476,8 +477,8 @@ describe("package camera: existence advertises, the RTSP flag gates only the dir
 
     controllers.push(controller);
 
-    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000003"),
-      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+    const doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000003"),
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
     await settle();
 

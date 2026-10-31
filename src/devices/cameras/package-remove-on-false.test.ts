@@ -35,6 +35,7 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 
 // The fixture identities, deliberately literal: the parent MAC and the package id the event timers key on.
@@ -65,8 +66,8 @@ async function makeFamily(options: { hasMic?: boolean; hasPackageCamera?: boolea
     featureFlags: { hasMic: options.hasMic ?? false, hasPackageCamera: options.hasPackageCamera ?? true, isDoorbell: true }, name: "Front Door" });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
   const { api, clock, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: options.userOptions });
-  const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", PARENT_MAC),
-    new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+  const doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", PARENT_MAC),
+    new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
   await settle();
 
@@ -260,8 +261,8 @@ describe("package camera remove-on-false (BC2)", () => {
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { api, clock, controller, logEntries, nvr } = makeTestNvr({ store });
     const { packageAccessory, parentAccessory } = makeTestAccessoryFamily({ nvr });
-    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, parentAccessory,
-      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+    const doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, parentAccessory,
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
     await settle();
 
@@ -298,8 +299,8 @@ describe("package camera remove-on-false (BC2)", () => {
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { clock, controller, logEntries, nvr } = makeTestNvr({ store });
     const { packageAccessory, parentAccessory } = makeTestAccessoryFamily({ nvr });
-    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, parentAccessory,
-      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+    const doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, parentAccessory,
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
     await settle();
 

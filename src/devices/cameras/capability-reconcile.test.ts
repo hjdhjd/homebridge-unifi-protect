@@ -40,6 +40,7 @@ import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { getEventListeners } from "node:events";
 import { smartDetectLabel } from "../../options.ts";
@@ -70,7 +71,7 @@ function buildTestNvr(options: Parameters<typeof makeTestNvr>[0]): ReturnType<ty
 // Construct a real ProtectCamera, with the casts confined to this one construction call - the instance under test is the production class and its real configure path.
 function construct(nvr: TestProtectNvr, accessory: TestProtectAccessory, projection: TestCameraProjection): ProtectCamera {
 
-  return new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+  return configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 }
 
 // The count of bare LightSensor services on the accessory - the check for "exactly one ambient light sensor", which proves the reconcile re-run never sprouted a

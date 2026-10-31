@@ -14,6 +14,7 @@ import { G2_PRO_CHANNELS } from "../../camera.fixtures.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { settle } from "homebridge-plugin-utils/testing";
 
@@ -23,8 +24,8 @@ async function constructCamera(userOptions: string[]): Promise<{ camera: Protect
   const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
   const { controller, nvr } = makeTestNvr({ store, userOptions });
-  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB900000A"),
-    new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+  const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB900000A"),
+    new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
   await settle();
 

@@ -26,6 +26,7 @@ import { computeStableSince, isStabilityWindowElapsed } from "./nvr-policy.ts";
 import { PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { TimerRegistry } from "homebridge-plugin-utils";
+import { isolateAccessoryChange } from "./nvr-accessory-change.ts";
 
 /**
  * The controller fact the root pushes into the gate. The uptime exists ONLY on the good arm: the controller projection is readable only once the client exists, and
@@ -214,24 +215,31 @@ export class RemovalStabilityGate {
       this.#log.info(reason);
     }
 
+    // Each removal runs through the shared isolation, so a fault on the way out of HomeKit costs this one accessory its removal and is said once. Inline, the removal
+    // runs inside the pass that asked for it, which a throw would unwind for every accessory behind this one.
     if(delayInterval <= 0) {
 
-      remove();
+      isolateAccessoryChange({ act: "remove", change: remove, log: this.#log, name: accessory.displayName });
 
       return;
     }
 
     this.#log.info("%s: Delaying device removal for at least %s second%s.", accessory.displayName, delayInterval, delayInterval > 1 ? "s" : "");
 
+    // The grace's removal runs from a timer the registry fires with no catch around it, so the isolation takes the timer's whole body, the re-check included: a throw
+    // from the re-check or from the removal would otherwise escape the timer and take Homebridge down rather than cost this accessory its removal.
     this.#timers.setTimeout(accessory.UUID, () => {
 
-      // The caller's predicate is what decides here: it re-reads live controller state, so a device that returned during the grace is not removed. Re-confirming
-      // stability alongside it is defense in depth - reaching this line with the clock dropped would mean a drain had failed to pair with the clock drop, which
-      // reset() makes a single act.
-      if(this.removalStable && stillGone()) {
+      isolateAccessoryChange({ act: "remove", change: () => {
 
-        remove();
-      }
+        // The caller's predicate is what decides here: it re-reads live controller state, so a device that returned during the grace is not removed. Re-confirming
+        // stability alongside it is defense in depth - reaching this line with the clock dropped would mean a drain had failed to pair with the clock drop, which
+        // reset() makes a single act.
+        if(this.removalStable && stillGone()) {
+
+          remove();
+        }
+      }, log: this.#log, name: accessory.displayName });
     }, delayInterval * 1000);
   }
 }

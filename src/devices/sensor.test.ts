@@ -57,6 +57,7 @@ import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import assert from "node:assert/strict";
+import { configured } from "./device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { getEventListeners } from "node:events";
 
@@ -122,7 +123,7 @@ function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {},
   }
 
   const projection = new TestSensorProjection(sensorConfig.id, store);
-  const sensor = new ProtectSensor(nvr as unknown as ProtectNvr, accessory, projection as unknown as Sensor);
+  const sensor = configured(new ProtectSensor(nvr as unknown as ProtectNvr, accessory, projection as unknown as Sensor));
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast (either of which the house lint preset forbids in opposite directions), and fails loudly if the opt-in ever stops installing the double.

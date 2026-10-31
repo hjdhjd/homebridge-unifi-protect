@@ -15,11 +15,11 @@ import { mqttTopics } from "../../mqtt.ts";
  * two read handlers, and its MQTT reading. The whole surface is capability-held - the last-known reading lives here and nothing outside this class touches it - which is
  * what makes the boundary clean enough to own: the host's only interest in it is the one availability push below.
  *
- * It implements reconcile() and not configure(): every line of its body is convergence. The gate re-decides the sensor's existence from live capability and user state,
- * the service is acquired get-or-create, and the handlers and the poll are RE-BOUND on every call rather than only on first creation. That re-bind is not redundant
- * work...re-binding an onGet replaces the single handler (handlers do not stack) and the registry's keyed setInterval replaces its timer, so a repeat call is a no-op
- * that costs one cheap controller read, and it is exactly what re-establishes the runtime wiring after a Homebridge restart, which restores the cached LightSensor
- * service but never its handlers or its poll.
+ * Its body is convergence, which reconcile() implements, and configure() holds the registration that must stand once, the MQTT restatement. The gate
+ * re-decides the sensor's existence from live capability and user state, the service is acquired get-or-create, and the handlers and the poll are RE-BOUND on every
+ * call rather than only on first creation. That re-bind is not redundant work...re-binding an onGet replaces the single handler (handlers do not stack) and the
+ * registry's keyed setInterval replaces its timer, so a repeat call is a no-op that costs one cheap controller read, and it is exactly what re-establishes the runtime
+ * wiring after a Homebridge restart, which restores the cached LightSensor service but never its handlers or its poll.
  *
  * TEARDOWN. The poll needs no presence check of its own. The inherited timer registry is bound to this capability's lifetime signal, so an abort at any level - the
  * controller connection, the host camera, or this capability - drains the armed interval and makes any later registration inert; a timer can never fire into a torn-down
@@ -44,9 +44,13 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
     super(nvr, { host: init.host, signal: init.signal });
 
     this.#device = init.device;
+  }
 
-    // Restate the held reading at the start of every later broker session, while the sensor stands and a genuine reading has been adopted. The capability registers
-    // here, once for its lifetime, because reconcile runs again on every capability wake and a registration there would accumulate one restatement per wake.
+  // Register the capability's attach-once work: restating the held reading at the start of every later broker session, while the sensor stands and a
+  // genuine reading has been adopted. The capability registers here, once for its lifetime, because reconcile runs again on every capability wake and a registration
+  // there would accumulate one restatement per wake.
+  public override configure(): void {
+
     this.restateOnConnect(() => {
 
       if(!this.#hasGenuineReading || !this.accessory.getService(this.hap.Service.LightSensor)) {

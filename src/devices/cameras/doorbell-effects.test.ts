@@ -51,6 +51,7 @@ import { ProtectReservedNames } from "../../types.ts";
 import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import { effectiveLcdMessage } from "./doorbell.ts";
 
 // One captured doorbell-ring routing. The onSet's observable effect is which device it routed to, so this is the shape the recording subclass captures - the same posture
@@ -130,7 +131,7 @@ async function buildDoorbell(options: { chimeConfigs?: ProtectChimeConfig[]; dis
 
   const accessory = makeTestAccessory("Front Door", "74ACB9000001");
   const projection = new TestCameraProjection(cameraConfig.id, store);
-  const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+  const doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
   // Settle the floating configure IIFE, the capability's configure, and the observe loops' lazy registration before any push so the doorbell is fully wired.
   await settle();

@@ -31,6 +31,7 @@ import type { StreamingDelegate } from "../../media/stream-delegate.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 
 // Every harness controller this file opens, aborted once at the end so no observe loop outlives the suite.
 const openControllers: AbortController[] = [];
@@ -56,8 +57,8 @@ async function makeFamily(channels = G6_PRO_ENTRY_CHANNELS): Promise<Family> {
 
   openControllers.push(controller);
 
-  const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Back Door", cameraConfig.mac),
-    new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+  const doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Back Door", cameraConfig.mac),
+    new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
   await settle();
 
@@ -309,7 +310,7 @@ describe("the derivation's recording-audio probe", () => {
     openControllers.push(controller);
     options.configure?.(projection, nvr, accessory);
 
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+    const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
     return { accessory, camera, cameraId: cameraConfig.id, factory, logEntries, nvr, projection, store };
   }
@@ -640,7 +641,7 @@ describe("the derivation's recording-audio probe", () => {
     assert.equal(operatingMode.testCharacteristic(Characteristic.CameraOperatingModeIndicator), true, "the camera details configured once the probe settled");
   });
 
-  // A camera whose record vanishes while the capability reconcile awaits has nothing to configure: the constructor returns with that reconcile still pending, so the
+  // A camera whose record vanishes while the capability reconcile awaits has nothing to configure: configured() returns with that reconcile still pending, so the
   // removal lands ahead of the continuation that runs the switches, which then configures none of them and throws nothing.
   test("a camera removed during the capability reconcile configures none of the construction switches", async () => {
 

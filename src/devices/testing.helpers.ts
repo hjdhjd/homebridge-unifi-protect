@@ -595,7 +595,7 @@ export function makeLiveviewConfig(options: { cameras?: string[]; id?: string; n
  * state === "CONNECTED" per the library's isDeviceOnline). It now exposes the write-through update the camera's bound onSets dispatch (the night-vision dimmer's
  * ispSettings write, the recording switch's recordingSettings write, the camera-routed status-LED's ledSettings write), RECORDING the payload and resolving by
  * default with a settable updateRejection so a test drives the real runDeviceCommand failure path. It also exposes the best-effort, runDeviceCommand-bypassing
- * commands the camera issues on a cadence - the ambient-light lux query (a reading the configure path reads at construction and on a 60-second poll) and the
+ * commands the camera issues on a cadence - the ambient-light lux query (a reading the configure path reads at setup and on a 60-second poll) and the
  * package-camera flashlight pulse (the dark-guarded retry-and-heartbeat) - each RECORDING its calls and resolving by default with a settable rejection so a test
  * drives the real sentinel-swallowing failure paths. It also exposes the recorded UniFi Access unlock command (unlockCalls / unlockRejection) the lock's
  * LockTargetState onSet dispatches, resolving by default with a settable rejection so a test drives the runDeviceCommand failure -> optimistic-revert path.
@@ -1285,6 +1285,12 @@ export class TestFobProjection {
  * mirroring how each family leaf narrows its own projection at construction.
  */
 export class TestBaseDevice extends ProtectDevice<Sensor> {
+
+  // The family half of the configure() template, which the vehicle leaves empty: no suite configures it, so each window drives exactly the base capability it names.
+  protected override configureDevice(): boolean {
+
+    return true;
+  }
 
   // Public window onto the base configureHints, so a concern test populates this.hints (the motion configurators read this.hints) before driving a capability.
   public configureHintsFor(): boolean {

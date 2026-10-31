@@ -9,10 +9,11 @@
  * real production method, then exercise the command paths that route through it - setStatusLed and the night-vision and access-unlock onSet reverts - through real
  * HAP services.
  *
- * ProtectDevice is the smallest real surface that carries the helper: the abstract base declares no abstract members, so a near-empty concrete leaf is a faithful
- * instance whose runDeviceCommand, setStatusLed, and statusLedCommand are all the base's own (the same admission reachability.test.ts relies on). The camera/light/etc.
- * leaves are not unit-constructable - they stand up a HAP accessory and, for cameras, the streaming stack at construction - so the leaf onSet closures themselves are
- * modeled here in the exact shape they ship, while the shared command path they all route through is the real one.
+ * ProtectDevice is the smallest real surface that carries the helper: the abstract base's one abstract member is the family's configureDevice, which a near-empty
+ * concrete leaf answers with an empty body and never runs, since it is built without being configured, so the leaf is a faithful instance whose runDeviceCommand,
+ * setStatusLed, and statusLedCommand are all the base's own (the same admission reachability.test.ts relies on). The camera/light/etc. leaves are not
+ * unit-constructable - they stand up a HAP accessory and, for cameras, the streaming stack as they are configured - so the leaf onSet closures themselves are modeled
+ * here in the exact shape they ship, while the shared command path they all route through is the real one.
  */
 import { Characteristic, Service, hap, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
@@ -25,9 +26,14 @@ import { TestClock } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import util from "node:util";
 
-// The smallest concrete leaf of the abstract base, mirroring reachability.test.ts. ProtectDevice declares no abstract members, so this adds nothing but a public window
-// onto the protected command helper - runDeviceCommand, setStatusLed, and statusLedCommand are all the base's own, inherited unchanged.
+// The smallest concrete leaf of the abstract base, mirroring reachability.test.ts. Beside the empty configureDevice ProtectDevice requires, this adds nothing but a
+// public window onto the protected command helper - runDeviceCommand, setStatusLed, and statusLedCommand are all the base's own, inherited unchanged.
 class TestProtectDevice extends ProtectDevice {
+
+  protected override configureDevice(): boolean {
+
+    return true;
+  }
 
   public runCommand(action: string, command: () => Promise<unknown>): Promise<boolean> {
 

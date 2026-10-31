@@ -14,7 +14,9 @@ import type { ProtectCamera } from "./camera.ts";
 import type { ProtectCameraPackage } from "./camera-package.ts";
 import { ProtectDeviceCapability } from "../device-capability.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
+import { configured } from "../device-base.ts";
 import { isFeatureFlagsDrain } from "./capability-reconcile-policy.ts";
+import { isolateAccessoryChange } from "../../nvr/nvr-accessory-change.ts";
 import { mqttTopics } from "../../mqtt.ts";
 
 // A doorbell message entry.
@@ -303,6 +305,19 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       return true;
     }
 
+    /* The whole add runs through the shared isolation, the registration included, because a bridge already holding as many accessories as HomeKit allows refuses
+     * another with a throw. Every caller is a pass that a throw would cost far more than the package camera: this doorbell's own configure, and with it the parent
+     * camera's add, the package camera observer's loop, and the stability sweep's timer. The package camera is held only once its add returns, so a failed add leaves
+     * it null, and the next change to the package camera flag or the next stability sweep retries it.
+     */
+    this.packageCamera = isolateAccessoryChange({ act: "add", change: () => this.#addPackageCamera(), log: this.log, name: "the package camera" });
+
+    return this.packageCamera !== null;
+  }
+
+  // Find or create the package camera's accessory, registering one it creates, and stand the package camera up on it.
+  #addPackageCamera(): ProtectCameraPackage {
+
     // Generate a UUID for the package camera, seeded by the package camera's identity - the parent's MAC address plus the persistence-critical identity suffix. We derive
     // the id through the shared leaf function rather than the package class, so the capability consumes the package's identity without value-importing its sibling class.
     // The bare MAC comes from the raw record (present at configure time), not the narrowed live-state projection, which carries no identity.
@@ -335,10 +350,8 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // live camera projection rather than holding a synthesized config snapshot. It is self-observing: its display name is the parent's name plus the display suffix,
     // applied through its homeKitName delegation, and its own name, firmware, and availability observers keep it tracking the shared device live - this capability owns
     // only its lifecycle (the WHEN, the observers, the sweep triggers), never its construction; only the new lives at the composition root, so no sibling-class
-    // value-import.
-    this.packageCamera = this.nvr.createPackageCamera(packageCameraAccessory, this.#device);
-
-    return true;
+    // value-import. A package camera whose setup threw is released by configured() rather than left running unowned.
+    return configured(this.nvr.createPackageCamera(packageCameraAccessory, this.#device));
   }
 
   /* Reconcile the package camera's lifecycle against the controller's live capability flag, as a no-op in both directions when nothing has changed. The
@@ -379,9 +392,9 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       return;
     }
 
-    // Schedule the graced, stability-gated detach through the NVR's removal chokepoint. The stillGone predicate must be absence-tolerant: the fire runs on a bare
-    // timer where a throw would crash Homebridge, and the parent projection's config getter throws once the parent record itself has been removed - so we capture the
-    // projection's plain id field at schedule time and re-read the record through the selector, treating an absent parent as gone.
+    // Schedule the graced, stability-gated detach through the NVR's removal chokepoint. The stillGone predicate must be absence-tolerant: the gate reports a throw
+    // from it as a failed removal and detaches nothing, and the parent projection's config getter throws once the parent record itself has been removed - so we
+    // capture the projection's plain id field at schedule time and re-read the record through the selector, treating an absent parent as gone.
     const id = this.#device.id;
 
     this.nvr.removals.schedule({
@@ -589,9 +602,9 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     this.configureChimeVolumeMqtt();
     this.configureMessageMqtt();
 
-    // State the chime volume as the doorbell is built, since its construction publishes nothing for it. The message switch sync that ran earlier in construction has
-    // already stated a showing message that matches a configured switch, so the current message is stated here only when no switch is on, which covers a message that
-    // matches none and keeps one that does to a single statement.
+    // State the chime volume as the doorbell is set up, since its setup publishes nothing for it. The message switch sync that ran earlier in this configure pass
+    // has already stated a showing message that matches a configured switch, so the current message is stated here only when no switch is on, which covers a message
+    // that matches none and keeps one that does to a single statement.
     this.publishChimeVolumeState();
 
     if(![...this.messageSwitches.values()].some(entry => entry.state)) {

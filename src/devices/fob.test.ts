@@ -29,6 +29,7 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "./device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
@@ -82,7 +83,7 @@ function buildFob(configOptions: Parameters<typeof makeFobConfig>[0] = {}, harne
   // The projection is named (not cast inline) so its read-through config feeds the SAME store the pushFobPatch battery test moves; the lone cast at construction is
   // confined to the new ProtectFob(...) call, and the presses route through the REAL ProtectEventDispatch this NVR double carries as nvr.events.
   const projection = new TestFobProjection(fobConfig.id, store);
-  const fob = new ProtectFob(nvr as unknown as ProtectNvr, accessory, projection as unknown as Fob);
+  const fob = configured(new ProtectFob(nvr as unknown as ProtectNvr, accessory, projection as unknown as Fob));
 
   // makeTestNvr was called with mqtt: true, so the recording double is present; a guard narrows Nullable<TestMqttClient> to the non-null type without an assertion or a
   // same-type cast, and fails loudly if the opt-in ever stops installing the double.

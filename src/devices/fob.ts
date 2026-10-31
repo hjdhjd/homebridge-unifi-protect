@@ -26,10 +26,6 @@ export class ProtectFob extends ProtectDevice<Fob> {
     super(nvr, accessory, device);
 
     this.#buttons = resolveFobButtons(device.config) ?? [];
-
-    this.configureHints();
-    this.configureDevice();
-    this.spawnObservers();
   }
 
   // The stable HomeKit service subtype for one button's stateless-programmable-switch service, keyed by the LOWERCASE wire id - the same identity the buttons selection
@@ -49,7 +45,7 @@ export class ProtectFob extends ProtectDevice<Fob> {
   }
 
   // Initialize and configure the fob accessory for HomeKit.
-  private configureDevice(): boolean {
+  protected override configureDevice(): boolean {
 
     // Reset the persisted context to a clean slate and reseed identity, discarding any stray keys a prior configuration of this same accessory left behind. The fob
     // persists no user state, so nothing is preserved across the reset.
@@ -69,11 +65,11 @@ export class ProtectFob extends ProtectDevice<Fob> {
 
   // Configure a HomeKit stateless-programmable-switch for each of the fob's buttons, grouped under a ServiceLabel when two or more are visible. A fob is a pure-input
   // device: the leaf creates the services here and the event-dispatch router delivers the presses, so there are no onGet/onSet handlers on this path. The button set is
-  // fixed model identity, so this runs once at construction. Which buttons appear is a single selection the user edits as one list, and leaving one out prunes exactly
-  // its switch. Repeat-safe across restarts and option flips: the ServiceLabel and every switch are validated against the current visibility before being acquired, and a
-  // switch surviving from a prior grouped configure has its stale ServiceLabelIndex dropped when the fob regroups down to a lone visible button. Once the switches are in
-  // place, a configure-time name reconcile brings every button's ConfiguredName to the controller's active button labeling, covering accessories restored from cache and
-  // labeling changes that landed while Homebridge was down.
+  // fixed model identity, so this runs once, when the fob is configured. Which buttons appear is a single selection the user edits as one list, and leaving one out
+  // prunes exactly its switch. Repeat-safe across restarts and option flips: the ServiceLabel and every switch are validated against the current visibility before being
+  // acquired, and a switch surviving from a prior grouped configure has its stale ServiceLabelIndex dropped when the fob regroups down to a lone visible button. Once the
+  // switches are in place, a configure-time name reconcile brings every button's ConfiguredName to the controller's active button labeling, covering accessories restored
+  // from cache and labeling changes that landed while Homebridge was down.
   private configureButtons(): void {
 
     // An unrecognized fob has no button table, so we expose it Battery-only and surface one actionable line - never a silent adoption. The model read is non-throwing: an

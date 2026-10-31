@@ -162,14 +162,10 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     this.lastAlarm = {};
     this.lastLeak = {};
     this.lastSmoke = {};
-
-    this.configureHints();
-    this.configureDevice();
-    this.spawnObservers();
   }
 
   // Initialize and configure the sensor accessory for HomeKit.
-  private configureDevice(): boolean {
+  protected override configureDevice(): boolean {
 
     // Reset the persisted context to a clean slate, discarding any stray keys left over from a prior configuration of this same accessory, while preserving the user's
     // motion-detection choice across the restart - a persisted detectMotion of false must survive rather than being wiped back to the default.
@@ -1135,7 +1131,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
     // Restate the sensor's held state at the start of every later broker session, through the code that already publishes it. Each alarm row whose service stands
     // is stated first by its own push, then the reconcile pass runs exactly as a record wake runs it and states every reconcile topic it holds a value for. The order
-    // keeps a row the pass itself attaches to one statement, its seed. The construction pass that precedes this method is the sensor's statement as it is built.
+    // keeps a row the pass itself attaches to one statement, its seed. The setup pass that precedes this method is the sensor's statement as it is set up.
     this.restateOnConnect(() => {
 
       for(const descriptor of SENSOR_ALARM_CONTACTS) {

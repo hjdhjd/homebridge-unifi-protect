@@ -49,6 +49,7 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import { ProtectReservedNames } from "../../types.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 
 // Confine the lone partial-config cast here, mirroring makeCameraConfig's single-confined-cast discipline: pushCameraPatch's patch is typed as a Partial of the full wire
 // record, whose nested setting objects (smartDetectSettings, ispSettings, ledSettings, recordingSettings) carry many fields the camera's reactions never read. A test
@@ -126,7 +127,7 @@ async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { c
     return new ProtectCamera(innerNvr, innerAccessory, innerDevice) as C;
   });
   const projection = new TestCameraProjection(cameraConfig.id, store);
-  const camera = construct(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+  const camera = configured(construct(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
   // Settle the floating configure IIFE and the observe loops' lazy registration before any push so the camera is fully wired when the reaction is driven.
   await settle();
@@ -1055,11 +1056,11 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       await setCameraOnline(watch, false);
 
-      // A package camera over the SAME physical device, built as the controller root builds it. Its parent's watch is deliberately never armed here, so any line the
-      // advance produces could only have come from the package.
-      const packageCamera = new InspectablePackageCamera(watch.nvr as unknown as ProtectNvr,
+      // A package camera over the SAME physical device, built as the controller root builds it and configured as the doorbell capability configures it. Its parent's
+      // watch is deliberately never armed here, so any line the advance produces could only have come from the package.
+      const packageCamera = configured(new InspectablePackageCamera(watch.nvr as unknown as ProtectNvr,
         makeTestAccessory("Test Camera Package", watch.cameraConfig.mac + ".PackageCamera"),
-        new TestCameraProjection(watch.cameraConfig.id, watch.nvr.client.state) as unknown as Camera);
+        new TestCameraProjection(watch.cameraConfig.id, watch.nvr.client.state) as unknown as Camera));
 
       await settle();
 

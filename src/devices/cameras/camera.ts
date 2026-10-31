@@ -32,6 +32,8 @@ import { ProtectReservedNames } from "../../types.ts";
 import { RtspLivestreamSubscription } from "../../media/livestream.ts";
 import type { StreamQualityTier } from "../../options.ts";
 import type { StreamingCapability } from "./streaming.ts";
+import { configured } from "../device-base.ts";
+import { isolateAccessoryChange } from "../../nvr/nvr-accessory-change.ts";
 import { mqttTopics } from "../../mqtt.ts";
 import { resolveLegacySelection } from "../../options-legacy.ts";
 
@@ -142,21 +144,18 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // tamper-detection onGet and the availability projection. Public because its single writer is the NVR-level event dispatch, not this class.
   public isTampered: boolean;
   public detectLicensePlate: string[];
-  // The composed doorbell capability, attached when (and only when) the controller reports this camera as a doorbell. Initialized to null so the field-init runs BEFORE
-  // the ctor-body configureDevice that attaches it - declared and set by ProtectCamera itself, so the subclass field-wipe class does not apply.
+  // The composed doorbell capability, attached when (and only when) the controller reports this camera as a doorbell. It is assigned only once the capability's
+  // configure() has returned, so a capability whose setup threw is released by configured() rather than held here.
   public doorbell: Nullable<DoorbellCapability> = null;
-  // Whether the doorbell ring-trigger MQTT subscription has been registered, so the one registration site (configureMqtt at construction) and the late-promotion attach
-  // arm never double-register (homebridge-plugin-utils subscribe is not safe to call twice). Initialized to false through a field initializer, set by ProtectCamera's own
-  // configureDoorbellRingMqtt after the gate passes - never inside a super constructor - so it carries no ctor-chain-computed state and the subclass field-wipe class
-  // does not apply.
+  // Whether the doorbell ring-trigger MQTT subscription has been registered, so the one registration site (configureMqtt during setup) and the late-promotion attach
+  // arm never double-register (homebridge-plugin-utils subscribe is not safe to call twice). It starts false, and ProtectCamera's own configureDoorbellRingMqtt alone
+  // sets it, after the gate passes.
   #ringMqttRegistered = false;
-  // The composed ambient light capability, built the first time this camera reconciles and held for the rest of its life. Nullable and initialized through a field
-  // initializer (so it exists before the constructor body's configureDevice can reach the accessor below), which is also what makes the availability delegation total: a
-  // camera whose capability was never built - and one already torn down - optional-chains to a no-op.
+  // The composed ambient light capability, built the first time this camera reconciles and held for the rest of its life. Nullable, which is what makes the
+  // availability delegation total: a camera whose capability was never built - and one already torn down - optional-chains to a no-op.
   #ambientLight: Nullable<AmbientLightCapability> = null;
-  // The composed streaming capability, acquired on this camera's construct pass and held for the rest of its life. Nullable and initialized through a field initializer
-  // so it exists before the constructor body's configureDevice can reach the accessor below, which is also what makes the NVR-walk reads total: a camera whose capability
-  // was never acquired - and one already torn down - optional-chains to a no-op.
+  // The composed streaming capability, acquired when this camera is configured and held for the rest of its life. Nullable, which is what makes the NVR-walk reads total:
+  // a camera whose capability was never acquired - and one already torn down - optional-chains to a no-op.
   #streaming: Nullable<StreamingCapability> = null;
   // The once-per-episode latch for the RTSP-debug buffer feed's missing-stream narration. livestream() runs on every buffer establish, so a recovery cycle must not
   // re-narrate a standing misconfiguration; the latch clears the moment the debug branch runs against an RTSP-enabled profile, so an admin who disables RTSP again
@@ -183,10 +182,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.isRinging = false;
     this.isTampered = false;
     this.detectLicensePlate = [];
-
-    this.configureHints();
-    this.configureDevice();
-    this.spawnObservers();
   }
 
   // The package camera, delegated to the doorbell capability that owns its lifecycle. Null when no doorbell capability is attached, or when an attached doorbell has no
@@ -224,7 +219,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
   /* The composed streaming capability, acquired on first use. Construction is graph-assembly, so the camera asks the NVR composition root for the object rather than
    * newing a sibling class itself, and it reaches the root through an inherited field, so this forms no module import edge and the device layer stays structurally
-   * cycle-proof.
+   * cycle-proof. The camera configures what the root builds through configured() before holding it, as every builder does.
    *
    * The whole body is one ??= assignment, which is what makes double construction unrepresentable rather than merely unlikely: the accessor is safe to call from
    * anywhere, including after a future edit moves a caller past an await, so two overlapping reconcile passes converge on one capability by the operator's own semantics.
@@ -233,7 +228,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
    */
   protected acquireStreaming(): StreamingCapability {
 
-    return this.#streaming ??= this.nvr.createStreamingCapability(this, this.signal);
+    return this.#streaming ??= configured(this.nvr.createStreamingCapability(this, this.signal));
   }
 
   // The composed streaming capability, or null when this camera has not acquired one. Deliberately NON-CREATING, unlike the accessor above: the controller-side walks
@@ -301,7 +296,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   }
 
   // Configure a camera accessory for HomeKit.
-  protected configureDevice(): boolean {
+  protected override configureDevice(): boolean {
 
     // Preserve the persisted user-state keys across the context reset: motion detection always, plus the HKSV-recording and doorbell-mute switch states when their
     // features are enabled. The values here are the resting defaults a fresh accessory starts from; resetAccessoryContext keeps whatever was actually persisted and
@@ -356,30 +351,46 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.configureHksv();
     this.configureHksvRecordingSwitch();
 
-    // We use an IIFE here since we can't make the enclosing function asynchronous.
+    /* We use an IIFE here since we can't make the enclosing function asynchronous. Nothing awaits it, so it carries its own catch: a throw from any of its steps is
+     * said once on this camera's log and leaves the camera as far as its setup got, where an uncaught rejection would reach Homebridge's process handler and take the
+     * bridge down. The sentence lives here rather than in the shared isolation because this block finishes an add that has already returned to the pass that made it.
+     */
     (async (): Promise<void> => {
 
-      /* Reconcile the capability-gated services and the video streaming surface in parallel since they are independent operations. The construct source establishes the
-       * capability resting states (it is the adoption-or-restart path), distinct from the live observe reconciles the capability observers drive later.
-       *
-       * Only the camera details wait on the streaming reconcile. The streaming derivation waits on the camera's livestream to read its recording audio format, and the
-       * camera details wait on it because a registered controller runs that pass itself. The switches depend on neither, so they configure as soon as the capability
-       * resting states are established, chained onto the capability reconcile alone so that neither promise is left unobserved while the other is awaited.
-       */
-      await Promise.all([ this.reconcileCapabilities("construct").then(() => this.#configureConstructionSwitches()), this.acquireStreaming().reconcile() ]);
+      try {
 
-      // The camera can be removed while the streaming derivation waits on its livestream, and the camera details read the live record, so a vanished camera has nothing
-      // left to configure.
-      if(!this.recordPresent) {
+        /* Reconcile the capability-gated services and the video streaming surface in parallel since they are independent operations. The construct source establishes
+         * the capability resting states (it is the adoption-or-restart path), distinct from the live observe reconciles the capability observers drive later.
+         *
+         * Only the camera details wait on the streaming reconcile. The streaming derivation waits on the camera's livestream to read its recording audio format, and
+         * the camera details wait on it because a registered controller runs that pass itself. The switches depend on neither, so they configure as soon as the
+         * capability resting states are established, chained onto the capability reconcile alone so that neither promise is left unobserved while the other is awaited.
+         */
+        await Promise.all([ this.reconcileCapabilities("construct").then(() => this.#configureConstructionSwitches()), this.acquireStreaming().reconcile() ]);
 
-        return;
-      }
+        // The camera can be removed while the streaming derivation waits on its livestream, and the camera details read the live record, so a vanished camera has
+        // nothing left to configure. A camera released while it waits, by its removal or by a setup that threw, also writes nothing more: a later attempt may already
+        // stand a live camera on this accessory, and handlers bound here would close over the released camera and replace the live camera's.
+        if(this.isDeleted || !this.recordPresent) {
 
-      // Configure our camera details when the reconcile registered no controller. A registration runs the pass itself through onControllerRegistered, so each initial
-      // value is written once; with no controller, an operating-mode service restored from the accessory cache stands alone, and the gate still rules on it.
-      if(!this.stream) {
+          return;
+        }
 
-        this.configureCameraDetails();
+        // Configure our camera details when the reconcile registered no controller. A registration runs the pass itself through onControllerRegistered, so each
+        // initial value is written once; with no controller, an operating-mode service restored from the accessory cache stands alone, and the gate still rules on it.
+        if(!this.stream) {
+
+          this.configureCameraDetails();
+        }
+      } catch(error) {
+
+        // A camera released while this block waited has already had its failed add said by the pass that made it, so it says nothing more here.
+        if(this.isDeleted) {
+
+          return;
+        }
+
+        this.log.error("Unable to finish adding this camera to HomeKit: %s.", formatErrorMessage(error));
       }
     })();
 
@@ -394,13 +405,15 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return true;
   }
 
-  /* Configure the switches the construction tail stands up. None of them reads the streaming surface, so the tail runs them once the capability resting states are
-   * established rather than behind the streaming derivation, which can wait on the camera's livestream. The camera can be removed while the capability reconcile
-   * awaits, and every configure here reads the live record, so a vanished camera configures none of them.
+  /* Configure the switches the tail of configureDevice's asynchronous block stands up. None of them reads the streaming surface, so the tail runs them once the
+   * capability resting states are established rather than behind the streaming derivation, which can wait on the camera's livestream. The camera can be removed while
+   * the capability reconcile awaits, and every configure here reads the live record, so a vanished camera configures none of them. A camera released while it awaits
+   * also configures none of them, for the reason the block's own tail gives: its handlers would replace those of a live camera a later attempt stands on this
+   * accessory.
    */
   #configureConstructionSwitches(): void {
 
-    if(!this.recordPresent) {
+    if(this.isDeleted || !this.recordPresent) {
 
       return;
     }
@@ -420,13 +433,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.configureDoorbellMuteSwitch();
   }
 
-  /* Reconcile this camera's doorbell capability against the controller's live state - the single chokepoint the construction-time arm and the always-armed isDoorbell
+  /* Reconcile this camera's doorbell capability against the controller's live state - the single chokepoint the setup-time arm and the always-armed isDoorbell
    * observer both route through, driven by the pure capabilityReconcileAction over (attached, reported). A promotion composes the capability onto the running
    * instance in place; the one HAP object that cannot change in place (the CameraController) is rebuilt by the streaming capability's controller-identity reconcile,
-   * not here, since doorbell-ness is a term of the controller identity that reconcile watches. The source tag tells the attach contexts apart: at construction the
-   * normal flow (the pending IIFE building the stream with the now-true flag, the capability reconcile's continuation configuring the trigger and mute switch,
-   * configureMqtt registering ring) covers the camera-side wiring, so the construct arm does only the capability compose; a live promotion ("observe") must
-   * additionally re-run that camera-side wiring because the construction flow already ran with the flag false.
+   * not here, since doorbell-ness is a term of the controller identity that reconcile watches. The source tag tells the attach contexts apart: at setup the normal
+   * flow (the pending IIFE building the stream with the now-true flag, the capability reconcile's continuation configuring the trigger and mute switch, configureMqtt
+   * registering ring) covers the camera-side wiring, so the construct arm does only the capability compose; a live promotion ("observe") must additionally re-run that
+   * camera-side wiring because the setup flow already ran with the flag false.
    */
   private reconcileDoorbellCapability(source: ReconcileSource): void {
 
@@ -469,35 +482,46 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
   }
 
-  /* Compose the doorbell capability onto this live camera and, for a genuine live promotion, re-run the camera-side doorbell wiring the construction flow would have run
-   * had the flag been true at adoption. The construct arm does only the capability compose: the normal construction flow covers everything else. The observe arm, a
-   * promotion of a running plain camera, additionally: re-runs the mute switch and trigger (construction already configured them from the capability reconcile's
-   * continuation while the flag was false, and the Doorbell service now exists); registers the ring-trigger MQTT (a late promotion the construction configureMqtt could
-   * not have registered); and narrates the promotion once. The late-doorbell controller rebuild lives in the streaming capability's controller-identity reconcile,
-   * driven by the featureFlags observer, so this method only composes the capability: an isDoorbell change also wakes that observer, and that reconcile rebuilds the
-   * streaming delegate when a term of its controller identity has appeared, single-sourcing that rebuild across every late input.
+  /* Compose the doorbell capability onto this live camera and, for a genuine live promotion, re-run the camera-side doorbell wiring the setup flow would have run had
+   * the flag been true at adoption. The construct arm does only the capability compose: the normal setup flow covers everything else. The observe arm, a promotion of
+   * a running plain camera, additionally: re-runs the mute switch and trigger (setup already configured them from the capability reconcile's continuation while the
+   * flag was false, and the Doorbell service now exists); registers the ring-trigger MQTT (a late promotion the setup configureMqtt could not have registered); and
+   * narrates the promotion once. The late-doorbell controller rebuild lives in the streaming capability's controller-identity reconcile, driven by the featureFlags
+   * observer, so this method only composes the capability: an isDoorbell change also wakes that observer, and that reconcile rebuilds the streaming delegate when a
+   * term of its controller identity has appeared, single-sourcing that rebuild across every late input.
    */
   private attachDoorbellCapability(source: ReconcileSource): void {
 
     // Construction is graph-assembly, so the camera does not new the capability itself - it asks the NVR composition root to build one (which holds zero policy, just the
     // one new) and keeps the lifecycle decision here. The camera reaches the NVR through an inherited field, never a value-import, so this call forms no module import
-    // edge and the device layer stays structurally cycle-proof. The capability's configure stands up the Doorbell service through configureDoorbellService.
-    this.doorbell = this.nvr.createDoorbellCapability(this, this.device, this.signal);
-    this.doorbell.configure();
+    // edge and the device layer stays structurally cycle-proof. The capability's configure stands up the Doorbell service through configureDoorbellService, and the
+    // field is assigned only once configured() returns, so a capability whose setup threw is released there and never held.
+    const attach = (): DoorbellCapability => configured(this.nvr.createDoorbellCapability(this, this.device, this.signal));
 
-    // At construction the normal flow handles the camera-side wiring; only a live promotion runs the rest.
+    // On the construct arm the normal setup flow handles the camera-side wiring, and a throw leaves through this camera's own setup, whose add reports it.
     if(source === "construct") {
+
+      this.doorbell = attach();
 
       return;
     }
 
-    // Re-run the camera's doorbell-adjacent configures now that the Doorbell service exists (construction configured them from the capability reconcile's continuation
-    // while the flag was false). acquireService is safe to call more than once, so a re-run that finds the service in place is harmless.
+    // A live promotion runs inside the doorbell status observer, whose loop a throw would end for good, so the attach runs through the shared isolation instead. A
+    // failed attach leaves the doorbell null, and the next change the controller reports to this camera's doorbell status retries it.
+    this.doorbell = isolateAccessoryChange({ act: "add", change: attach, log: this.log, name: "the doorbell" });
+
+    if(!this.doorbell) {
+
+      return;
+    }
+
+    // Re-run the camera's doorbell-adjacent configures now that the Doorbell service exists (setup configured them from the capability reconcile's continuation while
+    // the flag was false). acquireService is safe to call more than once, so a re-run that finds the service in place is harmless.
     this.configureDoorbellMuteSwitch();
     this.configureDoorbellTrigger();
 
-    // Register the ring-trigger MQTT subscription, which the construction configureMqtt could not have registered while the flag was false (the once-guard makes a
-    // later duplicate registration a no-op).
+    // Register the ring-trigger MQTT subscription, which configureMqtt could not have registered at setup while the flag was false (the once-guard makes a later
+    // duplicate registration a no-op).
     this.configureDoorbellRingMqtt();
 
     // Narrate the promotion once - today's reclassification is completely silent.
@@ -589,7 +613,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // A camera's doorbell-ness is temporally dynamic: the controller can provision featureFlags.isDoorbell late (a promotion) or withdraw it (a demotion). The observer
     // is always armed - it routes every flag change through the live-attach reconcile chokepoint, which composes the capability onto the running instance on a promotion
-    // and narrates a settled demotion - so a construction-time doorbell and a late flip share ONE code path. The reconcile re-reads live state on each wake, so a
+    // and narrates a settled demotion - so a doorbell at setup and a late flip share ONE code path. The reconcile re-reads live state on each wake, so a
     // within-drain flap (true->false->true delivered in one notify) self-collapses to the final value with no churn. The package camera stays un-armed by its no-super
     // spawnCameraObservers, never spawning this observer against the shared parent record.
     this.observeState({ key: "camera.isDoorbell", selector: state => cam(state)?.featureFlags.isDoorbell, title: "doorbell status" },
@@ -682,7 +706,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
   /* The composed ambient light capability, built on first use. Construction is graph-assembly, so the camera asks the NVR composition root for the object rather than
    * newing a sibling class itself, and it reaches the root through an inherited field, so this forms no module import edge and the device layer stays structurally
-   * cycle-proof.
+   * cycle-proof. The camera configures what the root builds through configured() before holding it, so the capability's once-only registration stands before its
+   * first reconcile.
    *
    * The whole body is one ??= assignment, which is what makes double construction unrepresentable rather than merely unlikely: the accessor is safe to call from
    * anywhere, including after a future edit moves a caller past an await, so two overlapping reconcile passes converge on one capability by the operator's own semantics.
@@ -691,7 +716,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
    */
   private get ambientLight(): AmbientLightCapability {
 
-    return this.#ambientLight ??= this.nvr.createAmbientLightCapability(this, this.device, this.signal);
+    return this.#ambientLight ??= configured(this.nvr.createAmbientLightCapability(this, this.device, this.signal));
   }
 
   // Capture a JPEG snapshot of this camera from the controller. This is the narrow public interface onto the camera projection's snapshot command - the camera owns "take
@@ -872,7 +897,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
    */
   private reconcileSmartDetectSensors(): boolean {
 
-    // Refresh the derived smart-detect hints from their two live inputs. configureHints establishes the baseline at construction; this is the only live refresher, and
+    // Refresh the derived smart-detect hints from their two live inputs. configureHints establishes the baseline at setup; this is the only live refresher, and
     // event-dispatch gates every smart-detect delivery on the cached value - so without this refresh a live arrival would materialize sensors that could never trip. Both
     // refreshes sit above the withdrawal short-circuit because ||= against a false right side is a no-op, so a withdrawal passing through here changes nothing.
     this.hints.smartDetect ||= this.ufp.featureFlags.hasSmartDetect && this.hasFeature("Motion.SmartDetect");
@@ -1667,7 +1692,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       return false;
     }
 
-    // Stand the motion sensor up dressed, then the recording switch and the smart-motion advisory the construction pass runs for an eligible camera.
+    // Stand the motion sensor up dressed, then the recording switch and the smart-motion advisory the setup pass runs for an eligible camera.
     this.configureMotionSensor({ enabled: true, initialized: true });
     this.configureHksvRecordingSwitch();
     this.configureHksv();
@@ -1926,7 +1951,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       this.stream?.handleSnapshotRequest();
     });
 
-    // Register the doorbell ring-trigger subscription, gated and once-guarded so a late promotion can register it without the construction call double-subscribing.
+    // Register the doorbell ring-trigger subscription, gated and once-guarded so a late promotion can register it without the setup call double-subscribing.
     this.configureDoorbellRingMqtt();
 
     return true;
@@ -1934,8 +1959,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
   // Register the doorbell ring-trigger MQTT subscription, exactly once, when the camera is a Protect doorbell or the user enabled the doorbell trigger.
   // homebridge-plugin-utils subscribe is not safe to call twice, so the registered-once guard prevents a double-subscription across the call sites (configureMqtt at
-  // construction, and the attach arm for a late promotion). The guard is set ONLY after the gate passes and the registration happens, so a no-op construction call on a
-  // plain camera (gate false) does not latch it - the later attach-time registration must not be suppressed.
+  // setup, and the attach arm for a late promotion). The guard is set ONLY after the gate passes and the registration happens, so a no-op setup call on a plain camera
+  // (gate false) does not latch it - the later attach-time registration must not be suppressed.
   private configureDoorbellRingMqtt(): void {
 
     if(this.#ringMqttRegistered) {

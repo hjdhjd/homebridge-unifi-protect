@@ -32,6 +32,7 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { settle } from "homebridge-plugin-utils/testing";
 
@@ -83,7 +84,7 @@ async function buildCamera(options: { channels?: ProtectCameraConfig["channels"]
     userOptions: options.userOptions });
   const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
   const projection = new TestCameraProjection(cameraConfig.id, store);
-  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+  const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
   // Settle the floating configure IIFE and the observe loops' lazy registration before any drive so the camera is fully wired (the stream is stood up, the subscriptions
   // are registered) when a handler is invoked.

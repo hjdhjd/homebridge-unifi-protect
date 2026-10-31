@@ -32,6 +32,7 @@ import type { Resolution } from "homebridge";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { buildChannelProfile } from "../../media/resolution.ts";
+import { configured } from "../device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
@@ -87,7 +88,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
 
     // The construction under test: a REAL ProtectCamera against the harness doubles. The casts are confined to this boundary; the instance itself is the production
     // class, and everything it runs - configureHints, configureDevice, the floating IIFE, spawnObservers - is the production code path.
-    camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+    camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
     // Settle the floating configure IIFE and the observe loops' lazy registration before any phase asserts.
     await settle();
@@ -238,7 +239,7 @@ describe("camera HKSV self-heal observer", () => {
 
     const projection = new TestCameraProjection(cameraConfig.id, store);
     const accessory = makeTestAccessory("HKSV Reconcile Camera", cameraConfig.mac);
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+    const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 
     await settle();
 
@@ -290,8 +291,8 @@ describe("camera HKSV self-heal observer", () => {
     const { controller, factory, nvr } = makeTestNvr({ store });
 
     const accessory = makeTestAccessory("Activation Kick Camera", cameraConfig.mac);
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory,
-      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+    const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory,
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
     await settle();
 
@@ -338,8 +339,8 @@ describe("the streaming-delegate construction gate", () => {
     }
 
     const gateAccessory = makeTestAccessory("Gate Camera", gateConfig.mac);
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, gateAccessory,
-      new TestCameraProjection(gateConfig.id, gateStore) as unknown as Camera);
+    const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, gateAccessory,
+      new TestCameraProjection(gateConfig.id, gateStore) as unknown as Camera));
 
     await settle();
 
@@ -381,8 +382,8 @@ describe("the RTSP debug livestream", () => {
     const livestreamProcessFactory = new TestLivestreamProcessFactory();
     const { controller, nvr } = makeTestNvr({ livestreamProcessFactory, store, userOptions: ["Enable.Debug.Video.Timeshift.UseRtsp"] });
     const accessory = makeTestAccessory("RTSP Debug Camera", cameraConfig.mac);
-    const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory,
-      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+    const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory,
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
     // The debug path needs the streaming delegate, which the floating configure pass stands up, so the pass settles before the livestream is requested.
     await settle();
@@ -428,8 +429,8 @@ describe("the construction-time HomeKit Secure Video surface", () => {
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
       const { controller, nvr } = makeTestNvr({ store, userOptions: ["Enable.Video.HKSV.Recording.Switch"] });
       const accessory = makeTestAccessory("HKSV Surface Camera", cameraConfig.mac);
-      const camera = new ProtectCamera(nvr as unknown as ProtectNvr, accessory,
-        new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+      const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory,
+        new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
       await settle();
 

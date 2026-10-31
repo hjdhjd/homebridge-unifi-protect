@@ -22,6 +22,7 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
@@ -70,8 +71,8 @@ describe("package camera defer-create (BC1)", () => {
 
     ({ controller: harnessController, factory, logEntries, nvr } = makeTestNvr({ store }));
 
-    doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
-      new TestCameraProjection(cameraId, store) as unknown as Camera);
+    doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
+      new TestCameraProjection(cameraId, store) as unknown as Camera));
 
     await settle();
   });
@@ -195,8 +196,8 @@ describe("package camera defer-create (BC1)", () => {
 });
 
 /* The channel-present-at-adoption arm of the same discipline: a doorbell whose package channel exists in the INITIAL fixture never defers at all. These rows pin the
- * properties the deferring arm above cannot see - that the package's whole build completes inside the constructor's own call frame, that its supervisor is kicked
- * exactly once there, and that the construction gate (not the channel) is what declines a build on a controller already shutting down.
+ * properties the deferring arm above cannot see - that the package's whole build completes inside the doorbell's own configured() call frame, that its supervisor is
+ * kicked exactly once there, and that the construction gate (not the channel) is what declines a build on a controller already shutting down.
  */
 describe("package camera create-at-adoption (the channel-present arm)", () => {
 
@@ -211,7 +212,7 @@ describe("package camera create-at-adoption (the channel-present arm)", () => {
   });
 
   // Construct a real doorbell-plus-package family whose package channel is present from the start, optionally against a controller that has already entered shutdown.
-  // Nothing is settled here: the caller decides whether to assert on the constructor's own call frame or after the microtasks drain.
+  // Nothing is settled here: the caller decides whether to assert on the configured() call's own frame or after the microtasks drain.
   function constructFamily(phase?: TestProtectNvr["phase"]): { doorbell: ProtectCamera; factory: TestStreamingDelegateFactory; logEntries: readonly TestLogEntry[] } {
 
     const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, name: "Side Door" });
@@ -225,34 +226,35 @@ describe("package camera create-at-adoption (the channel-present arm)", () => {
       nvr.phase = phase;
     }
 
-    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Side Door", "74ACB9000002"),
-      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+    const doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Side Door", "74ACB9000002"),
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
     return { doorbell, factory, logEntries };
   }
 
-  /* The same-tick pin. The package's derivation is synchronous, so its whole derive-narrate-create-register chain runs inside the constructor's call frame - which is
-   * what lets configureDevice read the outcome off this.stream immediately and narrate a deferral only when one is real. We assert BEFORE any await: an await introduced
-   * anywhere in the package's construction chain (an async derivation, an unconditional await in the capability's reconcile) pushes the registration onto a later
-   * microtask and leaves this RED, and the narration arm goes RED alongside it because the outcome check would then read a stream that does not exist yet.
+  /* The same-tick assertion. The package's derivation is synchronous, so its whole derive-narrate-create-register chain runs inside the configured() call that sets the
+   * doorbell up - which is what lets configureDevice read the outcome off this.stream immediately and narrate a deferral only when one is real. We assert BEFORE any
+   * await: an await introduced anywhere in the package's setup chain (an async derivation, an unconditional await in the capability's reconcile) pushes the
+   * registration onto a later microtask and leaves this RED, and the narration arm goes RED alongside it because the outcome check would then read a stream that does
+   * not exist yet.
    */
-  test("with the channel present at adoption, the package registers its controller inside the constructor's call frame and narrates no deferral", async () => {
+  test("with the channel present at adoption, the package registers its controller inside the configured() call and narrates no deferral", async () => {
 
     const { doorbell, factory, logEntries } = constructFamily();
 
-    // Read synchronously - no settle, no await - so this observes the state the constructor itself left behind.
+    // Read synchronously - no settle, no await - so this observes the state the configured() call itself left behind.
     const accessory = doorbell.packageCamera?.accessory as unknown as TestProtectAccessory | undefined;
 
-    assert.ok(accessory, "the package camera was composed during construction");
+    assert.ok(accessory, "the package camera was composed during setup");
     assert.equal(controllerEvents(accessory).filter((event) => event.kind === "configure").length, 1,
-      "the package registered its HomeKit camera controller inside the constructor's own call frame");
+      "the package registered its HomeKit camera controller inside the configured() call itself");
     assert.equal(logEntries.filter((entry) => formatLogEntry(entry).includes(DEFERRAL_FRAGMENT)).length, 0,
       "a package whose channel is already provisioned narrates no deferral");
 
     // Exactly one delegate exists at this instant, and it is the PACKAGE'S. The parent's derivation is declared async, so even with every channel already RTSP-enabled
-    // its result comes back as a promise the capability must await, landing the parent's build on a later microtask - the asymmetry this pin depends on, and the reason
-    // the count is one rather than two.
-    assert.equal(factory.createCalls.length, 1, "one delegate exists inside the constructor's call frame");
+    // its result comes back as a promise the capability must await, landing the parent's build on a later microtask - the asymmetry this assertion depends on, and the
+    // reason the count is one rather than two.
+    assert.equal(factory.createCalls.length, 1, "one delegate exists inside the configured() call");
     assert.equal(factory.createCalls[0]?.camera, doorbell.packageCamera, "the synchronously-built delegate is the package's, not the parent's");
 
     await settle();
@@ -322,8 +324,8 @@ describe("package camera create-at-adoption (the channel-present arm)", () => {
 
     adoptionControllers.push(controller);
 
-    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Back Door", "74ACB9000003"),
-      projection as unknown as Camera);
+    const doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Back Door", "74ACB9000003"),
+      projection as unknown as Camera));
 
     await settle();
 

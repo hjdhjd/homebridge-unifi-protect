@@ -18,11 +18,12 @@ import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 
 // A ProtectCamera that counts its reconcileCapabilities invocations, so the test proves the async-void capability observer is LIVE (the count rises on a present-record
-// push, alongside the service that reconcile creates) and then SUPPRESSED once the record vanishes (the count holds). Construction's own reconcile is wiped from this
-// counter by the subclass field-define (the field initializes to 0 after super returns), so the count measures the live observer's invocations from a 0 baseline.
+// push, alongside the service that reconcile creates) and then SUPPRESSED once the record vanishes (the count holds). The setup pass's own reconcile is counted too,
+// so the count measures the live observer's invocations against the baseline read once setup has settled.
 class CountingCamera extends ProtectCamera {
 
   public reconcileCount = 0;
@@ -38,7 +39,7 @@ class CountingCamera extends ProtectCamera {
 // Construct a real CountingCamera, with the casts confined to this one boundary - the instance under test is the production class and its real observe loops.
 function construct(nvr: TestProtectNvr, accessory: TestProtectAccessory, projection: TestCameraProjection): CountingCamera {
 
-  return new CountingCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+  return configured(new CountingCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 }
 
 describe("the observeState recordPresent gate during the removal grace", () => {
@@ -56,7 +57,7 @@ describe("the observeState recordPresent gate during the removal grace", () => {
 
     try {
 
-      // The baseline after construction (the construct reconcile is wiped from the counter by the subclass field-define), and the camera's full set of observe loops.
+      // The baseline after setup (the construct reconcile already counted), and the camera's full set of observe loops.
       const baseline = camera.reconcileCount;
       const observerCount = store.observerCount;
 

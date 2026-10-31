@@ -9,8 +9,9 @@
  * the device MAC (device scope), while the controller-scoped owners (system information, liveviews, the security system) inherit the base default of the controller MAC
  * (controller scope). These tests pin both compositions against the real production wrappers, capturing the topic each forwards to a mock nvr.mqtt. The MQTT topic
  * structure is a user-facing contract (automations subscribe to it), so a changed composition is a regression these tests guard against. ProtectDevice and a bare
- * ProtectBase leaf are the smallest real surfaces that carry the wrappers: the abstract base declares no abstract members, so a near-empty concrete leaf is a faithful
- * instance whose publish, subscribeGet, and subscribeSet are all the base's own - the same admission command-error.test.ts and reachability.test.ts rely on.
+ * ProtectBase leaf are the smallest real surfaces that carry the wrappers: the one abstract member the bases declare is ProtectDevice's configureDevice, which a
+ * near-empty concrete leaf answers with an empty body and never runs, so the leaf is a faithful instance whose publish, subscribeGet, and subscribeSet are all the
+ * base's own - the same admission command-error.test.ts and reachability.test.ts rely on.
  */
 import { TestClock, TestMqttClient, settle } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
@@ -23,9 +24,14 @@ import { TEST_CLOCK_EPOCH } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import util from "node:util";
 
-// The smallest concrete leaf of the abstract base, mirroring command-error.test.ts: ProtectDevice declares no abstract members, so this adds nothing but a public window
-// onto the protected MQTT wrappers this suite exercises, inherited unchanged.
+// The smallest concrete leaf of the abstract base, mirroring command-error.test.ts: beside the empty configureDevice ProtectDevice requires, this adds nothing but a
+// public window onto the protected MQTT wrappers this suite exercises, inherited unchanged.
 class TestProtectDevice extends ProtectDevice {
+
+  protected override configureDevice(): boolean {
+
+    return true;
+  }
 
   public emitPublish(topic: string, message: string): void {
 

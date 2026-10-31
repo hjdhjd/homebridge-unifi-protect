@@ -30,6 +30,7 @@ import type { StreamingDelegate } from "../media/stream-delegate.ts";
 import type { TestProtectNvr } from "./testing.helpers.ts";
 import type { TestRecordingDelegate } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../devices/device-base.ts";
 
 // Every "Delaying device removal" line the gate narrated, as the harness rendered it. The line carries the resolved grace, so the count of these lines is the
 // schedule-dedup observable and the text is the exact-interval pin.
@@ -428,8 +429,8 @@ describe("harness growth: the NVR double's reboot wiring", () => {
     const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, name: "Back Door" });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { clock, controller, factory, logEntries, nvr } = makeTestNvr({ store, userOptions: options.userOptions });
-    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Back Door", cameraConfig.mac),
-      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+    const doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Back Door", cameraConfig.mac),
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
     await settle();
 

@@ -34,13 +34,14 @@ import type { ProtectEventDispatch } from "../../nvr/event-dispatch.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 
 // Construct a real ProtectCamera against an isDoorbell-true config so it construction-attaches its DoorbellCapability, with the casts confined to this one boundary - the
 // instance under test is the production ProtectCamera and its composed capability.
 function constructDoorbell(nvr: TestProtectNvr, accessory: TestProtectAccessory, projection: TestCameraProjection): ProtectCamera {
 
-  return new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera);
+  return configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
 }
 
 describe("real doorbell construction (suite A)", () => {
@@ -476,8 +477,8 @@ describe("doorbell bare-motion package forward (suite C)", () => {
 
     const recording = nvr.events as TestRecordingDispatch;
 
-    doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
-      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+    doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
     await settle();
 
@@ -783,8 +784,7 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
 
   /* An override address carrying an IPv6 zone cannot stand in an RTSP URL, so the controller sets it aside with one warning and each camera resolves its URLs through
    * the rest of the chain: the doorbell's own channel profiles and its package camera's alike compose against the camera's connection host. Composing against the zoned
-   * address instead refuses it inside the camera's construction, where nothing would handle the refusal, so the row also holds that construction raises nothing
-   * unhandled.
+   * address instead refuses it inside the camera's setup, where nothing would handle the refusal, so the row also holds that construction raises nothing unhandled.
    */
   test("an override address carrying an IPv6 zone is set aside with one warning, and the URLs fall through to the connection host", async () => {
 
@@ -823,8 +823,8 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
 
     capped.factory.maxSourcePixels = 1280 * 720;
 
-    const cappedCamera = new ProtectCamera(capped.nvr as unknown as ProtectNvr, makeTestAccessory(),
-      new TestCameraProjection(cappedConfig.id, cappedStore) as unknown as Camera);
+    const cappedCamera = configured(new ProtectCamera(capped.nvr as unknown as ProtectNvr, makeTestAccessory(),
+      new TestCameraProjection(cappedConfig.id, cappedStore) as unknown as Camera));
 
     await settle();
 
@@ -844,8 +844,8 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
 
     pinned.factory.maxSourcePixels = 1280 * 720;
 
-    const pinnedCamera = new ProtectCamera(pinned.nvr as unknown as ProtectNvr, makeTestAccessory(),
-      new TestCameraProjection(pinnedConfig.id, pinnedStore) as unknown as Camera);
+    const pinnedCamera = configured(new ProtectCamera(pinned.nvr as unknown as ProtectNvr, makeTestAccessory(),
+      new TestCameraProjection(pinnedConfig.id, pinnedStore) as unknown as Camera));
 
     await settle();
 
@@ -861,8 +861,8 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
     const openConfig = makeCameraConfig({ channels: G6_INSTANT_CHANNELS });
     const openStore = new TestStateStore(makeProtectState({ cameras: [openConfig] }));
     const open = makeTestNvr({ store: openStore });
-    const openCamera = new ProtectCamera(open.nvr as unknown as ProtectNvr, makeTestAccessory(),
-      new TestCameraProjection(openConfig.id, openStore) as unknown as Camera);
+    const openCamera = configured(new ProtectCamera(open.nvr as unknown as ProtectNvr, makeTestAccessory(),
+      new TestCameraProjection(openConfig.id, openStore) as unknown as Camera));
 
     await settle();
 

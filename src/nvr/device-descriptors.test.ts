@@ -21,6 +21,7 @@ import { ProtectRelay } from "../devices/relay.ts";
 import { ProtectSensor } from "../devices/sensor.ts";
 import { ProtectViewer } from "../devices/viewer.ts";
 import assert from "node:assert/strict";
+import { configured } from "../devices/device-base.ts";
 import { makeTestNvr } from "./testing.helpers.ts";
 import { settle } from "homebridge-plugin-utils/testing";
 
@@ -53,7 +54,7 @@ const rows: Row[] = [
       const accessory = makeTestAccessory("Descriptor Camera", config.mac);
       const projection = new TestCameraProjection(config.id, store);
 
-      return { controller, device: new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera) };
+      return { controller, device: configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera)) };
     },
     category: "camera",
     expected: ProtectCamera
@@ -68,7 +69,7 @@ const rows: Row[] = [
       const accessory = makeTestAccessory("Descriptor Chime", config.mac);
       const projection = new TestChimeProjection(config.id, store);
 
-      return { controller, device: new ProtectChime(nvr as unknown as ProtectNvr, accessory, projection as unknown as Chime) };
+      return { controller, device: configured(new ProtectChime(nvr as unknown as ProtectNvr, accessory, projection as unknown as Chime)) };
     },
     category: "chime",
     expected: ProtectChime
@@ -83,7 +84,7 @@ const rows: Row[] = [
       const accessory = makeTestAccessory("Descriptor Fob", config.mac);
       const projection = new TestFobProjection(config.id, store);
 
-      return { controller, device: new ProtectFob(nvr as unknown as ProtectNvr, accessory, projection as unknown as Fob) };
+      return { controller, device: configured(new ProtectFob(nvr as unknown as ProtectNvr, accessory, projection as unknown as Fob)) };
     },
     category: "fob",
     expected: ProtectFob
@@ -98,7 +99,7 @@ const rows: Row[] = [
       const accessory = makeTestAccessory("Descriptor Light", config.mac);
       const projection = new TestLightProjection(config.id, store);
 
-      return { controller, device: new ProtectLight(nvr as unknown as ProtectNvr, accessory, projection as unknown as Light) };
+      return { controller, device: configured(new ProtectLight(nvr as unknown as ProtectNvr, accessory, projection as unknown as Light)) };
     },
     category: "light",
     expected: ProtectLight
@@ -113,7 +114,7 @@ const rows: Row[] = [
       const accessory = makeTestAccessory("Descriptor Relay", config.mac);
       const projection = new TestRelayProjection(config.id, store);
 
-      return { controller, device: new ProtectRelay(nvr as unknown as ProtectNvr, accessory, projection as unknown as Relay) };
+      return { controller, device: configured(new ProtectRelay(nvr as unknown as ProtectNvr, accessory, projection as unknown as Relay)) };
     },
     category: "relay",
     expected: ProtectRelay
@@ -128,7 +129,7 @@ const rows: Row[] = [
       const accessory = makeTestAccessory("Descriptor Sensor", config.mac);
       const projection = new TestSensorProjection(config.id, store);
 
-      return { controller, device: new ProtectSensor(nvr as unknown as ProtectNvr, accessory, projection as unknown as Sensor) };
+      return { controller, device: configured(new ProtectSensor(nvr as unknown as ProtectNvr, accessory, projection as unknown as Sensor)) };
     },
     category: "sensor",
     expected: ProtectSensor
@@ -143,7 +144,7 @@ const rows: Row[] = [
       const accessory = makeTestAccessory("Descriptor Viewer", config.mac);
       const projection = new TestViewerProjection(config.id, store);
 
-      return { controller, device: new ProtectViewer(nvr as unknown as ProtectNvr, accessory, projection as unknown as Viewer) };
+      return { controller, device: configured(new ProtectViewer(nvr as unknown as ProtectNvr, accessory, projection as unknown as Viewer)) };
     },
     category: "viewer",
     expected: ProtectViewer

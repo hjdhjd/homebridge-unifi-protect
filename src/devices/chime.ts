@@ -3,32 +3,19 @@
  * chime.ts: Chime device class for UniFi Protect.
  */
 import type { Chime, PlaySpeakerOptions } from "unifi-protect";
-import type { ProtectAccessory, ProtectServiceNaming } from "../types.ts";
 import type { CharacteristicValue } from "homebridge";
 import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION } from "../settings.ts";
 import { ProtectDevice } from "./device.ts";
-import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
+import type { ProtectServiceNaming } from "../types.ts";
 import { mqttTopics } from "../mqtt.ts";
 import { selectRingtones } from "unifi-protect";
 import { toStartCase } from "homebridge-plugin-utils";
 
 export class ProtectChime extends ProtectDevice<Chime> {
 
-  // Create an instance.
-  constructor(nvr: ProtectNvr, accessory: ProtectAccessory, device: Chime) {
-
-    super(nvr, accessory, device);
-
-    this.configureHints();
-    this.configureDevice();
-
-    // Spawn the base name-sync and device-information observers plus the chime's own ringtone-collection observer (see the spawnObservers override below).
-    this.spawnObservers();
-  }
-
   // Initialize and configure the chime accessory for HomeKit.
-  private configureDevice(): boolean {
+  protected override configureDevice(): boolean {
 
     // Reset the persisted context to a clean slate and reseed identity. Homebridge persists the context to disk across restarts, and a UUID this accessory reuses from a
     // prior incarnation - a different device or an older plugin schema - could still carry stray keys that do not apply to this chime, which persists no user state.

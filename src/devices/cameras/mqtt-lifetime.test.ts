@@ -19,6 +19,7 @@ import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
 import type { TestMqttSubscription } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
+import { configured } from "../device-base.ts";
 import { makeTestNvr } from "../../nvr/testing.helpers.ts";
 import { settle } from "homebridge-plugin-utils/testing";
 
@@ -32,8 +33,8 @@ describe("MQTT subscription lifetime (owner-signal scoping)", () => {
 
     assert.ok(mqtt, "the recording MQTT double is installed");
 
-    const doorbell = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
-      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+    const doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
+      new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
     await settle();
 

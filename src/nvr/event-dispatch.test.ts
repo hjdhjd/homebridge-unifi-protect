@@ -25,6 +25,7 @@ import type { ProtectNvr } from "./nvr.ts";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../devices/device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { format } from "node:util";
 import { makeTestNvr } from "./testing.helpers.ts";
@@ -1236,8 +1237,8 @@ function buildDoorbell(options: { id: string; mac: string; mqtt?: boolean; name:
   const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { isDoorbell: true }, id: options.id, mac: options.mac, name: options.name });
   const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
   const { clock, controller, nvr } = makeTestNvr({ mqtt: options.mqtt ?? false, store, userOptions: options.userOptions ?? [] });
-  const camera = new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory(options.name, options.mac),
-    new TestCameraProjection(cameraConfig.id, store) as unknown as Camera);
+  const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory(options.name, options.mac),
+    new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
 
   return { camera, clock, controller, nvr };
 }

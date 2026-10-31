@@ -22,8 +22,7 @@ import { retry } from "homebridge-plugin-utils";
 // rebuilds the package's controller alongside the parent's.
 export class ProtectCameraPackage extends ProtectCamera {
 
-  // Whether the flashlight is currently lit. The literal initializer is safe under ES2024 field-define semantics precisely because it carries no constructor-chain-
-  // computed state: the field defines to false after the base constructor returns, and every reader of the field runs post-construction (the onGet and onSet handlers).
+  // Whether the flashlight is currently lit. It starts off, and only the flashlight's onGet and onSet handlers read or write it.
   private flashlightState = false;
 
   // The monotonic generation of the latest flashlight intent, bumped on every on and off. Transient intent state, never persisted - the flashlight is a write-only
@@ -89,8 +88,9 @@ export class ProtectCameraPackage extends ProtectCamera {
   // Configure the package camera.
   protected override configureDevice(): boolean {
 
-    // The package camera inherits configureHints, which already computed every streaming hint in its own constructor pass from the shared parent MAC's feature-option
-    // scope, so the only hint set here is the package-specific probesize floor - package camera streams are sparse enough that FFmpeg needs a deeper probe to lock on.
+    // The package camera inherits configureHints, which configure() runs ahead of this method, computing every streaming hint from the shared parent MAC's
+    // feature-option scope, so the only hint set here is the package-specific probesize floor - package camera streams are sparse enough that FFmpeg needs a deeper
+    // probe to lock on.
     this.hints.probesize = 32768;
 
     // Preserve the persisted user-state keys across the context reset: motion detection, and no HKSV recording state, since the package builds no recording switch. The
@@ -107,7 +107,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     this.configureMotionSensor();
 
     // Configure the flashlight.
-    this.configureFlashlight();
+    this.#configureFlashlight();
 
     // Configure the video stream when the controller has provisioned the package channel, deferring until then otherwise. configureDevice is the one caller that
     // narrates the deferral to the user - the package-channel observer's later re-attempts stay silent until one succeeds. Reading the outcome off this.stream right
@@ -167,7 +167,7 @@ export class ProtectCameraPackage extends ProtectCamera {
 
     // The controller has not provisioned the package channel yet. The accessory itself (motion, flashlight) is fully functional in the meantime; it simply
     // advertises no video stream until the channel arrives and the observer re-attempts. Advertisement turns on the channel's EXISTENCE, not on its RTSP state.
-    const profile = this.packageProfile();
+    const profile = this.#packageProfile();
 
     if(!profile) {
 
@@ -206,7 +206,7 @@ export class ProtectCameraPackage extends ProtectCamera {
   }
 
   // Configure a light accessory to turn on or off the flashlight.
-  private configureFlashlight(): boolean {
+  #configureFlashlight(): boolean {
 
     // Validate whether we should have this service enabled.
     const { service } = this.validService({ serviceType: this.hap.Service.Lightbulb, subtype: ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT, suffix: " Flashlight",
@@ -317,8 +317,7 @@ export class ProtectCameraPackage extends ProtectCamera {
       this.timers.setInterval("flashlight", () => void activateFlashlight(), 20 * 1000);
     });
 
-    // Initialize the flashlight to its resting off state. We write the literal rather than reading the field: this line runs inside the construction chain, before our
-    // subclass field initializer has defined flashlightState (ES2024 define semantics), and the momentary flashlight is always off at construction regardless.
+    // Initialize the flashlight to its resting off state. The flashlight is momentary, so it is always off when the package camera is set up.
     service.updateCharacteristic(this.hap.Characteristic.On, false);
 
     return true;
@@ -347,13 +346,9 @@ export class ProtectCameraPackage extends ProtectCamera {
     return this.accessory.context.packageCamera ?? "";
   }
 
-  /* The package channel's profile, if the controller has provisioned the channel. This is the pure EXISTENCE lookup - it says nothing about RTSP - and it is what the
-   * advertisement and the buffer substrate both read, because the livestream API that feeds them serves the channel whether or not RTSP is enabled on it.
-   *
-   * A prototype method rather than an ES-private one, mirroring configureFlashlight above, because the derivation that calls it runs from configureDevice inside the
-   * BASE constructor: an ES-private member is branded onto the instance only after super() returns, so a `#` spelling here throws on every package construction.
-   */
-  private packageProfile(): Nullable<ChannelProfile> {
+  // The package channel's profile, if the controller has provisioned the channel. This is the pure EXISTENCE lookup - it says nothing about RTSP - and it is what the
+  // advertisement and the buffer substrate both read, because the livestream API that feeds them serves the channel whether or not RTSP is enabled on it.
+  #packageProfile(): Nullable<ChannelProfile> {
 
     const channel = this.ufp.channels.find(isPackageChannel);
 
@@ -372,7 +367,7 @@ export class ProtectCameraPackage extends ProtectCamera {
   // has not enabled has no stream to offer and we answer nothing rather than handing back a URL that cannot connect.
   public override selectChannel(): Nullable<ChannelProfile> {
 
-    const profile = this.packageProfile();
+    const profile = this.#packageProfile();
 
     return profile?.channel.isRtspEnabled ? profile : null;
   }
@@ -381,7 +376,7 @@ export class ProtectCameraPackage extends ProtectCamera {
   // answers from the existence lookup rather than the RTSP-consuming view above.
   public override selectSubstrateChannel(): Nullable<ChannelProfile> {
 
-    return this.packageProfile();
+    return this.#packageProfile();
   }
 
   // Whether the package channel currently has RTSP enabled. The parent's forward through the streaming capability is wrong here: the package's published list is its own

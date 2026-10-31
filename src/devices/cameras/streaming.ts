@@ -24,7 +24,7 @@ import type { StreamingDelegate } from "../../media/stream-delegate.ts";
  * expose the projection, while this capability's concrete host does. A second handle would be a second path to one truth, so every projection read here goes through
  * this.host.ufp, which is a live read that throws when the camera's controller record is gone - the exposure every consumer of this policy has always carried.
  *
- * IT IMPLEMENTS reconcile() AND NOT configure(): every line of its body is convergence. reconcile() is called at the host's construction, and again on each streaming
+ * IT IMPLEMENTS reconcile() AND NOT configure(): every line of its body is convergence. reconcile() is called when the host is configured, and again on each streaming
  * observer wake and each package-channel arrival; it derives, publishes, and - the first time a derivation yields something advertisable - stands the delegate up. Every
  * later call re-derives and returns at the create-once gate, which is what keeps the advertised list fresh for the selectors while leaving the standing delegate alone.
  *
@@ -153,12 +153,12 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
 
     // Additively refresh the speaker-derived hints, mirroring the additive rebuild below: a capability appearing raises the hint (so a deferred first stream build and
     // the runtime talkback path read it), while a transient incomplete-bootstrap drain that reports the speaker absent leaves an established hint untouched - the same
-    // subtractive-conservative discipline, so a reconnect blip never disturbs two-way audio. The host's configureHints establishes the baseline at construction; this is
+    // subtractive-conservative discipline, so a reconnect blip never disturbs two-way audio. The host's configureHints establishes the baseline at setup; this is
     // the only live refresher. Running before the no-delegate guard is what closes the deferred-build window.
     this.host.hints.twoWayAudio ||= this.host.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay");
     this.host.hints.twoWayAudioDirect ||= this.host.ufp.featureFlags.hasSpeaker && this.hasFeature("Audio") && this.hasFeature("Audio.TwoWay.Direct");
 
-    // No delegate yet: the create-once path builds it from the just-refreshed hints, so there is nothing to rebuild. This also covers construction.
+    // No delegate yet: the create-once path builds it from the just-refreshed hints, so there is nothing to rebuild. This also covers the host's setup pass.
     if(!this.#stream) {
 
       return;

@@ -40,6 +40,7 @@ import { ProtectReservedNames } from "../types.ts";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { configured } from "../devices/device-base.ts";
 import { makeLiveviewConfig } from "../devices/testing.helpers.ts";
 
 // The controller MAC the makeNvrConfig record carries; the MQTT topic scope and the self-created accessory UUIDs derive from it. A literal so a drift in the fixture
@@ -135,7 +136,7 @@ function buildLiveviews(harnessOptions: { cachedAccessories?: TestProtectAccesso
     nvr.pushControllerStability(false);
   }
 
-  const owner = new ProtectLiveviews(nvr as unknown as ProtectNvr);
+  const owner = configured(new ProtectLiveviews(nvr as unknown as ProtectNvr));
 
   // Drive the initial reconcile explicitly on the constructed instance (the NVR seeds this once at startup in production; the observer handles every later edit).
   owner.configureLiveviews();
@@ -248,7 +249,7 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     assert.equal(setSubscription.init.signal.aborted, true, "removing the last arm liveview aborted the security set registration through the owner's cleanup()");
     assert.equal(built.nvr.signal.aborted, false, "the controller-lifetime nvr.signal stayed live - only the removed accessory's registrations unwound");
 
-    // Re-add the arm liveview: the owner builds a FRESH security system whose constructor subscribes anew. Exactly one securitysystem get registration is now live (the
+    // Re-add the arm liveview: the owner builds a FRESH security system whose configure() subscribes anew. Exactly one securitysystem get registration is now live (the
     // new one) while the prior pair stays aborted - a remove/re-add cycle stacks no live handlers.
     built.store.pushLiveviews([makeLiveviewConfig({ id: "lv-away", name: "Protect-Away" })]);
 
