@@ -4,13 +4,15 @@
  */
 "use strict";
 
-import { CONTROLLER_LISTED_WARNING, deviceListResult, makeControllerList, makeProtectConfig, readDeviceListAnswer, staleSelectionVerdict } from "./protect-config.mjs";
+import { CONTROLLER_LISTED_WARNING, deviceListResult, makeControllerList, makeProtectConfig, readDeviceListAnswer,
+  staleSelectionVerdict } from "./lib/webui/protect-config.js";
 import { addressListedElsewhere, addressListingForm } from "homebridge-plugin-utils/webui/address.js";
 import { createActionGuard, withDeadline } from "homebridge-plugin-utils/webUi-liveness.mjs";
-import { makeControllerActions, makeControllerLogin } from "./controller-actions.mjs";
+import { makeControllerActions, makeControllerLogin } from "./lib/webui/controller-actions.js";
 import { FeatureOptions } from "homebridge-plugin-utils/featureOptions.js";
 import { PluginConfigSession } from "homebridge-plugin-utils/pluginConfigSession.mjs";
 import { createSaveFlow } from "homebridge-plugin-utils/webui/saveflow.js";
+import { displayedName } from "homebridge-plugin-utils/homekit-name.js";
 import { webUi } from "homebridge-plugin-utils/webUi.mjs";
 
 // The configured controller list's interpreters, bound once over HBPU's listed-address rule, which is the rule the plugin skips a repeated controller by, so the
@@ -301,6 +303,95 @@ const getDevices = async (selectedController, { config }) => {
   answers.keep({ address: controller.address, answer: verdict.devices, generation });
 
   return deviceListResult(verdict);
+};
+
+/* The configuration interpreter the sidebar's device links name themselves through, or null before it lands. The sidebar renders a device link synchronously and
+ * cannot wait on the catalog, so retaining the interpreter here is what lets a link be named the moment it renders. It lands once per page, through
+ * landConfigInterpreter below.
+ */
+let configInterpreter = null;
+
+// The key the link namer is held under for a configuration with no options. Before the page's model loads, a platform entry carrying no options array reads as a
+// fresh empty array each time, so every such read shares this one array rather than building a namer per link.
+const NO_OPTIONS = Object.freeze([]);
+
+/* The namer the sidebar last named device links through, and the options array it was built over. The edited configuration is composed afresh on every read, but its
+ * options array keeps its identity until an edit or a rollback moves it, so a sidebar build names every link through one engine and an edit builds one more. An empty
+ * options list is keyed by NO_OPTIONS instead, because every configuration with no options names a link alike.
+ */
+let linkNamer = { name: null, options: null };
+
+/* The text one device link shows: the name the plugin gives the device's accessory in HomeKit, with the custom name being edited applied where HomeKit can carry it,
+ * read from the edited configuration. Wherever the interpreter has not landed, a link shows the name the UI server composed for the device. Nothing here writes a row:
+ * the kept answers are the rows themselves, and a name written onto one would go on showing after its custom name was cleared.
+ */
+const deviceLinkName = (row) => {
+
+  if(!configInterpreter) {
+
+    return row.homeKitName ?? "";
+  }
+
+  const config = ui.featureOptions.editedConfig[0];
+  const options = config?.options?.length ? config.options : NO_OPTIONS;
+
+  if(linkNamer.options !== options) {
+
+    linkNamer = { name: configInterpreter.deviceNamer(config), options };
+  }
+
+  return linkNamer.name(row);
+};
+
+// The class each device link's name node wears, which is how the repaint finds every one of them on the page.
+const DEVICE_LINK_NAME_CLASS = "hbup-device-name";
+
+/* Every device link's name node, mapped to the raw row it names. The framework rebuilds its links on its own schedule, so the repaint finds the nodes on the page
+ * as it stands rather than holding them, and a node the framework drops leaves this map with it.
+ */
+const linkRows = new WeakMap();
+
+// Compose one device link's content: the device's name, in a node of its own that the repaint can find again.
+const deviceContent = (device) => {
+
+  const node = document.createElement("span");
+
+  node.className = DEVICE_LINK_NAME_CLASS;
+  node.textContent = deviceLinkName(device);
+  linkRows.set(node, device);
+
+  return node;
+};
+
+/* Repaint every device link's name, once an edit or a refused write moved the configured options. A custom name is applied in the browser, so a rename needs this
+ * rather than a round trip. It runs synchronously inside the framework's hook, which reads the edited configuration as the change left it, and it changes no option
+ * and re-reads nothing, so it is as safe inside a drain as outside one. Each node is named from the raw row it rendered from, so a cleared custom name shows that
+ * row's own name again.
+ */
+const repaintDeviceLinks = () => {
+
+  for(const node of document.querySelectorAll("#devicesContainer ." + DEVICE_LINK_NAME_CLASS)) {
+
+    const row = linkRows.get(node);
+
+    if(row) {
+
+      node.textContent = deviceLinkName(row);
+    }
+  }
+};
+
+/* Land the configuration interpreter over the served catalog, repaint any device link already drawn through it, and answer it. This is the one place the
+ * interpreter is built and retained, and it lands once per page: from the load-time wiring once its catalog read resolves, or from the page's load when that read
+ * failed and left it unset. The device list loads after the page's model, so a link is drawn after either landing and names itself through the interpreter as it
+ * renders; the repaint keeps every link on the interpreter's name whatever order the page's loads settle in.
+ */
+const landConfigInterpreter = (catalog) => {
+
+  configInterpreter = makeProtectConfig({ FeatureOptions, catalog, controllers, displayedName });
+  repaintDeviceLinks();
+
+  return configInterpreter;
 };
 
 // Only show feature options that are valid for the capabilities of this device.
@@ -604,8 +695,10 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
       renderVerdict({ row });
     },
 
-    // What the user has typed, which is what every validation and every write reads.
-    values: () => ({ address: fields.address.value, password: fields.password.value, username: fields.username.value }),
+    // What the user has typed, which is what every validation and every write reads. The address is read trimmed, because the plugin reads a listed controller's
+    // address trimmed, so every reader of the card's address, the login check, the listed-elsewhere check, the write, its rename and the card's follow of what it
+    // saved among them, reads the address the plugin connects to.
+    values: () => ({ address: fields.address.value.trim(), password: fields.password.value, username: fields.username.value }),
     verdict
   };
 
@@ -877,9 +970,33 @@ const featureOptionsParams = {
   getControllers: getControllers,
   getDevices: getDevices,
   infoPanel: showProtectDetails,
+
+  /* Land the interpreter once the page's model loads, when the load-time wiring's catalog read failed and left it unset, so the sidebar shows custom names for the
+   * rest of the page rather than the composed names alone. The model loads only once the page's own catalog read has resolved, and that read is the one the
+   * accessor shares, so this asks the server for nothing and cannot meet a rejection. Every later load finds the interpreter set and does nothing.
+   */
+  onLoaded: () => {
+
+    if(!configInterpreter) {
+
+      void ui.featureOptions.catalog().then(landConfigInterpreter);
+    }
+  },
+
+  // Repaint the device names an options edit moved, the moment the framework announces it, so a custom name shows in the sidebar as soon as it is entered and before
+  // it is saved.
+  onOptionsEdited: () => repaintDeviceLinks(),
+
+  // Repaint the device names a refused write rolled back. The host refusing a write restores the configuration it last accepted without announcing an edit, so a
+  // custom name that never landed would otherwise stay on screen.
+  onOptionsRolledBack: () => repaintDeviceLinks(),
+
   sidebar: {
 
     controllerLabel: "Protect Controllers",
+
+    // Each device link shows the device's name as the plugin names its accessory, the custom name being edited applied.
+    deviceContent: deviceContent,
 
     /* The refresh action the framework docks on the controller-list heading. Reloading the world is clearing the kept controller answers: the handler is
      * invalidation and nothing more, because the framework owns everything around it - the re-entry through its own show(), the boot affordance that clothes the
@@ -1149,9 +1266,10 @@ const wireProtectConfig = async () => {
   /* The catalog is the framework's own page-lifetime read of it, the one its feature-options boot shares, so the migration composes against exactly what the page
    * renders. That read rejects an answer without the catalog shape the server publishes rather than shaping it into an empty catalog, because an empty one would let
    * the migration read every option as unconfigured and compose entries against a catalog that never described them. A malformed answer, a missed deadline, and a
-   * failed request each decline the wiring here, before the session opens, so nothing is written and the page loads as it otherwise would.
+   * failed request each decline the wiring here, before the session opens, so nothing is written and the page loads as it otherwise would. A read that resolves
+   * lands the interpreter here, for the sidebar's device links and the migration below alike, whatever becomes of the rest of this envelope.
    */
-  const protectConfig = makeProtectConfig({ FeatureOptions, catalog: await ui.featureOptions.catalog(), controllers });
+  const protectConfig = landConfigInterpreter(await ui.featureOptions.catalog());
 
   // The library's session is the single conduit the framework's own writes use, so the patch merges onto a replica synced just now rather than onto a snapshot taken
   // before the page opened. The name seeds the primary platform entry, and it is read from the same constant the framework is configured with so the two cannot drift.

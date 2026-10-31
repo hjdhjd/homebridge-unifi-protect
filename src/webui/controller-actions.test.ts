@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * controller-actions.test.ts: The settings page's controller login check, its kept controller answers, and the controller save and removal that write them,
+ * webui/controller-actions.test.ts: The settings page's controller login check, its kept controller answers, and the controller save and removal that write them,
  * driven through the real save flow and recording doubles for every other reach the module makes outside itself.
  *
  * What these rows prove is the part of a save and a removal no type can state: that each outcome speaks in exactly its sentence, on exactly its channel, and
@@ -14,17 +14,29 @@
  * of its queue, so a rename built from a value that is no sidebar key fails the save it reaches rather than recording as though the page had accepted it. The
  * addresses differ and each kept answer is a list of its own, so a put-back that restores the wrong thing cannot coincide with one that restores the right thing.
  */
-import { CONTROLLER_LISTED_WARNING, makeControllerList, readDeviceListAnswer } from "../homebridge-ui/public/protect-config.mjs";
+import type { Assert, Equal } from "homebridge-plugin-utils/testing";
+import { CONTROLLER_LISTED_WARNING, makeControllerList, readDeviceListAnswer } from "./protect-config.ts";
 import type { CommitConfig, CommitConfigResult, SaveAction } from "homebridge-plugin-utils";
-import type { ControllerActions, ControllerCard, ControllerLogin, ControllerLoginRequest } from "../homebridge-ui/public/controller-actions.mjs";
+import type { ControllerActions, ControllerCard, ControllerLogin, ControllerLoginRequest } from "./controller-actions.ts";
 import { addressListedElsewhere, addressListingForm, createSaveFlow } from "homebridge-plugin-utils";
 import { describe, test } from "node:test";
-import { makeControllerActions, makeControllerLogin } from "../homebridge-ui/public/controller-actions.mjs";
-import type { ProtectConfig } from "../homebridge-ui/public/protect-config.mjs";
+import { makeControllerActions, makeControllerLogin } from "./controller-actions.ts";
+import type { ProtectConfig } from "./protect-config.ts";
 import assert from "node:assert/strict";
 
 // The listed-address rule and the writers a save and a removal compose through, bound over HBPU's rule from the package root exactly as the page binds them.
 const { controllerListedElsewhere, withControllerRemoved, withControllerSaved } = makeControllerList({ addressListedElsewhere, addressListingForm });
+
+/* Compile-time shape exercise for the HBPU pieces this suite builds the writers over. It never runs - the function is never called, and its leading underscore
+ * marks it, with its bindings, as a compile-time exercise the typecheck reads - so it adds nothing to the runtime totals. Each injected piece's type is its HBPU
+ * export exactly, so a declaration that lets one collapse to any or loosen to a signature of its own, which every runtime row in this suite would still pass
+ * against, fails `npm run typecheck` here instead.
+ */
+const _injectedDependencyShapeExercises = (): void => {
+
+  type _ListedElsewhereIsTheRule = Assert<Equal<Parameters<typeof makeControllerList>[0]["addressListedElsewhere"], typeof addressListedElsewhere>>;
+  type _ListingFormIsTheRule = Assert<Equal<Parameters<typeof makeControllerList>[0]["addressListingForm"], typeof addressListingForm>>;
+};
 
 // The address a save writes and a removal drops, the address an address-changing edit replaces, and a third address no save here touches.
 const ADDRESS = "10.0.0.1";

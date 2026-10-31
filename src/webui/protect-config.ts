@@ -1,8 +1,8 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-config.mjs: Pure interpreters over the injected Protect platform configuration.
+ * webui/protect-config.ts: Pure interpreters over the injected Protect platform configuration.
  */
-"use strict";
+import type { FeatureCategoryEntry, FeatureOptionEntry, FeatureOptions, addressListedElsewhere, addressListingForm, displayedName } from "homebridge-plugin-utils";
 
 /* The single home for our plugin-config shape. Every function here is a pure interpreter - of the primary platform-config entry the webUI framework injects into
  * our hooks, or of the UI server's answer about a controller's devices - with no I/O and no global reach. The framework owns reading and writing the persisted
@@ -12,9 +12,188 @@
  *
  * Two settings substrates meet here. A feature option is where a setting lives, and a handful of configuration properties are a second home the plugin honors so that
  * a configuration nobody has opened the webUI on keeps working. Reconciling the two is the migration's whole job: it moves each property's value into the option that
- * supersedes it and marks the property for deletion. The module takes no imports at all - the engine class, the served option catalog, and HBPU's listed-address
- * rule are handed in - so the whole of it is exercisable under node against the real engine, the real catalog, and the real rule, with no network and no DOM.
+ * supersedes it and marks the property for deletion. The module imports types alone, which the compiler erases - the engine class, the served option catalog, HBPU's
+ * listed-address rule, and HBPU's display-name rule are handed in - so it stays browser-safe and the whole of it is exercisable under node against the real engine,
+ * the real catalog, and the real rules, with no network and no DOM.
  */
+
+/**
+ * One configured controller, as it actually arrives from the Homebridge UI. Every property is declared as an unknown-valued optional because that is the honest shape
+ * of an object read back from a user's `config.json`: a property may be absent, may carry a hand-edited value of any type, and may be a retired name no part of the
+ * plugin reads any more. Interpreting exactly that is what the module is for.
+ */
+export interface ProtectControllerConfig {
+
+  [key: string]: unknown;
+  address?: unknown;
+  doorbellMessages?: unknown;
+  mqttTopic?: unknown;
+  mqttUrl?: unknown;
+  name?: unknown;
+  overrideAddress?: unknown;
+  password?: unknown;
+  username?: unknown;
+}
+
+/**
+ * The primary platform-configuration entry, on the same terms the controller shape above states: every legacy property is unknown-valued because a user's
+ * `config.json` is free to carry anything at all under these names, and telling an active choice apart from a hand-edit we decline to interpret is the migration's job
+ * rather than the type system's.
+ */
+export interface ProtectConfig {
+
+  controllers?: unknown;
+  debug?: unknown;
+  options?: unknown;
+  ringDelay?: unknown;
+  verboseFfmpeg?: unknown;
+  videoProcessor?: unknown;
+}
+
+/**
+ * The connection triple a caller needs in order to reach one controller. The values stay unknown because they are carried straight through from the configuration
+ * without being validated: the UI server's own login is what finds out whether they work.
+ */
+export interface ProtectControllerCredentials {
+
+  address: unknown;
+  password: unknown;
+  username: unknown;
+}
+
+/**
+ * The option catalog the plugin's UI server publishes, as the migration consumes it.
+ */
+export interface ProtectConfigCatalog {
+
+  categories: FeatureCategoryEntry[];
+  options: Record<string, FeatureOptionEntry[]>;
+}
+
+/**
+ * The commit-shaped patch the migration produces. A consumed TOP-LEVEL legacy property is carried here as a PRESENT key whose value is `undefined`, never as an
+ * omitted key: the session's shallow-merge commit treats those two shapes oppositely, deleting the first and leaving the second untouched, and the type system cannot
+ * state that difference. Assertions about this patch must therefore read own-property presence rather than compare against `undefined`.
+ *
+ * A controllers[] item key deletes the other way around, by omission from the freshly rebuilt successor, which is why no per-item key appears here at all - the whole
+ * array is carried instead, and only when at least one item's successor differs from the item it replaces.
+ */
+export interface ProtectConfigPatch {
+
+  controllers?: ProtectControllerConfig[];
+  debug?: undefined;
+  options?: string[];
+  ringDelay?: undefined;
+  verboseFfmpeg?: undefined;
+  videoProcessor?: undefined;
+}
+
+/**
+ * One device row of the UI server's answer, as the page names it. Every other field a row carries is the controller's record or the page's own processing, which
+ * the namer reads nothing of.
+ */
+export interface ProtectDeviceRow {
+
+  [key: string]: unknown;
+
+  /** The name the UI server composed for the device as HomeKit names its accessory with no custom name applied, absent on the controller's own row. */
+  homeKitName?: string;
+
+  /** The name the controller reports. */
+  name?: string;
+
+  /** The device's MAC, the scope the framework addresses the row's options at. */
+  serialNumber?: string;
+}
+
+/**
+ * The migration and the device-row namer over a fetched catalog.
+ */
+export interface ProtectConfigInterpreter {
+
+  /**
+   * The namer for one configuration's device rows, over one engine for the whole list. A row shows the name the plugin applies to its device's accessory in HomeKit:
+   * the custom name the user set where HomeKit can carry it, and the name the UI server composed otherwise, falling back to the name the row carries where it carries
+   * no composed one, by HBPU's display-name rule.
+   */
+  deviceNamer(config?: ProtectConfig): (row: ProtectDeviceRow) => string;
+
+  migrate(config?: ProtectConfig, macByAddress?: ReadonlyMap<string, string>): ProtectConfigPatch | null;
+}
+
+/**
+ * The interpreters of the configured controller list, which makeControllerList builds over HBPU's listed-address rule. Each is declared as a property carrying a
+ * function, which is what the factory builds, so a consumer is free to read one off the object and call it on its own.
+ */
+export interface ProtectControllerList {
+
+  /**
+   * Whether a controller save would be refused because another configured controller already holds the address it writes, compared in HBPU's listing form. A save
+   * that writes its own item's address, in any spelling, is never refused. An address the rule gives no form is never listed.
+   */
+  controllerListedElsewhere: (config: ProtectConfig | null | undefined, save: { address?: unknown; originalAddress?: unknown }) => boolean;
+
+  /**
+   * The configured controllers, one entry per listed address: the stored entries themselves in their stored order, keeping the first entry at each address and
+   * every entry whose address has no form, and leaving out every later entry at an address and every entry that is not an object, or an empty list when the
+   * configuration holds no list.
+   */
+  controllers: (config?: ProtectConfig) => ProtectControllerConfig[];
+
+  /** The configured controllers still carrying a per-controller legacy property, each reduced to the connection triple needed to reach it. */
+  controllersAwaitingMigration: (config?: ProtectConfig) => ProtectControllerCredentials[];
+
+  /** Whether valid Protect login credentials exist for the primary controller. */
+  hasValidCredentials: (config?: ProtectConfig) => boolean;
+
+  /** The primary controller entry (the first), or undefined on a fresh configuration. */
+  primaryController: (config?: ProtectConfig) => ProtectControllerConfig | undefined;
+
+  /**
+   * Whether the first-run save would be refused because a controller after the primary already holds the address it writes, by the rule a controller save is
+   * refused under, with the primary as the save's target.
+   */
+  primaryListedElsewhere: (config: ProtectConfig | null | undefined, credentials: { address?: unknown }) => boolean;
+
+  /**
+   * The patch that removes one controller, and - when a MAC set is supplied - strips every configured entry scoped to one of those MAC addresses. An empty or
+   * absent MAC set carries no `options` array at all, which is what leaves the configured entries untouched rather than rewriting them to themselves.
+   */
+  withControllerRemoved: (config: ProtectConfig | undefined, removal: { address: string; macs?: readonly string[] }) => { controllers: ProtectControllerConfig[];
+    options?: string[]; };
+
+  /**
+   * The controllers patch that writes one controller's connection triple. An `originalAddress` naming a configured item replaces that item's credentials while
+   * carrying every other key it holds; an absent or unmatched one appends a new item instead. Null means the address is already listed and nothing is to be
+   * written.
+   */
+  withControllerSaved: (config: ProtectConfig | undefined, controller: { address: string; originalAddress?: string; password: string; username: string }) =>
+    { controllers: ProtectControllerConfig[] } | null;
+
+  /**
+   * The controllers patch that writes the supplied credentials into the primary controller, preserving the additional controllers the configured list holds, one
+   * entry per listed address, and the primary's other fields. Null means a controller after the primary already holds the address.
+   */
+  withPrimaryCredentials: (config: ProtectConfig | undefined, credentials: { address: string; password: string; username: string }) =>
+    { controllers: ProtectControllerConfig[] } | null;
+}
+
+/**
+ * One reading of the UI server's device-list answer: the list itself, the controller the server could not reach with the reason it captured, the UI server's own
+ * failure, or a sidebar entry whose controller left the configuration. Every failure carries no devices and the headline its surfaces render it under.
+ */
+export type DeviceListVerdict = { devices: Record<string, unknown>[]; kind: "list"; message: string } |
+  { devices: Record<string, unknown>[]; headline: string; kind: "unreachable"; message: string } |
+  { devices: Record<string, unknown>[]; guidance: string; headline: string; kind: "serverFailure" | "staleSelection"; message: string };
+
+/** The result the framework's device-list hook answers, carrying a failure's own headline and guidance where it has them. */
+export interface DeviceListResult {
+
+  devices: Record<string, unknown>[];
+  error: string;
+  guidance?: string;
+  headline?: string;
+}
 
 // The headline for a controller the plugin could not reach, rendered as the framework's error-view headline above the controller's own reason.
 const CONNECTION_FAILURE_HEADLINE = "Unable to connect to the UniFi Protect controller.";
@@ -39,8 +218,12 @@ const STALE_SELECTION_GUIDANCE = "Refresh the controller list to take it off the
 
 // The UI server failure, carrying the message that explains it. The message is never empty, because the framework reads an empty failure message as a healthy
 // controller with nothing to list. Each call composes a fresh verdict, so no two verdicts share a device array.
-const serverFailure = (message = SERVER_FAILURE_MESSAGE) => ({ devices: [], guidance: SERVER_FAILURE_GUIDANCE, headline: SERVER_FAILURE_HEADLINE,
-  kind: "serverFailure", message: message.length ? message : SERVER_FAILURE_MESSAGE });
+const serverFailure = (message: string = SERVER_FAILURE_MESSAGE): DeviceListVerdict => ({ devices: [], guidance: SERVER_FAILURE_GUIDANCE,
+  headline: SERVER_FAILURE_HEADLINE, kind: "serverFailure", message: message.length ? message : SERVER_FAILURE_MESSAGE });
+
+// Whether a fulfilled answer is in the one shape the UI server writes for a device list: an object carrying a device array and an error string.
+const isDeviceListAnswer = (answer: unknown): answer is { devices: Record<string, unknown>[]; error: string } => (typeof answer === "object") && (answer !== null) &&
+  ("devices" in answer) && Array.isArray(answer.devices) && ("error" in answer) && (typeof answer.error === "string");
 
 /* Read the UI server's answer to a device-list request, which is the one place that answer is interpreted, so the device view, the login check, and the
  * migration's probes cannot read one answer differently.
@@ -55,7 +238,7 @@ const serverFailure = (message = SERVER_FAILURE_MESSAGE) => ({ devices: [], guid
  *
  * @returns The verdict: its kind, its devices, its message, and for a failure its headline and the guidance it carries.
  */
-export const readDeviceListAnswer = (settlement) => {
+export const readDeviceListAnswer = (settlement: PromiseSettledResult<unknown>): DeviceListVerdict => {
 
   /* The bridge rejects with the plain object the host's UI server sends, which carries a message, and the page's own deadline rejects with an error, which carries
    * one too, so the message is read off whatever was thrown rather than off an error alone. A rejection that is itself a non-empty string is its own message, and
@@ -63,15 +246,15 @@ export const readDeviceListAnswer = (settlement) => {
    */
   if(settlement.status === "rejected") {
 
-    const { reason } = settlement;
-    const message = reason?.message;
+    const reason: unknown = settlement.reason;
+    const message = ((((typeof reason === "object") && (reason !== null)) || (typeof reason === "function")) && ("message" in reason)) ? reason.message : undefined;
 
     return serverFailure((typeof message === "string") ? message : ((typeof reason === "string") ? reason : undefined));
   }
 
   const answer = settlement.value;
 
-  if(!answer || (typeof answer !== "object") || !Array.isArray(answer.devices) || (typeof answer.error !== "string")) {
+  if(!isDeviceListAnswer(answer)) {
 
     return serverFailure();
   }
@@ -90,8 +273,8 @@ export const readDeviceListAnswer = (settlement) => {
  * it is one: every device-list outcome the page hands the framework goes through the one result composition below, so the copy for this failure lives with the
  * copy for every other. Each call composes a fresh verdict, so no two results share a device array.
  */
-export const staleSelectionVerdict = () => ({ devices: [], guidance: STALE_SELECTION_GUIDANCE, headline: STALE_SELECTION_HEADLINE, kind: "staleSelection",
-  message: STALE_SELECTION_MESSAGE });
+export const staleSelectionVerdict = (): DeviceListVerdict => ({ devices: [], guidance: STALE_SELECTION_GUIDANCE, headline: STALE_SELECTION_HEADLINE,
+  kind: "staleSelection", message: STALE_SELECTION_MESSAGE });
 
 /* Map a device-list verdict onto the result the framework's device-list hook answers, with each outcome's own copy beside it. A success carries its devices and
  * an empty error, and a failure carries no devices, its message, its headline, and its guidance where it has one. Only the members an outcome carries are
@@ -101,15 +284,15 @@ export const staleSelectionVerdict = () => ({ devices: [], guidance: STALE_SELEC
  * No success needs a nothing-to-list notice: every device list the UI server answers opens with the controller's own record, so the shortest list a reachable
  * controller can produce still carries a node to select and an options table to render against it.
  */
-export const deviceListResult = (verdict) => {
+export const deviceListResult = (verdict: DeviceListVerdict): DeviceListResult => {
 
-  const result = { devices: verdict.devices, error: verdict.message };
+  const result: DeviceListResult = { devices: verdict.devices, error: verdict.message };
 
   if(verdict.kind !== "list") {
 
     result.headline = verdict.headline;
 
-    if(verdict.guidance !== undefined) {
+    if("guidance" in verdict) {
 
       result.guidance = verdict.guidance;
     }
@@ -122,9 +305,13 @@ export const deviceListResult = (verdict) => {
 // save, and the page hands it to every surface that speaks the refusal.
 export const CONTROLLER_LISTED_WARNING = "This controller is already listed.";
 
+// Whether a configured controllers[] item is an object, the one shape whose members every reader of an entry reads. A hand edit can leave anything else there.
+const isControllerEntry = (item: unknown): item is ProtectControllerConfig => (typeof item === "object") && (item !== null);
+
 // The index of the item a save writes onto: the one whose address is exactly the address the save started from, or -1 for an add and for an original address no
 // item holds. The writer and the early check find their target here alike, so they ask the rule about the same item.
-const saveTarget = (items, originalAddress) => (originalAddress === undefined) ? -1 : items.findIndex((item) => item?.address === originalAddress);
+const saveTarget = (items: ProtectControllerConfig[], originalAddress: unknown): number => (originalAddress === undefined) ? -1 :
+  items.findIndex((item) => item.address === originalAddress);
 
 /* Whether one configured-options entry addresses a scope named by any of the supplied MAC addresses, and the whole of what the orphan sweep decides an entry on.
  *
@@ -146,7 +333,7 @@ const saveTarget = (items, originalAddress) => (originalAddress === undefined) ?
  * one in practice - it takes a hand-authored value carrying the exact MAC of a device on the controller being removed - and the alternative, matching the trailing
  * segment alone, would leave the legacy scoped spelling standing, which is a failure a user would actually meet.
  */
-const addressesSweptScope = (entry, macs) => {
+const addressesSweptScope = (entry: unknown, macs: readonly string[]): boolean => {
 
   if(typeof entry !== "string") {
 
@@ -179,33 +366,47 @@ const addressesSweptScope = (entry, macs) => {
   return ((action === "enable") ? segments.slice(1) : segments.slice(-1)).some((segment) => macs.includes(segment));
 };
 
-/* The legacy TOP-LEVEL configuration properties, each paired with the feature option that supersedes it and the kind of value it carries. These need no identity to
- * move: the option each one lands on is a plain global entry, so they migrate on the first open of any configuration that still carries them.
+/* The legacy TOP-LEVEL configuration properties, each paired with the feature option that supersedes it and the kind of value it carries, listed in the order the
+ * migration visits them, which is the order their entries are composed in. The const assertion keeps every property name a literal, which is what lets the
+ * migration read each one off the configuration by its own key. These need no identity to move: the option each one lands on is a plain global entry, so they
+ * migrate on the first open of any configuration that still carries them.
  *
  * The kind is declared here rather than read off the catalog because the two value properties are genuinely different types on the wire - a ring delay is a number
  * and an executable path is a string - and the compose rules turn on that difference. Log.Debug is the one landing the served catalog does not declare at all: it is
  * an undocumented diagnostic switch the plugin resolves through the same option grammar as everything else, and the engine composes a bare enable entry for a key it
  * does not recognize, which is exactly the entry the plugin's own read of it resolves.
  */
-const TIER_ONE_SETTINGS = {
+const TIER_ONE_SETTINGS = [
 
-  debug: { kind: "flag", option: "Log.Debug" },
-  ringDelay: { kind: "number", option: "Doorbell.Ring.Delay" },
-  verboseFfmpeg: { kind: "flag", option: "Log.FFmpeg" },
-  videoProcessor: { kind: "string", option: "Video.FFmpeg.Path" }
-};
+  { kind: "flag", option: "Log.Debug", property: "debug" },
+  { kind: "number", option: "Doorbell.Ring.Delay", property: "ringDelay" },
+  { kind: "flag", option: "Log.FFmpeg", property: "verboseFfmpeg" },
+  { kind: "string", option: "Video.FFmpeg.Path", property: "videoProcessor" }
+] as const;
 
-/* The legacy PER-CONTROLLER configuration properties, each paired with the feature option that supersedes it at controller scope. These cannot move on the strength
- * of the configuration alone: an option entry is addressed by the controller's MAC address, and a configuration file records only the address the plugin connects
- * to, so a controller has to actually answer before its settings have anywhere to land. The wiring probes for the MAC and hands in what it resolved; an item whose
- * controller stayed silent keeps its properties and gets another chance at the next open.
+/* The legacy PER-CONTROLLER configuration properties, each paired with the feature option that supersedes it at controller scope, listed in the order the migration
+ * visits them. These cannot move on the strength of the configuration alone: an option entry is addressed by the controller's MAC address, and a configuration file
+ * records only the address the plugin connects to, so a controller has to actually answer before its settings have anywhere to land. The wiring probes for the MAC
+ * and hands in what it resolved; an item whose controller stayed silent keeps its properties and gets another chance at the next open.
  */
-const TIER_TWO_SETTINGS = {
+const TIER_TWO_SETTINGS = [
 
-  mqttTopic: "Mqtt.Topic",
-  mqttUrl: "Mqtt.Url",
-  overrideAddress: "Nvr.OverrideAddress"
-};
+  { option: "Mqtt.Topic", property: "mqttTopic" },
+  { option: "Mqtt.Url", property: "mqttUrl" },
+  { option: "Nvr.OverrideAddress", property: "overrideAddress" }
+] as const;
+
+// A top-level legacy value in each shape that composes an entry, by the kind of value it carries.
+type TierOneChoice = { kind: "flag"; value: true } | { kind: "number"; value: number } | { kind: "string"; value: string };
+
+// A per-controller legacy value beside what the compose rule reads it against: the engine over the configuration, the controller's MAC, and the option it lands on.
+interface ScopedSetting {
+
+  engine: FeatureOptions;
+  mac: string;
+  option: string;
+  value: unknown;
+}
 
 /* The keys a controllers[] item converges to: the connection triple the plugin logs in with, and nothing else. Each item's successor is rebuilt from this list rather
  * than edited down from the original, which is what retires a key by simply never carrying it - the per-controller display name and the doorbell message presets both
@@ -214,19 +415,47 @@ const TIER_TWO_SETTINGS = {
  */
 const CONNECTION_KEYS = [ "address", "password", "username" ];
 
+// The feature option a device's custom HomeKit name is stored under, at the device's own scope, which is the one scope the option declares and where the plugin
+// reads it.
+const DEVICE_NAME_OPTION = "Device.Name";
+
 // Whether a rebuilt successor carries exactly what the item it replaces carried. This decides whether the controllers array rides the patch at all, and it is what
 // makes the rewrite converge: once every item is already its own connection triple, no successor differs and a later pass leaves the array alone.
-const unchanged = (item, successor) => {
+const unchanged = (item: ProtectControllerConfig, successor: ProtectControllerConfig): boolean => {
 
   const keys = Object.keys(successor);
 
-  return (Object.keys(item ?? {}).length === keys.length) && keys.every((key) => item[key] === successor[key]);
+  return (Object.keys(item).length === keys.length) && keys.every((key) => item[key] === successor[key]);
 };
+
+/* Whether a configured credential carries a length, read the way the credentials gate reads the username and the password: a string that is not empty, and any
+ * other value whose length property is truthy, which a hand edit can leave, since the gate holds only the address to being a string.
+ */
+const carriesLength = (value: unknown): boolean => {
+
+  if(typeof value === "string") {
+
+    return value.length > 0;
+  }
+
+  return ((((typeof value === "object") && (value !== null)) || (typeof value === "function")) && ("length" in value)) && Boolean(value.length);
+};
+
+/**
+ * What the controller list's interpreters are built over: HBPU's listed-address rule. Each piece's type is declared here at module scope, where `typeof` names the
+ * imported function, rather than in the factory's parameter, where the same words would name the parameter itself.
+ */
+export interface ProtectControllerListDependencies {
+
+  readonly addressListedElsewhere: typeof addressListedElsewhere;
+  readonly addressListingForm: typeof addressListingForm;
+}
 
 /* Build the interpreters of the configured controller list over HBPU's listed-address rule: its listing form, the form addresses are compared in, and its check of
  * whether a saved address is already listed at another position. Every interpreter here reads the list one entry per listed address, so each one needs the
- * rule, and handing the rule in is what keeps this module import-free while the page, its suites, and the plugin all read a controller's address through the one
- * rule. What counts as one address is the rule's to state; what this module states is which entry at an address is kept, and what a save may write.
+ * rule, and handing the rule in is what keeps this module's imports to types alone, which the compiler erases, while the page, its suites, and the plugin all read a
+ * controller's address through the one rule. What counts as one address is the rule's to state; what this module states is which entry at an address is kept, and
+ * what a save may write.
  *
  * Every lookup on the page stays exact, because a lookup asks which stored entry a key names and the stored string is that key. The refusal asks a different
  * question - whether a new entry would name a controller already listed - and the plugin uses only the first entry at an address, skipping every later one at
@@ -239,7 +468,7 @@ const unchanged = (item, successor) => {
  *
  * @returns The interpreters of the configured controller list, each under the name the page calls it by.
  */
-export const makeControllerList = ({ addressListedElsewhere, addressListingForm }) => {
+export const makeControllerList = ({ addressListedElsewhere, addressListingForm }: ProtectControllerListDependencies): ProtectControllerList => {
 
   /* The configured controllers, one entry per listed address: the stored entries in their stored order, with every entry after the first at one listing form left
    * out, and an empty list when the configuration holds no list at all, so a caller never branches on what a hand edit left there. An entry that is not an object
@@ -249,18 +478,18 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
    * reads, edits, lists, and removes that same entry, and every write composed over this list persists the list as read, which is how a repeated entry leaves the
    * configuration file. The entries are the stored objects themselves rather than copies, so a writer carries each entry it does not name across untouched.
    */
-  const controllers = (config) => {
+  const controllers = (config?: ProtectConfig | null): ProtectControllerConfig[] => {
 
     if(!Array.isArray(config?.controllers)) {
 
       return [];
     }
 
-    const listed = new Set();
+    const listed = new Set<string>();
 
-    return config.controllers.filter((item) => {
+    return config.controllers.filter((item: unknown): item is ProtectControllerConfig => {
 
-      if((typeof item !== "object") || (item === null)) {
+      if(!isControllerEntry(item)) {
 
         return false;
       }
@@ -284,14 +513,19 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
   };
 
   // The primary controller entry (the first), or undefined on a fresh configuration.
-  const primaryController = (config) => controllers(config)[0];
+  const primaryController = (config?: ProtectConfig): ProtectControllerConfig | undefined => controllers(config)[0];
 
-  // Whether valid Protect login credentials exist for the primary controller - the gate the first-run flow consults to decide whether setup is still required.
-  const hasValidCredentials = (config) => {
+  /* Whether valid Protect login credentials exist for the primary controller - the gate the first-run flow consults to decide whether setup is still required.
+   *
+   * The address is read as the plugin reads it: only a string is an address, and it is read trimmed, so an address of spaces alone, or a hand edit that left something
+   * other than a string, is one the plugin skips and one first run asks for again.
+   */
+  const hasValidCredentials = (config?: ProtectConfig): boolean => {
 
     const controller = primaryController(config);
 
-    return Boolean(controller?.address?.length && controller?.username?.length && controller?.password?.length);
+    return (typeof controller?.address === "string") && Boolean(controller.address.trim().length) && carriesLength(controller.username) &&
+      carriesLength(controller.password);
   };
 
   /* Whether the address a save writes onto the item at `index` is held by any other configured item, the index being -1 for a save with no target, which
@@ -301,7 +535,8 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
    * The items are the configured controllers as the page reads them, one entry per listed address, so no position but the target's own holds the target's form,
    * and a save that writes its target's own address in any spelling is never refused.
    */
-  const heldElsewhere = (items, index, address) => addressListedElsewhere({ address, addresses: items.map((item) => item.address), index });
+  const heldElsewhere = (items: ProtectControllerConfig[], index: number, address: unknown): boolean => addressListedElsewhere({ address,
+    addresses: items.map((item) => item.address), index });
 
   /* Whether a controller save would be refused because another configured controller already holds the address it writes, asked of the configuration the page
    * last received so a save can answer before its login check. The writer asks the same rule again against the configuration the write composes over, and its
@@ -313,7 +548,8 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
    *
    * @returns True when another configured controller already holds the written address.
    */
-  const controllerListedElsewhere = (config, { address, originalAddress }) => {
+  const controllerListedElsewhere = (config: ProtectConfig | null | undefined, { address, originalAddress }: { address?: unknown;
+    originalAddress?: unknown; }): boolean => {
 
     const items = controllers(config);
 
@@ -329,7 +565,8 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
    *
    * @returns True when another configured controller already holds the written address.
    */
-  const primaryListedElsewhere = (config, { address }) => heldElsewhere(controllers(config), 0, address);
+  const primaryListedElsewhere = (config: ProtectConfig | null | undefined, { address }: { address?: unknown }): boolean => heldElsewhere(controllers(config), 0,
+    address);
 
   /* Produce the controllers patch that writes the supplied credentials into the primary controller, preserving the additional controllers the configured list
    * holds, one entry per listed address, and the primary's other fields. On a true first run controllers[0] is undefined; object spread of undefined is a safe
@@ -341,7 +578,8 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
    * @returns The `{ controllers }` patch for the session's commit to merge onto the platform entry, or null when a controller after the primary already holds the
    *          address, by the rule a controller save is refused under.
    */
-  const withPrimaryCredentials = (config, { address, password, username }) => {
+  const withPrimaryCredentials = (config: ProtectConfig | undefined, { address, password, username }: { address: string; password: string;
+    username: string; }): { controllers: ProtectControllerConfig[] } | null => {
 
     const next = [...controllers(config)];
 
@@ -374,7 +612,8 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
    * @returns The `{ controllers }` patch for the session's commit to merge onto the platform entry, or null when the address is already listed and nothing is to
    *          be written.
    */
-  const withControllerSaved = (config, { address, originalAddress, password, username }) => {
+  const withControllerSaved = (config: ProtectConfig | undefined, { address, originalAddress, password, username }: { address: string; originalAddress?: string;
+    password: string; username: string; }): { controllers: ProtectControllerConfig[] } | null => {
 
     const items = controllers(config);
     const index = saveTarget(items, originalAddress);
@@ -407,9 +646,10 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
    *
    * @returns The patch for the session's commit to merge onto the platform entry.
    */
-  const withControllerRemoved = (config, { address, macs = [] }) => {
+  const withControllerRemoved = (config: ProtectConfig | undefined, { address, macs = [] }: { address: string;
+    macs?: readonly string[]; }): { controllers: ProtectControllerConfig[]; options?: string[] } => {
 
-    const remaining = controllers(config).filter((item) => item?.address !== address);
+    const remaining = controllers(config).filter((item) => item.address !== address);
 
     if(!macs.length) {
 
@@ -418,7 +658,7 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
 
     // The comparison runs in lower case on both sides: the parser lowercases an entry's address before it resolves a scope, so a MAC's casing in the
     // configuration file says nothing about which scope it names.
-    const swept = macs.map((mac) => String(mac).toLowerCase());
+    const swept = macs.map((mac) => mac.toLowerCase());
 
     return { controllers: remaining, options: (Array.isArray(config?.options) ? config.options : []).filter((entry) => !addressesSweptScope(entry, swept)) };
   };
@@ -434,17 +674,15 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
    *
    * @returns The connection triple of each controller whose per-controller settings have not migrated yet.
    */
-  const controllersAwaitingMigration = (config) => {
+  const controllersAwaitingMigration = (config?: ProtectConfig): ProtectControllerCredentials[] => {
 
     if(!Array.isArray(config?.controllers)) {
 
       return [];
     }
 
-    const properties = Object.keys(TIER_TWO_SETTINGS);
-
     // The controllers as the page reads them, one entry per listed address, so a repeated address is probed for the entry the plugin uses and for no other.
-    return controllers(config).filter((item) => properties.some((property) => item?.[property] !== undefined))
+    return controllers(config).filter((item) => TIER_TWO_SETTINGS.some(({ property }) => item[property] !== undefined))
       .map((item) => ({ address: item.address, password: item.password, username: item.username }));
   };
 
@@ -452,31 +690,46 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
     withControllerSaved, withPrimaryCredentials };
 };
 
-/* Build the migration over an injected feature-option engine class, the option catalog the plugin's own UI server publishes, and the configured controller list as
- * the page reads it. Injecting them is what keeps this module import-free and exercisable under node against the real engine and the real catalog, rather than
- * against a stand-in that could drift from either, and reading the list through the page's own reader is what makes a pass compose for the entry at each address
- * the page shows and the plugin uses.
+/**
+ * What the migration and the device-row namer are built over: the feature-option engine class, the served catalog, the configured controller list's reader, and
+ * HBPU's display-name rule. The engine's and the rule's types are declared here at module scope, where `typeof` names the imported class and function, rather than
+ * in the factory's parameter, where the same words would name the parameter itself.
+ */
+export interface ProtectConfigDependencies {
+
+  readonly FeatureOptions: typeof FeatureOptions;
+  readonly catalog: ProtectConfigCatalog;
+  readonly controllers: ProtectControllerList["controllers"];
+  readonly displayedName: typeof displayedName;
+}
+
+/* Build the migration and the device-row namer over an injected feature-option engine class, the option catalog the plugin's own UI server publishes, the configured
+ * controller list as the page reads it, and HBPU's display-name rule. Injecting them is what keeps this module's imports to types alone, which the compiler erases,
+ * so it stays browser-safe and exercisable under node against the real engine, the real catalog, and the real rule, rather than against a stand-in that could drift
+ * from any of them, and reading the list through the page's own reader is what makes a pass compose for the entry at each address the page shows and the plugin uses.
  *
  * @param injected.FeatureOptions - The feature-option engine class.
  * @param injected.catalog        - The served catalog, carrying its categories and its options record.
  * @param injected.controllers    - The configured controllers, one entry per listed address, as the reader makeControllerList builds answers them.
+ * @param injected.displayedName  - HBPU's display-name rule, which answers the custom name where one resolves and the fallback otherwise, as HomeKit carries it.
  *
- * @returns The interpreter: the legacy-settings migration.
+ * @returns The interpreter: the legacy-settings migration, and the device-row namer the sidebar names its device links through.
  */
-export const makeProtectConfig = ({ FeatureOptions, catalog, controllers }) => {
+export const makeProtectConfig = ({ FeatureOptions, catalog, controllers, displayedName }: ProtectConfigDependencies): ProtectConfigInterpreter => {
 
   // A feature-option engine over the served catalog and the config's own entries. The array is handed in directly rather than copied: the engine's set-option path is
   // a pure transform that composes a fresh array and reassigns its own field, so the array it was given is never written to.
-  const engineFor = (config) => new FeatureOptions(catalog.categories, catalog.options, Array.isArray(config?.options) ? config.options : []);
+  const engineFor = (config?: ProtectConfig): FeatureOptions => new FeatureOptions(catalog.categories, catalog.options,
+    Array.isArray(config?.options) ? config.options : []);
 
   /* The served catalog's own entry for an option name, or undefined when the catalog declares no such option. The composition is the feature-option engine's own rule
    * - a category name joined to an option name by a dot, with a nameless option addressing its category alone - stated here rather than imported because this module
-   * is deliberately import-free and receives the catalog as data. Every question the migration asks of the catalog resolves through this one walk, so no two readings
-   * of it can disagree.
+   * imports types alone and receives the catalog as data. Every question the migration asks of the catalog resolves through this one walk, so no two readings of it
+   * can disagree.
    */
-  const catalogEntry = (option) => {
+  const catalogEntry = (option: string): FeatureOptionEntry | undefined => {
 
-    for(const [ category, entries ] of Object.entries(catalog?.options ?? {})) {
+    for(const [ category, entries ] of Object.entries(catalog.options)) {
 
       for(const entry of entries) {
 
@@ -492,11 +745,11 @@ export const makeProtectConfig = ({ FeatureOptions, catalog, controllers }) => {
 
   // The value the catalog registers as an option's default, read from the served entry's own defaultValue field. The engine exposes a same-named method that answers
   // a different question - the boolean enabled-state default - so this reads the catalog data instead.
-  const registeredDefault = (option) => catalogEntry(option)?.defaultValue;
+  const registeredDefault = (option: string): FeatureOptionEntry["defaultValue"] => catalogEntry(option)?.defaultValue;
 
   // Whether an option is enabled by default, which is what decides whether its registered default is already the answer the user gets. A default-on value option
   // resolves to that default when nothing is configured; a default-off one resolves to nothing at all, and the plugin falls back to a constant of its own.
-  const defaultsOn = (option) => catalogEntry(option)?.default === true;
+  const defaultsOn = (option: string): boolean => catalogEntry(option)?.default === true;
 
   /* Whether a top-level legacy value is an active choice worth composing as an option entry. Each kind states the one shape that qualifies: a flag composes on the
    * boolean true alone, a numeric value on a finite number above zero, and a string value on a non-empty string. Everything else deletes without composing - false,
@@ -506,7 +759,9 @@ export const makeProtectConfig = ({ FeatureOptions, catalog, controllers }) => {
    * resolves to nothing and the plugin falls back...its registered default is the webUI's pre-fill and nothing more. A ring delay of exactly that pre-fill is a
    * working setting the user chose, and dropping it would silently stop suppressing their duplicate rings.
    */
-  const composes = ({ kind, value }) => {
+  const composes = (setting: { kind: TierOneChoice["kind"]; value: unknown }): setting is TierOneChoice => {
+
+    const { kind, value } = setting;
 
     switch(kind) {
 
@@ -516,7 +771,7 @@ export const makeProtectConfig = ({ FeatureOptions, catalog, controllers }) => {
 
       case "number":
 
-        return Number.isFinite(value) && (value > 0);
+        return (typeof value === "number") && Number.isFinite(value) && (value > 0);
 
       case "string":
 
@@ -536,7 +791,9 @@ export const makeProtectConfig = ({ FeatureOptions, catalog, controllers }) => {
    * read already answers the registered default, so an entry restating it would manufacture configuration out of nothing. The MQTT topic prefix is the one such
    * option here, and reading the default off the catalog rather than naming it keeps that comparison honest if the plugin ever changes what it publishes under.
    */
-  const composesScoped = ({ engine, mac, option, value }) => {
+  const composesScoped = (setting: ScopedSetting): setting is ScopedSetting & { value: string } => {
+
+    const { engine, mac, option, value } = setting;
 
     if((typeof value !== "string") || !value.length || (engine.scope(option, undefined, mac) !== "none")) {
 
@@ -547,6 +804,27 @@ export const makeProtectConfig = ({ FeatureOptions, catalog, controllers }) => {
   };
 
   return {
+
+    /* Name the device rows of one configuration by the name the plugin applies to each device's accessory in HomeKit: the custom name the user set where HomeKit can
+     * carry it, and the name the UI server composed for the device otherwise, through HBPU's display-name rule. One engine over the configuration names every row,
+     * so a page naming a whole list pays for one catalog index rather than one per row. The custom name is read at the row's serialNumber, the device's MAC the
+     * framework addresses the row by, which is the scope the plugin reads it at. A row carrying no composed name, the controller's own among them, falls back to the
+     * name it carries.
+     *
+     * The rule is applied here rather than in the UI server's answer, so a custom name being edited shows on the page before anything is saved and without a round
+     * trip, and the answer itself carries the composed name alone, so a row the page keeps never carries a custom name it would go on showing once that custom
+     * name is cleared.
+     *
+     * @param config - The platform configuration entry, the edited one when the page names rows under an edit.
+     *
+     * @returns The namer: a device row in, the name the page shows for it out.
+     */
+    deviceNamer: (config?: ProtectConfig): ((row: ProtectDeviceRow) => string) => {
+
+      const engine = engineFor(config);
+
+      return (row) => displayedName({ fallback: row.homeKitName ?? row.name ?? "", override: engine.value(DEVICE_NAME_OPTION, row.serialNumber) });
+    },
 
     /* Move the legacy configuration properties into their feature options, as a patch for the session to stage. This is transitional work with a planned end: once a
      * configuration has been all the way through it, there is nothing left to find and every later pass answers null.
@@ -566,12 +844,14 @@ export const makeProtectConfig = ({ FeatureOptions, catalog, controllers }) => {
      * Two substrates decline the whole pass. A `controllers` or an `options` field that is present but is not an array is one we cannot parse, and we do not guess at
      * it. Absent is not the same thing and is entirely valid: a configuration with no controllers key at all still migrates its top-level properties.
      *
+     * The map is read with each item's address as it is stored, whatever its type, so it is typed here for any key the caller resolved a MAC under.
+     *
      * @param config       - The platform configuration entry.
      * @param macByAddress - The MAC address resolved for each controller address that answered a probe this pass.
      *
      * @returns The patch to commit, or null when there is nothing to do.
      */
-    migrate: (config, macByAddress) => {
+    migrate: (config?: ProtectConfig, macByAddress?: ReadonlyMap<unknown, string>): ProtectConfigPatch | null => {
 
       if(!config || ((config.controllers !== undefined) && !Array.isArray(config.controllers)) ||
         ((config.options !== undefined) && !Array.isArray(config.options))) {
@@ -580,13 +860,13 @@ export const makeProtectConfig = ({ FeatureOptions, catalog, controllers }) => {
       }
 
       const engine = engineFor(config);
-      const patch = {};
-      const successors = [];
+      const patch: ProtectConfigPatch = {};
+      const successors: ProtectControllerConfig[] = [];
 
       let composed = false;
       let rewritten = false;
 
-      for(const [ property, { kind, option } ] of Object.entries(TIER_ONE_SETTINGS)) {
+      for(const { kind, option, property } of TIER_ONE_SETTINGS) {
 
         const value = config[property];
 
@@ -598,13 +878,15 @@ export const makeProtectConfig = ({ FeatureOptions, catalog, controllers }) => {
 
         patch[property] = undefined;
 
-        if(!composes({ kind, value }) || engine.exists(option)) {
+        const setting = { kind, value };
+
+        if(!composes(setting) || engine.exists(option)) {
 
           continue;
         }
 
         // A flag's whole payload is the entry's existence, so it composes with no value at all; a value option carries the value the property was holding.
-        engine.setOption((kind === "flag") ? { enabled: true, option } : { enabled: true, option, value });
+        engine.setOption((setting.kind === "flag") ? { enabled: true, option } : { enabled: true, option, value: setting.value });
         composed = true;
       }
 
@@ -618,20 +900,20 @@ export const makeProtectConfig = ({ FeatureOptions, catalog, controllers }) => {
        */
       for(const item of controllers(config)) {
 
-        const mac = macByAddress?.get(item?.address);
-        const successor = {};
+        const mac = macByAddress?.get(item.address);
+        const successor: ProtectControllerConfig = {};
 
         for(const key of CONNECTION_KEYS) {
 
-          if(item?.[key] !== undefined) {
+          if(item[key] !== undefined) {
 
             successor[key] = item[key];
           }
         }
 
-        for(const [ property, option ] of Object.entries(TIER_TWO_SETTINGS)) {
+        for(const { option, property } of TIER_TWO_SETTINGS) {
 
-          const value = item?.[property];
+          const value = item[property];
 
           if(value === undefined) {
 
@@ -646,9 +928,11 @@ export const makeProtectConfig = ({ FeatureOptions, catalog, controllers }) => {
             continue;
           }
 
-          if(composesScoped({ engine, mac, option, value })) {
+          const setting = { engine, mac, option, value };
 
-            engine.setOption({ enabled: true, id: mac, option, value });
+          if(composesScoped(setting)) {
+
+            engine.setOption({ enabled: true, id: mac, option, value: setting.value });
             composed = true;
           }
         }

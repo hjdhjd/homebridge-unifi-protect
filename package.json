@@ -69,7 +69,7 @@
   ],
   "scripts": {
     "prebuild": "npm run clean && npm run build-ui",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && homebridge-plugin-utils copy-webui",
     "build-ui": "homebridge-plugin-utils prepare-ui homebridge-ui/public/lib",
     "build-docs": "npm run build && homebridge-plugin-utils prepare-docs dist/options.js && homebridge-plugin-utils prepare-mqtt dist/mqtt.js && homebridge-plugin-utils prepare-chrome docChrome.json",
     "check-docs": "npm run build && homebridge-plugin-utils prepare-docs dist/options.js --check && homebridge-plugin-utils prepare-mqtt dist/mqtt.js --check && homebridge-plugin-utils prepare-chrome docChrome.json --check",

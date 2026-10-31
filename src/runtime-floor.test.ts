@@ -120,9 +120,9 @@ describe("HBUP runtime floor - live conformance", () => {
     assert.doesNotMatch(serverCode, NEW_DISPOSABLE_STACK, "homebridge-ui/server.js constructs a DisposableStack");
     assert.doesNotMatch(serverCode, NEW_ASYNC_DISPOSABLE_STACK, "homebridge-ui/server.js constructs an AsyncDisposableStack");
 
-    // The shipped host-Node source this package holds to the rule: every `.ts` under `src/`. The `homebridge-ui/public/` tree is browser-side and out of scope for the
-    // host runtime floor, and compiled `dist/` is not swept because tsc preserves bare globals verbatim from `src`, so the source sweep is the same guard without a
-    // build-freshness dependency.
+    // The shipped source this package holds to the rule: every `.ts` under `src/`, the host-Node source and the settings page's browser modules in `src/webui/` alike.
+    // The hand-written browser code in `homebridge-ui/public/` is out of scope for the host runtime floor, and compiled `dist/` is not swept because tsc preserves bare
+    // globals verbatim from `src`, so the source sweep is the same guard without a build-freshness dependency.
     const files = await sweepSourceFiles({ roots: [new URL(".", import.meta.url)] });
 
     // A mis-scoped walk that enumerates almost nothing must fail loudly rather than pass vacuously.

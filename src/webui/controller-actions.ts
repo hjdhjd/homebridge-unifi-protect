@@ -1,30 +1,122 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * controller-actions.mjs: The settings page's controller login check, its kept controller answers, and the controller save and removal that write them.
+ * webui/controller-actions.ts: The settings page's controller login check, its kept controller answers, and the controller save and removal that write them.
  */
-"use strict";
+import type { CommitConfig, CommitConfigResult, SaveAction, SaveCheckResult, SaveDelivery, SaveFlow, SaveFlowResult } from "homebridge-plugin-utils";
+import type { ProtectConfig, ProtectControllerList, readDeviceListAnswer } from "./protect-config.ts";
 
 /* The single home for the controller login check every card and the first-run submit share, for what the settings page remembers about each configured
  * controller, and for the configuration actions that change it - a controller's save and a controller's removal. The memory is private here and the page reads it
  * through a small handle, so the rule deciding whether an answer is worth keeping is stated once rather than at every site that fills one, and the seed, the
  * delete, and the generation bump each action makes stay out of reach of every reader that has no business making them.
  *
- * The module takes no imports at all and names no browser global. Every reach beyond it is handed in: the UI-server bridge's request, the framework's deadline,
- * and the device-list reading the login check runs over, and the framework's coordinated write, the host's toast, the login check, the page's read of its
- * configuration, the configuration writers, the listed-address rule and its sentence, and the device-list processing the save and the removal run over. A save
- * runs through the save flow its card carries. That is what lets the whole of it run under node against recording doubles and the real save flow, which puts a
- * swapped toast severity, a put-back that restores the wrong address, a seed that lands after its write, and a login check that loses its bound in front of a gate
- * rather than in front of a user.
+ * The module imports types alone, which the compiler erases, and names no browser global. Every reach beyond it is handed in: the UI-server bridge's request, the
+ * framework's deadline, and the device-list reading the login check runs over, and the framework's coordinated write, the host's toast, the login check, the page's
+ * read of its configuration, the configuration writers, the listed-address rule and its sentence, and the device-list processing the save and the removal run
+ * over. A save runs through the save flow its card carries. That is what lets the whole of it run under node against recording doubles and the real save flow,
+ * which puts a swapped toast severity, a put-back that restores the wrong address, a seed that lands after its write, and a login check that loses its bound in
+ * front of a gate rather than in front of a user.
  */
 
+/** The host's toast surface, one function per severity a delivery can name. */
+export interface HostToast {
+
+  error: (message: string) => void;
+  info: (message: string) => void;
+  success: (message: string) => void;
+  warning: (message: string) => void;
+}
+
+/** The sentences and the detail one login outcome shows, in the shape a card's line and a toast each read. */
+export interface LoginOutcome {
+
+  detail?: string;
+  lines: string[];
+}
+
+/**
+ * What the login request answers: the controller's device list when it accepted the login, the outcome to show when it did not, or retired when the action the
+ * request ran under was retired before it answered.
+ */
+export type ControllerLogin = { devices: Record<string, unknown>[]; kind: "passed" } | { kind: "failed"; outcome: LoginOutcome } | { kind: "retired" };
+
+/**
+ * The controller login check: given a card's address and login and the signal of the action it runs under, it answers what came of validating that login. The page
+ * builds one with makeControllerLogin and hands it to every surface that checks a login, the controller save among them.
+ */
+export type ControllerLoginRequest = (request: { address: string; password: string; signal: AbortSignal; username: string }) => Promise<ControllerLogin>;
+
+/** The part of a connection card an action reads: its save flow, what the user has entered, and the verdict line a save's outcome and a removal's failure paint on. */
+export interface ControllerCard {
+
+  flow: SaveFlow<ProtectConfig>;
+  values: () => { address: string; password: string; username: string };
+  verdict: { render: (options?: { detail?: string; lines?: string[]; tone?: string }) => void };
+}
+
+/**
+ * The kept controller answers as a reader may use them. Each is declared as a property carrying a function rather than as a method, which is what the module
+ * actually builds - an object of arrow functions closed over the private map and its generation - so a consumer is free to read one off the handle and call it on
+ * its own.
+ */
+export interface ControllerAnswers {
+
+  clear: () => void;
+  generation: () => number;
+  get: (address: unknown) => Record<string, unknown>[] | undefined;
+  keep: (fill: { address: unknown; answer: Record<string, unknown>[]; generation: number }) => boolean;
+}
+
+/**
+ * What the factory answers with: the kept answers the page reads its controllers through, and the controller save and removal that write them. The save resolves to
+ * the address that was written, or to null when nothing was.
+ */
+export interface ControllerActions {
+
+  answers: ControllerAnswers;
+  removeController: (removal: { address: string; card: ControllerCard; macs: readonly string[] }) => Promise<void>;
+  saveController: (save: { card: ControllerCard; originalAddress?: string }) => Promise<string | null>;
+}
+
+// A login the controller refused, the one login a declined save carries.
+type FailedLogin = Extract<ControllerLogin, { kind: "failed" }>;
+
+// Why a save declined before its write: the listed-address refusal, or the login the controller refused.
+type SaveRefusal = { kind: "listed" } | FailedLogin;
+
+// One outcome as a press speaks it: the channel its toast is raised on, the words it carries, and the tone it paints in on the card.
+interface SpokenOutcome {
+
+  channel: "error" | "warning";
+  outcome: { detail?: string; lines: string[] };
+  tone: string;
+}
+
 // The message a thrown value carries, read the one way every failure on the page reads it: an error's own message, and anything else a host throws as its text.
-const errorMessage = (error) => (error instanceof Error) ? error.message : String(error);
+const errorMessage = (error: unknown): string => (error instanceof Error) ? error.message : String(error);
 
 /* The words of one outcome as the single message a toast carries: its sentences, then any failure detail, in the order the line shows them. An outcome is composed
  * once and delivered to whichever surface presents it, so the toast says exactly what the line would have said. The host renders the message as text, so a
  * controller-reported detail is never interpreted as markup here either.
  */
-const toastMessage = ({ detail = "", lines = [] }) => [ ...lines, detail ].filter((part) => part.length).join(" ");
+const toastMessage = ({ detail = "", lines = [] }: { detail?: string; lines?: readonly string[] }): string => [ ...lines, detail ].filter((part) => part.length)
+  .join(" ");
+
+/**
+ * What the kept answers and the controller save and removal are built over: the page's own reach into the host, the framework, and the UI-server bridge.
+ */
+export interface ControllerActionsDependencies {
+
+  readonly commitConfig: CommitConfig<ProtectConfig>;
+  readonly controllerListedElsewhere: ProtectControllerList["controllerListedElsewhere"];
+  readonly controllerListedWarning: string;
+  readonly platformConfig: () => ProtectConfig | null;
+  readonly processDeviceList: (list: { address: string; devices: Record<string, unknown>[] }) => Record<string, unknown>[];
+  readonly requestControllerLogin: ControllerLoginRequest;
+  readonly toast: Pick<HostToast, "error" | "success" | "warning">;
+  readonly withControllerRemoved: ProtectControllerList["withControllerRemoved"];
+  readonly withControllerSaved: ProtectControllerList["withControllerSaved"];
+}
 
 /**
  * Build the settings page's kept controller answers and the controller save and removal that write them, over the page's own reach into the host, the framework,
@@ -45,7 +137,7 @@ const toastMessage = ({ detail = "", lines = [] }) => [ ...lines, detail ].filte
  * @returns The kept answers, the controller removal, and the controller save.
  */
 export const makeControllerActions = ({ commitConfig, controllerListedElsewhere, controllerListedWarning, platformConfig, processDeviceList, requestControllerLogin,
-  toast, withControllerRemoved, withControllerSaved }) => {
+  toast, withControllerRemoved, withControllerSaved }: ControllerActionsDependencies): ControllerActions => {
 
   /* Each controller address's device list, as this session last fetched it and already processed for the framework to render. One answer serves every reader that
    * needs it, which is why what is kept is the processed list rather than any narrower derivative of it: the device view returns it on every re-entry, a removal
@@ -57,7 +149,7 @@ export const makeControllerActions = ({ commitConfig, controllerListedElsewhere,
    * framework's own retry cycle always act on a live attempt rather than on a hopeful memory of one. The map lives as long as the actions the page built, which is
    * the page's own lifetime, so a reopened panel connects afresh.
    */
-  const byAddress = new Map();
+  const byAddress = new Map<unknown, Record<string, unknown>[]>();
 
   /* The generation the map above is on, bumped by every event that retires what it holds: a controller saved, a controller removed, and the Refresh control. A
    * fetch captures this value before it calls the bridge and compares it after, writing only when the two still agree.
@@ -74,7 +166,7 @@ export const makeControllerActions = ({ commitConfig, controllerListedElsewhere,
    * for keeping. The seed, the delete, and the bump each action below makes are deliberately absent, because each is a step inside a write rather than something a
    * reader is ever right to do on its own.
    */
-  const answers = {
+  const answers: ControllerAnswers = {
 
     // The Refresh control's whole handler: the generation moves so every fetch in flight loses its claim to be kept, and what is held goes.
     clear: () => {
@@ -107,7 +199,7 @@ export const makeControllerActions = ({ commitConfig, controllerListedElsewhere,
   };
 
   // Put one address back to the answer it held, or take it out where it held none.
-  const putBack = (address, prior) => {
+  const putBack = (address: string, prior: Record<string, unknown>[] | undefined): void => {
 
     if(prior === undefined) {
 
@@ -130,7 +222,7 @@ export const makeControllerActions = ({ commitConfig, controllerListedElsewhere,
    * What the answers held under each address the seed touches is read first, so the restore puts each one back exactly, or takes it out where there was none, and
    * moves the generation again so a fetch issued against the seeded state loses its claim too.
    */
-  const seed = ({ address, devices, replacedAddress }) => {
+  const seed = ({ address, devices, replacedAddress }: { address: string; devices: Record<string, unknown>[]; replacedAddress: string | undefined }): (() => void) => {
 
     const processed = processDeviceList({ address, devices });
     const priorAtAddress = byAddress.get(address);
@@ -189,31 +281,33 @@ export const makeControllerActions = ({ commitConfig, controllerListedElsewhere,
    *
    * @returns The address that was written, or null when nothing was.
    */
-  const saveController = async ({ card, originalAddress }) => {
+  const saveController = async ({ card, originalAddress }: { card: ControllerCard; originalAddress?: string }): Promise<string | null> => {
 
     const { address, password, username } = card.values();
     const replaced = Boolean(originalAddress) && (originalAddress !== address);
 
     // This press's delivery, kept from its check so a press the write rejects still speaks under the press's own rule, and the restore its composer answers once
     // it seeds. Each belongs to this press alone, so a later press on the same card can neither speak through this one's delivery nor undo this one's seed.
-    let deliver = null;
-    let restore = null;
+    let deliver: SaveDelivery | undefined;
+    let restore: (() => void) | undefined;
 
     // Speak one outcome through a press's delivery: painted on the card in the outcome's tone while the card presents the press, and raised on the named toast
     // otherwise.
-    const speak = (delivery, { channel, outcome, tone }) => delivery({ channel, paint: () => card.verdict.render({ ...outcome, tone }), text: toastMessage(outcome) });
+    const speak = (delivery: SaveDelivery, { channel, outcome, tone }: SpokenOutcome): void => delivery({ channel, paint: () => card.verdict.render({ ...outcome, tone }),
+      text: toastMessage(outcome) });
 
     // The refusal of an address another controller already holds, which is guidance rather than failure, and a save's failure, which carries what went wrong.
-    const listed = { channel: "warning", outcome: { lines: [controllerListedWarning] }, tone: "text-warning" };
-    const failure = (error) => ({ channel: "error", outcome: { detail: errorMessage(error), lines: ["Unable to save this controller."] }, tone: "text-danger" });
+    const listed: SpokenOutcome = { channel: "warning", outcome: { lines: [controllerListedWarning] }, tone: "text-warning" };
+    const failure = (error: unknown): SpokenOutcome => ({ channel: "error", outcome: { detail: errorMessage(error), lines: ["Unable to save this controller."] },
+      tone: "text-danger" });
 
-    let result;
+    let result: SaveFlowResult<SaveAction, Record<string, unknown>[], SaveRefusal>;
 
     try {
 
       result = await card.flow.save({
 
-        check: async (context) => {
+        check: async (context): Promise<SaveCheckResult<Record<string, unknown>[], SaveRefusal>> => {
 
           deliver = context.deliver;
 
@@ -223,10 +317,10 @@ export const makeControllerActions = ({ commitConfig, controllerListedElsewhere,
           }
 
           // A login that answers retired belongs to a press a newer act on the card has already retired, and the flow answers that press superseded before it
-          // reads what the check returned.
+          // reads what the check returned, so every declined answer the flow reads carries a login the controller refused.
           const login = await requestControllerLogin({ address, password, signal: context.signal, username });
 
-          return (login.kind === "passed") ? { kind: "passed", value: login.devices } : { kind: "declined", reason: login };
+          return (login.kind === "passed") ? { kind: "passed", value: login.devices } : { kind: "declined", reason: login as FailedLogin };
         },
         compose: (platform, devices) => {
 
@@ -330,9 +424,9 @@ export const makeControllerActions = ({ commitConfig, controllerListedElsewhere,
    * The cache work stays after the write, where it sits for a save's own reasons reversed: nothing the page re-reads inside the write consults the removed address
    * once the list drops it, so clearing afterwards costs a failed write nothing.
    */
-  const removeController = async ({ address, card, macs }) => {
+  const removeController = async ({ address, card, macs }: { address: string; card: ControllerCard; macs: readonly string[] }): Promise<void> => {
 
-    let result;
+    let result: CommitConfigResult;
 
     try {
 
@@ -383,6 +477,19 @@ export const makeControllerActions = ({ commitConfig, controllerListedElsewhere,
 };
 
 /**
+ * What the login check is built over: the bound on one check, the device-list reading, the UI-server bridge's request, and the framework's deadline. The reading's
+ * type is declared here at module scope, where `typeof` names the imported function, rather than in the factory's parameter, where the same words would name the
+ * parameter itself.
+ */
+export interface ControllerLoginDependencies {
+
+  readonly deadline: number;
+  readonly readDeviceListAnswer: typeof readDeviceListAnswer;
+  readonly request: (path: string, payload: unknown) => Promise<unknown>;
+  readonly withDeadline: (options: { promise: Promise<unknown>; seconds: number; signal?: AbortSignal }) => Promise<unknown>;
+}
+
+/**
  * Build the controller login check over the page's own reach into the UI-server bridge and the framework's deadline. The check validates a controller login against
  * the UI server and answers what came of it, and every card's validate control, every card's Save, and the first-run submit share it so none of them can drift
  * apart. The browser cannot reach the Protect controller directly, so the request bridges through the plugin's UI server.
@@ -408,9 +515,10 @@ export const makeControllerActions = ({ commitConfig, controllerListedElsewhere,
  *
  * @returns The login check.
  */
-export const makeControllerLogin = ({ deadline, readDeviceListAnswer, request, withDeadline }) => async ({ address, password, signal, username }) => {
+export const makeControllerLogin = ({ deadline, readDeviceListAnswer, request, withDeadline }: ControllerLoginDependencies): ControllerLoginRequest => async ({ address,
+  password, signal, username }) => {
 
-  if(!address?.length || !username?.length || !password?.length) {
+  if(!address.length || !username.length || !password.length) {
 
     return { kind: "failed", outcome: { lines: ["Please enter a valid UniFi Protect controller address, username and password."] } };
   }

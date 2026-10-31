@@ -1,8 +1,8 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * tsconfig.build.json: The TypeScript project `tsc` uses to emit the published `dist/` output. Narrowed to `src` and excludes the colocated test, fixtures, and helpers
- * files so they are never compiled into the package; type-checking those still happens through tsconfig.json (`npm run typecheck`). The IDE-and-lint project declaration
- * lives in tsconfig.json (broad include + `noEmit`), and both projects extend homebridge-plugin-utils' plugin profile.
+ * files so they are never compiled into the package; type-checking those still happens through tsconfig.json (`npm run typecheck`). tsconfig.json is the IDE-and-lint
+ * project, with `noEmit`, and both projects extend homebridge-plugin-utils' plugin profile.
  */
 {
   "compilerOptions": {

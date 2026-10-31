@@ -11,6 +11,7 @@ import { ProtectClient, isDeviceAdopted, noopLog } from "unifi-protect";
 import { featureOptionCategories, featureOptions } from "../dist/options.js";
 import { HomebridgePluginUiServer } from "@homebridge/plugin-ui-utils";
 import { composeMigrationPatch } from "../dist/options-legacy.js";
+import { deviceDisplayName } from "../dist/devices/device-descriptor.js";
 import util from "node:util";
 
 class PluginUiServer extends HomebridgePluginUiServer {
@@ -49,22 +50,31 @@ class PluginUiServer extends HomebridgePluginUiServer {
 
       try {
 
+        /* The address is read trimmed, because the plugin reads a listed controller's address trimmed, so the connect below reaches the controller the plugin
+         * connects to. The request keeps the address as stored, the spelling every lookup on the page finds its controller by. A hand edit can leave the address
+         * something other than a string, which is passed on as it stands, so the connect refuses it inside this try as a configuration error, and the page shows
+         * that refusal's sentence as its answer.
+         */
+        const address = (typeof controller.address === "string") ? controller.address.trim() : controller.address;
+
         // Connect to the controller. unifi-protect's connect() performs login and the initial bootstrap atomically, throwing a typed error on failure. This file ships
         // as raw JavaScript executed directly by the host's Node runtime with no transpile step, so an `await using` declaration (explicit-resource-management syntax,
         // which the Node 24 runtime provides) cannot appear here while the package's engines floor is below Node 24. The inner try/finally is the equivalent: it
         // guarantees the client and its realtime connection are released on every exit path, success or throw. We disable the periodic refresh failsafe since this is a
         // one-shot discovery probe. When the engines floor reaches Node 24, an `await using` declaration is the preferred form.
-        const client = await ProtectClient.connect({ host: controller.address, log: log, password: controller.password, refreshIntervalMs: false,
+        const client = await ProtectClient.connect({ host: address, log: log, password: controller.password, refreshIntervalMs: false,
           username: controller.username });
 
         try {
 
-          // Sort adopted devices by display name, falling back to the market name when a device has no user-assigned name.
-          const byName = (a, b) => (a.name ?? a.marketName).localeCompare(b.name ?? b.marketName);
-
-          // Project each live device collection to its raw config record, keep only the devices adopted by this controller, and sort. We read the config records rather
-          // than the command-bearing projections because the webUI consumes plain controller fields and serializes them across the request boundary.
-          const adopted = (devices) => devices.map(device => device.config).filter(isDeviceAdopted).sort(byName);
+          /* Project each live device collection to its raw config record, keep only the devices adopted by this controller, name each as HomeKit names its accessory
+           * with no custom name applied, and sort by that name. We read the config records rather than the command-bearing projections because the webUI consumes
+           * plain controller fields and serializes them across the request boundary. The name is the plugin's own rule, read from the compiled module the runtime
+           * names accessories with, and it travels in a field of its own beside the controller's name, so the page applies only the custom name being edited, which
+           * it reads from the configuration it already holds, and shows an edit before anything is saved.
+           */
+          const adopted = (devices) => devices.map(device => device.config).filter(isDeviceAdopted).map(config => ({ ...config, homeKitName: deviceDisplayName(config) }))
+            .sort((a, b) => a.homeKitName.localeCompare(b.homeKitName));
 
           // Return the controller first, then the adopted devices by category, paired with an empty error. The controller is element 0 - the controller-as-device
           // entry the feature options webUI selects on initial load.

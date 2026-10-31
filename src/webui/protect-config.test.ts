@@ -1,7 +1,7 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-config.test.ts: The webUI's two-tier legacy-settings migration, exercised against the REAL feature-option engine and the REAL served catalog, so the pins
- * bind to the same grammar the plugin's runtime resolves against rather than to a stand-in that could drift from either.
+ * webui/protect-config.test.ts: The webUI's two-tier legacy-settings migration, exercised against the REAL feature-option engine and the REAL served catalog, so
+ * the assertions bind to the same grammar the plugin's runtime resolves against rather than to a stand-in that could drift from either.
  *
  * Two deletion shapes run through every claim here, and they are asserted differently on purpose. A TOP-LEVEL legacy property leaves as a PRESENT patch key whose
  * value is undefined, because the session's shallow-merge commit deletes exactly that shape while it skips an omitted key entirely; presence is therefore read with
@@ -12,13 +12,18 @@
  * spelling of it. The closing round trip goes further and drives the plugin's actual resolution expressions - the debug gate, the ring-suppression window, the FFmpeg
  * logging gates, the FFmpeg path, the RTSP host override, and the MQTT pair - before and after the patch applies, which is what proves a migrated configuration runs
  * on the same effective values the legacy one did.
+ *
+ * The device-row namer is read the same way: each custom name is composed into the configuration through the engine's own setOption and read back through the
+ * namer at the row's serialNumber, the MAC the live page addresses a row by, over rows shaped as the UI server answers them, the name it composed beside the
+ * controller's own.
  */
-import { FeatureOptions, addressListedElsewhere, addressListingForm, mqttConnectionSettings } from "homebridge-plugin-utils";
-import { PROTECT_DOORBELL_RING_DELAY, PROTECT_MQTT_TOPIC } from "./settings.ts";
-import type { ProtectConfig, ProtectConfigPatch, ProtectControllerConfig } from "../homebridge-ui/public/protect-config.mjs";
+import type { Assert, Equal } from "homebridge-plugin-utils/testing";
+import { FeatureOptions, addressListedElsewhere, addressListingForm, displayedName, mqttConnectionSettings } from "homebridge-plugin-utils";
+import { PROTECT_DOORBELL_RING_DELAY, PROTECT_MQTT_TOPIC } from "../settings.ts";
+import type { ProtectConfig, ProtectConfigPatch, ProtectControllerConfig } from "./protect-config.ts";
 import { describe, test } from "node:test";
-import { deviceListResult, makeControllerList, makeProtectConfig, readDeviceListAnswer, staleSelectionVerdict } from "../homebridge-ui/public/protect-config.mjs";
-import { featureOptionCategories, featureOptions } from "./options.ts";
+import { deviceListResult, makeControllerList, makeProtectConfig, readDeviceListAnswer, staleSelectionVerdict } from "./protect-config.ts";
+import { featureOptionCategories, featureOptions } from "../options.ts";
 import assert from "node:assert/strict";
 
 // The controller these pins migrate, a sibling that proves one controller's entries never answer for another, and a camera beneath the first for the scope corner.
@@ -41,11 +46,25 @@ const LEGACY_VIDEO_PROCESSOR = "/usr/local/bin/ffmpeg";
 const RESOLVED = new Map([[ ADDRESS, CONTROLLER_MAC ]]);
 const UNRESOLVED = new Map<string, string>();
 
-// The controller list's interpreters and the migration under test, built exactly the way the webUI builds them: over HBPU's listed-address rule, imported here from
-// the package root that is compiled from the same source as the page's browser copy, the real engine class, and the real served catalog.
+// The controller list's interpreters, and the migration and device-row namer under test, built exactly the way the webUI builds them: over HBPU's listed-address and
+// display-name rules, imported here from the package root that is compiled from the same source as the page's browser copy, the real engine class, and the real served
+// catalog.
 const { controllerListedElsewhere, controllers, controllersAwaitingMigration, hasValidCredentials, primaryListedElsewhere, withControllerRemoved, withControllerSaved,
   withPrimaryCredentials } = makeControllerList({ addressListedElsewhere, addressListingForm });
-const protectConfig = makeProtectConfig({ FeatureOptions, catalog: { categories: featureOptionCategories, options: featureOptions }, controllers });
+const protectConfig = makeProtectConfig({ FeatureOptions, catalog: { categories: featureOptionCategories, options: featureOptions }, controllers, displayedName });
+
+/* Compile-time shape exercise for the HBPU pieces the factories are built over. It never runs - the function is never called, and its leading underscore marks it,
+ * with its bindings, as a compile-time exercise the typecheck reads - so it adds nothing to the runtime totals. Each injected piece's type is its HBPU export
+ * exactly, so a declaration that lets one collapse to any or loosen to a signature of its own, which every runtime row in this suite would still pass against, fails
+ * `npm run typecheck` here instead.
+ */
+const _injectedDependencyShapeExercises = (): void => {
+
+  type _ListedElsewhereIsTheRule = Assert<Equal<Parameters<typeof makeControllerList>[0]["addressListedElsewhere"], typeof addressListedElsewhere>>;
+  type _ListingFormIsTheRule = Assert<Equal<Parameters<typeof makeControllerList>[0]["addressListingForm"], typeof addressListingForm>>;
+  type _InjectedEngineIsTheClass = Assert<Equal<Parameters<typeof makeProtectConfig>[0]["FeatureOptions"], typeof FeatureOptions>>;
+  type _DisplayedNameIsTheRule = Assert<Equal<Parameters<typeof makeProtectConfig>[0]["displayedName"], typeof displayedName>>;
+};
 
 /* The configuration shapes these pins build. The module's own declaration types every legacy property as unknown, which is the honest shape of a hand-editable
  * config.json...narrowing the two fields the pins read back keeps the assertions free of casts without weakening anything the migration is handed.
@@ -233,6 +252,22 @@ describe("protect webUI legacy-settings migration, per-controller tier", () => {
     assert.ok(!Object.hasOwn(item, "name"), "a retired key needs no identity, so it leaves on this path too");
     assert.ok(!Object.hasOwn(patch, "options"), "nothing composed, because nothing could be addressed");
     assert.deepEqual(controllersAwaitingMigration(applyPatch(config, patch)), [CREDENTIALS], "the item is still named as awaiting migration, so a later open retries");
+  });
+
+  test("a padded controller awaiting migration is read by its address as stored, and its entries move onto the MAC address its stored address resolved", () => {
+
+    const padded = { ...CREDENTIALS, address: " " + ADDRESS + " " };
+    const config: TestConfig = { controllers: [{ ...padded, mqttUrl: LEGACY_BROKER }] };
+    const awaiting = controllersAwaitingMigration(config);
+
+    // The wiring probes each awaiting controller with the address it was handed and keys the MAC address the probe answers by that same address, which the settings
+    // server trims only for its connect.
+    const macByAddress = new Map(awaiting.map(({ address }): [ string, string ] => [ address as string, CONTROLLER_MAC ]));
+    const patch = migrated(config, macByAddress);
+
+    assert.deepEqual(awaiting, [padded], "the controller awaits migration by its address as stored, padding included");
+    assert.equal(engineWith(patch.options).value("Mqtt.Url", undefined, CONTROLLER_MAC), LEGACY_BROKER, "its broker moves onto the controller's MAC address");
+    assert.deepEqual(patch.controllers, [padded], "and its item slims to the connection triple, keeping its address as stored");
   });
 });
 
@@ -523,6 +558,18 @@ describe("protect webUI configured controllers, one entry per listed address", (
     }
   });
 
+  // The gate reads the address as the plugin does, trimmed and only as a string. An array is a non-string with a length of its own, so it needs the string check
+  // rather than the length check alone, and the padded real address is the other half: the trim reads past the spaces rather than refusing an address for them.
+  test("an address of spaces alone, or one that is not a string, holds no valid credentials, so first run is required", () => {
+
+    for(const [ address, label ] of [ [ "   ", "an address of spaces alone" ], [ 42, "a number" ], [ [ADDRESS], "an array" ] ] as [ unknown, string ][]) {
+
+      assert.equal(hasValidCredentials({ controllers: [{ ...CREDENTIALS, address }] }), false, label + " holds no valid credentials, so first run is required");
+    }
+
+    assert.equal(hasValidCredentials({ controllers: [{ ...CREDENTIALS, address: " " + ADDRESS + " " }] }), true, "a padded real address still holds valid credentials");
+  });
+
   test("an entry that is not an object is left out, and the object entries beside it are kept in their stored order as the stored objects", () => {
 
     const first = { ...CREDENTIALS };
@@ -712,6 +759,61 @@ describe("protect webUI device-list outcomes", () => {
     assert.notEqual(readDeviceListAnswer(answered({})).devices, readDeviceListAnswer(answered({})).devices, "as does every UI server failure");
     assert.notEqual(readDeviceListAnswer(answered({ devices: [], error: "" })).devices, readDeviceListAnswer(answered({ devices: [], error: "" })).devices,
       "and every unreachable verdict");
+  });
+});
+
+describe("protect webUI device-row naming", () => {
+
+  // A camera row as the live page holds it: the UI server's record, carrying the name the server composed for the camera beside the name the controller reports, and
+  // the page's serialNumber, which is the camera's MAC. The controller reports an emoji-only name, which HomeKit can carry nothing of, so the server composed the
+  // camera's model for it, and a namer that read the controller's name in place of the composed one would show a different name.
+  const cameraRow = { homeKitName: "G4 Doorbell Pro", mac: CAMERA_MAC, marketName: "G4 Doorbell Pro", modelKey: "camera", name: "🙂", serialNumber: CAMERA_MAC };
+
+  // The entry storing one custom name at a device's scope, composed through the engine's own setOption, so the namer reads back the grammar the page writes.
+  const customName = (value: string, id = CAMERA_MAC): string => composedEntry({ enabled: true, id, option: "Device.Name", value });
+
+  test("a row shows the custom name HomeKit can carry, sanitized as HomeKit carries it", () => {
+
+    assert.equal(protectConfig.deviceNamer({ options: [customName("Porch")] })(cameraRow), "Porch", "the custom name names the row");
+    assert.equal(protectConfig.deviceNamer({ options: [customName("Bedtime 🌙")] })(cameraRow), "Bedtime",
+      "a custom name HomeKit cleans is shown as HomeKit carries it");
+  });
+
+  test("a row whose custom name HomeKit can carry nothing of, or that has none, shows the name the UI server composed, sanitized", () => {
+
+    for(const value of [ "🙂", "---" ]) {
+
+      assert.equal(protectConfig.deviceNamer({ options: [customName(value)] })(cameraRow), "G4 Doorbell Pro",
+        "the custom name " + JSON.stringify(value) + " counts as none");
+    }
+
+    assert.equal(protectConfig.deviceNamer({ options: [] })(cameraRow), "G4 Doorbell Pro", "a row with no custom name shows the composed name");
+    assert.equal(protectConfig.deviceNamer({ options: [] })({ ...cameraRow, homeKitName: "Front Door 🌙" }), "Front Door", "the composed name is shown sanitized");
+  });
+
+  test("a row carrying no composed name shows the name it carries", () => {
+
+    const { homeKitName: _homeKitName, ...uncomposed } = { ...cameraRow, name: "Front|Door" };
+
+    assert.equal(protectConfig.deviceNamer({ options: [] })(uncomposed), "Front Door", "the controller's name for the device is the fallback, sanitized");
+    assert.equal(protectConfig.deviceNamer({ options: [customName("Porch")] })(uncomposed), "Porch", "and a custom name still names the row");
+  });
+
+  test("a controller row is unchanged", () => {
+
+    // The controller's own row carries no composed name, and a custom name set for one of its devices is read at that device's scope alone.
+    const controllerRow = { mac: CONTROLLER_MAC, modelKey: "nvr", name: "Home NVR", serialNumber: CONTROLLER_MAC };
+
+    assert.equal(protectConfig.deviceNamer({ options: [customName("Porch")] })(controllerRow), "Home NVR", "the controller row shows its own name");
+  });
+
+  test("a custom name is read back through the engine at the row's own serialNumber and nowhere else", () => {
+
+    // A custom name stored for another device names only that device, and one written globally names nothing, because the option declares device scope alone.
+    const namer = protectConfig.deviceNamer({ options: [ customName("Porch", OTHER_MAC), "Enable.Device.Name=Everywhere" ] });
+
+    assert.equal(namer(cameraRow), "G4 Doorbell Pro", "neither entry names this row");
+    assert.equal(namer({ ...cameraRow, mac: OTHER_MAC, serialNumber: OTHER_MAC }), "Porch", "and the other device's row is named by its own entry");
   });
 });
 
