@@ -42,15 +42,15 @@ const controllers: AbortController[] = [];
 // are confined to the construction boundary exactly as the light suite does; the instance under test is the production class running its real configureDevice /
 // spawnObservers paths. Returns logEntries and mqtt (the viewer asserts both the failure/configured log lines and the captured MQTT liveview handlers). seedAccessory,
 // when supplied, runs against the fresh accessory before construction, standing in for the services a Homebridge restart restores from the accessory cache.
-function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {},
-  harnessOptions: { disconnected?: boolean; liveviews?: ProtectNvrLiveviewConfig[]; seedAccessory?: (accessory: TestProtectAccessory) => void } = {}): {
+function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {}, harnessOptions: { disconnected?: boolean; liveviews?: ProtectNvrLiveviewConfig[];
+  seedAccessory?: (accessory: TestProtectAccessory) => void; userOptions?: string[]; } = {}): {
   accessory: TestProtectAccessory; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; projection: TestViewerProjection; store: TestStateStore;
   viewer: ProtectViewer;
 } {
 
   const viewerConfig = makeViewerConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ liveviews: harnessOptions.liveviews ?? [], viewers: [viewerConfig] }));
-  const { controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store });
+  const { controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
 
   controllers.push(controller);
 
@@ -383,6 +383,23 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
     const tails = mqtt.subscriptions.map((subscription) => composedTail(subscription.topic));
 
     assert.ok(tails.includes(projection.config.mac + "/liveview"), "the viewer liveview subscription composed the device-scoped tail");
+  });
+
+  test("under a custom name, a liveview switch keeps its liveview's name, and a rename of it in the Home app stands", async () => {
+
+    const built = buildViewer({}, { liveviews: [makeLiveviewConfig({ id: "liveview-1", name: "Front Door" })],
+      userOptions: ["Enable.Device.Name." + makeViewerConfig().mac + "=Hall Viewer"] });
+    const liveviewSwitch = built.accessory.getServiceById(Service.Switch, "liveview-1");
+
+    assert.ok(liveviewSwitch, "the liveview switch exists");
+    assert.equal(liveviewSwitch.displayName, "Front Door", "the switch keeps its liveview's name");
+
+    await triggerSet(liveviewSwitch.getCharacteristic(Characteristic.ConfiguredName), "Porch");
+    await settle();
+
+    assert.equal(liveviewSwitch.getCharacteristic(Characteristic.ConfiguredName).value, "Porch", "the Home app's name for the switch stands");
+
+    built.viewer.cleanup();
   });
 });
 

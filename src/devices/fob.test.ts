@@ -21,7 +21,7 @@ import type { Fob, ProtectFobConfig } from "unifi-protect";
 import { TestFobProjection, makeFobConfig } from "./testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
-import { formatLogEntry, settle, triggerGet } from "homebridge-plugin-utils/testing";
+import { formatLogEntry, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectEventDispatch } from "../nvr/event-dispatch.ts";
 import { ProtectFob } from "./fob.ts";
@@ -661,5 +661,30 @@ describe("real ProtectFob construction and behavior", () => {
     const labelingLines = logEntries.filter((entry) => (entry.level === "info") && formatLogEntry(entry).includes("button names"));
 
     assert.deepEqual(labelingLines, [], "a steady-state configure logs no button-labeling info line");
+  });
+
+  test("under a custom name, every button keeps the controller's label for it, and a rename of a button in the Home app stands", async () => {
+
+    const built = buildFob({}, { userOptions: ["Enable.Device.Name." + makeFobConfig().mac + "=Hall Fob"] });
+
+    for(const button of FOB_BUTTONS) {
+
+      const service = built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype(button.wireId));
+
+      assert.ok(service, button.label + "'s switch exists");
+      assert.equal(service.displayName, button.label, button.label + "'s switch keeps its bare button label");
+      assert.equal(service.getCharacteristic(Characteristic.ConfiguredName).value, button.label, button.label + "'s ConfiguredName keeps the controller's label");
+    }
+
+    const arm = built.accessory.getServiceById(Service.StatelessProgrammableSwitch, buttonSubtype("arm"));
+
+    assert.ok(arm, "the Arm button's switch exists");
+
+    await triggerSet(arm.getCharacteristic(Characteristic.ConfiguredName), "Leave");
+    await settle();
+
+    assert.equal(arm.getCharacteristic(Characteristic.ConfiguredName).value, "Leave", "the Home app's name for the button stands");
+
+    built.fob.cleanup();
   });
 });

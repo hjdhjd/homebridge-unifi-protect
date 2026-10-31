@@ -1311,8 +1311,8 @@ export class TestBaseDevice extends ProtectDevice<Sensor> {
     return this.configureStatusLedSwitch(pass);
   }
 
-  // Public window onto the base configureInfo (the AccessoryInformation Manufacturer / Model / SerialNumber / FirmwareRevision writes via setInfo, plus the
-  // syncName-gated accessoryName sync). Its deep tests live in device-info.test.ts.
+  // Public window onto the base configureInfo (the AccessoryInformation Manufacturer / Model / SerialNumber / FirmwareRevision writes via setInfo, plus the name
+  // write a custom name or name syncing asks for). Its deep tests live in device-info.test.ts.
   public configureInfoFor(): boolean {
 
     return this.configureInfo();

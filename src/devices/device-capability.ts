@@ -4,28 +4,31 @@
  */
 import type { AcquireServiceOptions, AcquireServiceResult, Nullable, ValidServiceOptions, ValidServiceResult } from "homebridge-plugin-utils";
 import type { ProtectAccessory, ProtectServiceOptions } from "../types.ts";
-import { acquireService, presenceChanged, validService } from "homebridge-plugin-utils";
 import { ProtectBase } from "./device-base.ts";
 import type { ProtectDeviceContext } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { Service } from "homebridge";
 
 /* The slice of a hosting device that a composed capability genuinely reads through it. ProtectDevice implements it, so every device family is capability-host-capable by
- * compiler proof rather than by retrofit: the contract is structural, and its one implementation obligation beyond what a device already exposes is publishObserverWake,
- * a three-line pass-through onto a hook ProtectDevice already owns. Universal conformance therefore costs one thin method and buys any future capability - on a camera or
- * on any other family - a host that is ready by construction.
+ * compiler proof rather than by retrofit: the contract is structural, and what it asks beyond what a device context already exposes is what ProtectDevice already owns -
+ * the service lifecycle every part on its accessory goes through, and publishObserverWake, a pass-through onto a hook the device keeps. Universal
+ * conformance therefore buys any future capability - on a camera or on any other family - a host that is ready by construction.
  *
  * The members it shares with ProtectDeviceContext are DERIVED through the Pick rather than re-spelled, so those signatures stay single-sourced and a widening in the
  * device context reaches here without a second edit. Reachability is one of them, and a capability reads it through the host deliberately: the composition of controller
  * health with the device's own online state lives at exactly one place, and a capability re-deriving it from its own projection would read a device online state that a
- * controller outage freezes at a stale value.
+ * controller outage freezes at a stale value. The service lifecycle is the other half of that reasoning: a capability's parts are the host's parts, so they are named
+ * and removed by the host's one rule rather than by a second copy of it here.
  *
  * This deliberately does NOT extend the whole ProtectDeviceContext the way ProtectCameraHost does. A capability inherits api, log, nvr, and platform from its own
- * ProtectBase ancestry, so it needs none of them from its host; what it needs is only what belongs to the host itself - the host's accessory, its feature-option scope,
- * its identity, its reachability, and its wake channel. The media layer's contract carries the whole device-context slice because it crosses a subsystem boundary and its
- * consumers hold no ProtectBase ancestry of their own; a capability's need is narrower, so its contract is narrower.
+ * ProtectBase ancestry, so it needs none of them from its host; what it needs is only what belongs to the host itself - the host's accessory and its service lifecycle,
+ * its feature-option scope, its identity, its reachability, and its wake channel. The media layer's contract carries the whole device-context slice because it crosses
+ * a subsystem boundary and its consumers hold no ProtectBase ancestry of their own; a capability's need is narrower, so its contract is narrower.
  */
 export interface ProtectCapabilityHost extends Pick<ProtectDeviceContext, "accessory" | "accessoryName" | "hasFeature" | "isReachable"> {
+
+  // Acquires a part on the host's accessory through the host's service lifecycle, which supplies the accessory and composes the part's name.
+  acquireService<T extends Service>(options: ProtectServiceOptions<AcquireServiceOptions<T>>): AcquireServiceResult<T>;
 
   // Resolves a numeric feature option against the host's device and controller scope.
   getFeatureNumber(option: string): Nullable<number | undefined>;
@@ -45,6 +48,12 @@ export interface ProtectCapabilityHost extends Pick<ProtectDeviceContext, "acces
 
   // Whether the host's backing controller record is currently present, which gates a capability's observers exactly as it gates the host's own.
   readonly recordPresent: boolean;
+
+  // Removes a part from the host's accessory through the host's service lifecycle.
+  removeService(service: Service): void;
+
+  // Reconciles a part's presence on the host's accessory from one verdict, through the host's service lifecycle.
+  validService<T extends Service>(options: ProtectServiceOptions<ValidServiceOptions<T>>): ValidServiceResult<T>;
 }
 
 /* The base every capability composed onto a hosting device extends. A capability is not a device: it owns no accessory, holds no HomeKit identity of its own, and its
@@ -124,7 +133,8 @@ export abstract class ProtectDeviceCapability<H extends ProtectCapabilityHost = 
     return this.host.accessory;
   }
 
-  // The host's accessory name, the default name a capability's own services take.
+  // The host's accessory name, the name its accessory carries, which a capability reads where it names something after its host outside the host's service
+  // lifecycle: an accessory it adds of its own, or a line it logs.
   protected get accessoryName(): string {
 
     return this.host.accessoryName;
@@ -148,38 +158,23 @@ export abstract class ProtectDeviceCapability<H extends ProtectCapabilityHost = 
     return this.host.isReservedName(name);
   }
 
-  // Acquire a service on the host's accessory, a thin re-binding to the homebridge-plugin-utils free function - the same single source ProtectDevice's own wrapper
-  // delegates to. It supplies the host's accessory, defaults the name to the host's accessory name, and answers with the library's result unchanged: the service, and
-  // the transition that says whether this call attached it or kept one already present. It lives here rather than on the spine because the spine also serves owners
-  // with no single accessory (liveviews manages a set) or a nullable one (the controller's system-information owner), so an accessory contract there would be
-  // dishonest; here a non-null accessory genuinely exists. A service it attaches changes what Homebridge's accessory cache holds for the host's accessory, so the
-  // wrapper marks that accessory for the next save, as the device's own wrapper does.
+  // Acquire a service on the host's accessory through the host's service lifecycle, which supplies the accessory, composes the part's name, marks the accessory for
+  // the next save when the service is new, and answers with the library's result unchanged. A capability's parts are the host's parts, so the host's one lifecycle
+  // names and removes them by the rule it holds every part on its accessory to. The re-binding is the capability's own because the spine also serves owners with no
+  // single accessory (liveviews manages a set) or a nullable one (the controller's system-information owner), so a lifecycle there would be dishonest; here a host
+  // carrying one accessory genuinely exists.
   protected acquireService<T extends Service>(options: ProtectServiceOptions<AcquireServiceOptions<T>>): AcquireServiceResult<T> {
 
-    const acquired = acquireService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
-
-    if(acquired.transition === "attached") {
-
-      this.platform.persistence.persist(this.accessory);
-    }
-
-    return acquired;
+    return this.host.acquireService(options);
   }
 
-  // Reconcile a service's presence on the host's accessory from one verdict, the same thin re-binding. The verdict is either a plain boolean or a presence-aware
-  // predicate, mirroring the free function: the predicate receives the service's current presence so a gate can keep an already-present service while refusing to create
-  // a new one. The answer is the library's own: the service with an attached or kept transition when the verdict keeps it, or null with a removed or absent transition
-  // when it does not. A service it attaches or removes marks the host's accessory for the next save, as the device's own wrapper does.
+  // Reconcile a service's presence on the host's accessory from one verdict, through the host's service lifecycle the same way. The verdict is either a plain boolean
+  // or a presence-aware predicate, mirroring the library's free function: the predicate receives the service's current presence so a gate can keep an already-present
+  // service while refusing to create a new one. The answer is the library's own: the service with an attached or kept transition when the verdict keeps it, or null
+  // with a removed or absent transition when it does not.
   protected validService<T extends Service>(options: ProtectServiceOptions<ValidServiceOptions<T>>): ValidServiceResult<T> {
 
-    const validated = validService({ ...options, accessory: this.accessory, name: options.name ?? this.accessoryName });
-
-    if(presenceChanged(validated.transition)) {
-
-      this.platform.persistence.persist(this.accessory);
-    }
-
-    return validated;
+    return this.host.validService(options);
   }
 
   // The log prefix and diagnostics name: the host's functional name, which resolves to the live controller projection name so a log prefix tracks the controller's

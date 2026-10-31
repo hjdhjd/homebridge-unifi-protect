@@ -1262,7 +1262,11 @@ export class ProtectNvr {
     // We've got a new device, let's add it to HomeKit.
     if(!accessory) {
 
-      accessory = new this.api.platformAccessory<ProtectAccessoryContext>(deviceDisplayName(device), uuid);
+      // The accessory is minted under the custom name the user set where HomeKit can carry it, the name its configure pass applies, because a standalone device is
+      // published under the name it is minted with before that pass runs.
+      const name = deviceDisplayName(device, { override: this.platform.featureOptions.value("Device.Name", device.mac, this.ufp.mac) });
+
+      accessory = new this.api.platformAccessory<ProtectAccessoryContext>(name, uuid);
 
       this.log.info("%s: Adding %s to HomeKit%s.", describeDevice(device), device.modelKey,
         this.hasFeature("Device.Standalone", device) ? " as a standalone device" : "");

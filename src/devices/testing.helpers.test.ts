@@ -725,9 +725,11 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     const projection = new TestSensorProjection("sensor-led", store) as unknown as Sensor;
     const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection);
 
-    // A smoke check that the public window reaches the base configureStatusLedSwitch: with the Enable.Device.StatusLed.Switch feature it validates and acquires the
-    // status-indicator switch and returns true (the deep status-LED nets - reflection, the onSet command routing, the change-gated log, the failure / auth paths - are
-    // device-statusled.test.ts's job).
+    // A smoke check that the public window reaches the base configureStatusLedSwitch: hints first, as every family's constructor runs them, since the service
+    // lifecycle reads them, then with the Enable.Device.StatusLed.Switch feature it validates and acquires the status-indicator switch and returns true (the deep
+    // status-LED nets - reflection, the onSet command routing, the change-gated log, the failure / auth paths - are device-statusled.test.ts's job).
+    device.configureHintsFor();
+
     assert.equal(device.configureStatusLedSwitchFor({ enabled: true }), true,
       "configureStatusLedSwitchFor reaches the base configureStatusLedSwitch and validates the switch");
 

@@ -1,12 +1,13 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * options.test.ts: Coverage of the catalog surface - the standing-buffer options, the direct-RTSP pins, the absence of the superseded streaming and HKSV-record option
- * names, the landing of every setting that migrated from the configuration schema onto a feature option, the motion surface's scoping on the camera's motion report,
- * and the scope prose the option reference publishes.
+ * options.test.ts: Coverage of the catalog surface - the standing-buffer options, the direct-RTSP channel pin, the absence of the superseded streaming and HKSV-record
+ * option names, the landing of every feature option that supersedes a configuration property, the device-scoped custom name, the motion surface's scoping on the
+ * camera's motion report, and the scope prose the option reference publishes.
  *
  * The catalog is plain data (featureOptionCategories plus the featureOptions map), so these are pure structure assertions. The end-to-end resolution of the new names
- * through the engine is proven where it steers behavior (the doorbell-construction pixel-ceiling test pins a real timeshift channel pin, and the ring-delay and
- * override-address pins drive their own resolution); this suite guards the catalog shape itself, including the map-key hazard that would silently drop a category.
+ * through the engine is proven where it steers behavior (the doorbell-construction pixel-ceiling test resolves a real timeshift channel pin, and the ring-delay and
+ * override-address assertions drive their own resolution); this suite guards the catalog shape itself, including the map-key hazard that would silently drop a
+ * category.
  *
  * One entry is guarded by its ABSENCE. Log.Debug is deliberately undeclared: it resolves at every scope through the engine's unrestricted walk for an option the
  * catalog does not know, the same mechanism the undocumented Debug.* namespace rides, and declaring it would surface it in the webUI and the generated documentation.
@@ -390,6 +391,21 @@ describe("the settings-consolidation option surface", () => {
 
     assert.ok(!catalogKeys().includes("log.debug"), "the debug option stays undeclared, resolving through the engine's unrestricted walk");
     assert.ok(!featureOptionCategories.some((category) => category.name.toLowerCase() === "log.debug"), "and it is not a category either");
+  });
+});
+
+describe("the custom device name", () => {
+
+  // A custom HomeKit name belongs to one device, so it declares device scope alone: the engine skips a configured entry at any level the option does not declare,
+  // which is what keeps a controller-wide or global value from naming every device the same.
+  test("Device.Name lands as a device-scoped value option", () => {
+
+    const entry = optionEntry("Device", "Name");
+
+    assert.ok(entry, "the custom name option exists");
+    assert.equal(entry.default, false, "no custom name applies until the user sets one");
+    assert.equal(entry.defaultValue, "", "the pre-filled value is empty, so enabling it alone names nothing");
+    assert.deepEqual(entry.scopes, ["device"], "a custom name belongs to one device");
   });
 });
 

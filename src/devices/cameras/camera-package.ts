@@ -4,6 +4,7 @@
  */
 import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../../types.ts";
 import { buildAdvertisedResolutions, buildChannelProfile, formatResolution, isPackageChannel } from "../../media/resolution.ts";
+import { describeDevice, describeDeviceModel } from "../device-descriptor.ts";
 import type { AdvertisedStreams } from "./camera.ts";
 import type { ChannelProfile } from "../../media/resolution.ts";
 import type { CharacteristicValue } from "homebridge";
@@ -11,7 +12,6 @@ import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectPersistedContextState } from "../../types.ts";
 import type { ProtectState } from "unifi-protect";
-import { describeDevice } from "../device-descriptor.ts";
 import { retry } from "homebridge-plugin-utils";
 
 // Package camera class. Extends ProtectCamera and represents the secondary camera channel on Protect doorbells that ship with one. The package camera is a HomeKit
@@ -62,23 +62,28 @@ export class ProtectCameraPackage extends ProtectCamera {
     this.observeState({ key: "camera.packageChannel", selector: packageChannelShape, title: "video streaming" }, () => void this.acquireStreaming().reconcile());
   }
 
-  // The package camera's display name is the parent's synced name plus the display suffix, single-sourced from the shared live parent projection through the base
-  // syncedName accessor. Every name-sync path (configureInfo at configure time, syncNameFromController whenever the name slice changes) reads this derivation, so
-  // the suffix applies uniformly with name syncing on; with it off, the creation-time name persists untouched.
-  protected override get syncedName(): string {
+  // The package camera's HomeKit name is the parent's plus the display suffix, single-sourced from the shared live parent projection and the parent's custom name,
+  // which the package's hints resolve from the parent MAC's scope, through the base homeKitName accessor, which adds the suffix to the name it derives from the record
+  // or the custom name. Every name write and every restore reads that derivation, so the suffix applies uniformly wherever the plugin owns the name, and a vanished
+  // record falls back to the package accessory's own name, which already carries the suffix once; with neither a custom name nor name syncing, the accessory keeps
+  // the name it carries.
+  protected override get homeKitNameSuffix(): string {
 
-    return super.syncedName + PACKAGE_CAMERA_NAME_SUFFIX;
+    return PACKAGE_CAMERA_NAME_SUFFIX;
   }
 
-  // The package camera's log prefix mirrors the syncedName accessor: the parent's "Name [Model]" descriptor with the Package Camera suffix on the name, so the package's
-  // log lines are attributable instead of colliding with the parent doorbell's (they share the same projection, so the base logName would render identically).
+  // The package camera's log prefix is the parent's "Name [Model]" descriptor with the Package Camera suffix on the name, so the package's log lines are attributable
+  // instead of colliding with the parent doorbell's (they share the same projection, so the base logName would render identically). While the record stands the prefix
+  // carries the name the controller reports, as every device's log prefix does, and once the record is gone it carries the package accessory's own name, a custom name
+  // included.
   protected override get logName(): string {
 
-    // Derive from the live record when present, decorated with the suffixed package name; when the parent record has vanished (in the removal grace), fall back
-    // to the suffixed name alone - itself non-throwing through the base syncedName accessor - so a detached package timer callback names the device instead of throwing.
+    // Derive from the live record when present, the name falling back to the model as the parent's descriptor does; when the parent record has vanished (in the
+    // removal grace), fall back to the package accessory's own name, which already carries the suffix and reads nothing from the record, so a detached package timer
+    // callback names the device instead of throwing.
     const config = this.device.peek();
 
-    return config ? describeDevice(config, { name: this.syncedName }) : this.syncedName;
+    return config ? describeDevice(config, { name: ((config.name ?? "") || describeDeviceModel(config)) + PACKAGE_CAMERA_NAME_SUFFIX }) : this.accessoryName;
   }
 
   // Configure the package camera.
@@ -204,8 +209,8 @@ export class ProtectCameraPackage extends ProtectCamera {
   private configureFlashlight(): boolean {
 
     // Validate whether we should have this service enabled.
-    const { service } = this.validService({ name: this.accessoryName + " Flashlight", serviceType: this.hap.Service.Lightbulb,
-      subtype: ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT, validate: this.hasFeature("Doorbell.PackageCamera.Flashlight") });
+    const { service } = this.validService({ serviceType: this.hap.Service.Lightbulb, subtype: ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT, suffix: " Flashlight",
+      validate: this.hasFeature("Doorbell.PackageCamera.Flashlight") });
 
     if(!service) {
 

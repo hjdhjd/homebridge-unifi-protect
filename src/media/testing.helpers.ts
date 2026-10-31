@@ -67,8 +67,8 @@ export class TestCameraHost implements ProtectCameraHost {
   // holds unchanged; a test about the no-RTSP population flips it.
   public hasRtspStream = true;
 
-  // A complete neutral ProtectCameraHints literal - every boolean false, every number 0, every string empty, the nested cropOptions zeroed - so a delegate reads a fully
-  // populated hint bag with no behavior turned on (crop false is required for the two-sided snapshot test, which must NOT enter the crop pass).
+  // A complete neutral ProtectCameraHints literal - every boolean false, every number 0, every string empty, no custom name, the nested cropOptions zeroed - so a
+  // delegate reads a fully populated hint bag with no behavior turned on (crop false is required for the two-sided snapshot test, which must NOT enter the crop pass).
   public hints: ProtectCameraHints = {
 
     crop: false,
@@ -83,6 +83,8 @@ export class TestCameraHost implements ProtectCameraHost {
     logHksv: false,
     logMotion: false,
     motionDuration: 0,
+    nameOverride: null,
+    nameOwned: false,
     nightVision: false,
     occupancyDuration: 0,
     probesize: 0,

@@ -83,7 +83,8 @@ These option(s) apply to: all Protect device types.
 | <A NAME="Device.AmbientLightSensor"></A>`Device.AmbientLightSensor`  | Enable the ambient light sensor for this device in HomeKit. **(default: enabled)**. <BR>*Supported on Protect cameras that have an ambient light sensor and Protect sensors that have an ambient light sensor.*
 | <A NAME="Device.Standalone"></A>`Device.Standalone`                  | Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app. **(default: disabled)**.
 | <A NAME="Device.SelfHealing"></A>`Device.SelfHealing`                | Attempt to restart misbehaving devices. This is always done very conservatively and only after periods of extended device-specific issues. **(default: enabled)**. <BR>*Supported on Protect cameras.*
-| <A NAME="Device.SyncName"></A>`Device.SyncName`                      | Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit. **(default: disabled)**.
+| <A NAME="Device.Name"></A>`Device.Name=<value>`                      | Custom HomeKit name for this device and its parts. It always applies, so a rename in the Home app yields to it wherever HomeKit allows. **(default: none)**.
+| <A NAME="Device.SyncName"></A>`Device.SyncName`                      | Synchronize the UniFi Protect name of this device and its parts with HomeKit. A rename in the Home app yields to it wherever HomeKit allows. A custom Name takes precedence. **(default: disabled)**.
 
 #### <A NAME="doorbell"></A>Doorbell &amp; Chime
 

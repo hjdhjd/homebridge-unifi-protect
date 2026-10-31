@@ -278,6 +278,34 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     assert.ok(loggedAt(built.logEntries, "info", "Configuring plugin-specific liveview switch: Scene."), "the configure-switch info line logged the view name");
   });
 
+  test("a new liveview switch carries the name the Home app edits, and a switch restored from the cache keeps the characteristics it carries", async () => {
+
+    // A switch an earlier run built, restored from the cache with no name the Home app edits, beside a liveview that calls for a switch the owner creates.
+    const restored = makeTestAccessory("Controller Den", liveviewSeed("Den"));
+
+    restored.context.liveview = "Den";
+    restored.context.nvr = CONTROLLER_MAC;
+
+    const restoredSwitch = restored.addService(new Service.Switch("Controller Den"));
+    const restoredCharacteristics = restoredSwitch.characteristics.map((characteristic) => characteristic.UUID);
+
+    const built = buildLiveviews({ cachedAccessories: [restored],
+      liveviews: [ makeLiveviewConfig({ id: "lv-den", name: "Protect-Den" }), makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" }) ] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const created = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"))?.getService(Service.Switch);
+
+    assert.ok(created, "the owner created the Scene switch");
+    assert.ok(created.testCharacteristic(Characteristic.ConfiguredName), "the new switch carries the name the Home app edits");
+    assert.equal(created.getCharacteristic(Characteristic.ConfiguredName).value, created.displayName, "and that name is the switch's own");
+    assert.equal(restored.getService(Service.Switch), restoredSwitch, "the restored accessory keeps the switch it carries");
+    assert.deepEqual(restoredSwitch.characteristics.map((characteristic) => characteristic.UUID), restoredCharacteristics,
+      "and that switch keeps exactly the characteristics it was restored with, so it gains no name the Home app edits");
+  });
+
   test("a controller with an empty name adds its security system accessory under its market name", async () => {
 
     // HAP refuses an accessory whose display name is empty, and the controller's empty name sanitizes to nothing, so the security system takes the market name.

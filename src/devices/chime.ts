@@ -3,9 +3,9 @@
  * chime.ts: Chime device class for UniFi Protect.
  */
 import type { Chime, PlaySpeakerOptions } from "unifi-protect";
+import type { ProtectAccessory, ProtectServiceNaming } from "../types.ts";
 import type { CharacteristicValue } from "homebridge";
 import { PROTECT_DOORBELL_CHIME_SPEAKER_DURATION } from "../settings.ts";
-import type { ProtectAccessory } from "../types.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
@@ -43,12 +43,11 @@ export class ProtectChime extends ProtectDevice<Chime> {
 
     if(service) {
 
-      this.accessory.removeService(service);
-      this.platform.persistence.persist(this.accessory);
+      this.removeService(service);
     }
 
-    // Configure the buzzer on the chime.
-    this.configureChimeSwitch("buzzer", "buzzer", ProtectReservedNames.SWITCH_DOORBELL_CHIME_BUZZER);
+    // Configure the buzzer on the chime, a part named from the chime itself.
+    this.configureChimeSwitch({ kind: "buzzer", sound: "buzzer", subtype: ProtectReservedNames.SWITCH_DOORBELL_CHIME_BUZZER, suffix: " Buzzer" });
 
     // A chime's persisted accessory can still carry a speaker switch registered under this flat, un-suffixed subtype, predating the per-ringtone switches that
     // configureRingtoneSwitches creates below. That method's own prune only tracks switches carrying a per-ringtone id suffix, so a lingering flat-subtype switch is
@@ -57,8 +56,7 @@ export class ProtectChime extends ProtectDevice<Chime> {
 
     if(service) {
 
-      this.accessory.removeService(service);
-      this.platform.persistence.persist(this.accessory);
+      this.removeService(service);
     }
 
     // Configure ringtone-specific switches.
@@ -77,9 +75,12 @@ export class ProtectChime extends ProtectDevice<Chime> {
     // pass and the prune below operate on it directly.
     const ringtones = this.nvr.client.ringtones.filter(tone => tone.nvrMac === this.nvr.ufp.mac);
 
+    // A ringtone's switch is named for the controller's ringtone, which is controller data rather than text the plugin fixes, so it carries a name of its own rather
+    // than a suffix to the chime's.
     for(const track of ringtones) {
 
-      this.configureChimeSwitch(track.name, "speaker", ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + "." + track.id);
+      this.configureChimeSwitch({ kind: "speaker", name: this.accessoryName + " " + toStartCase(track.name), sound: track.name,
+        subtype: ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + "." + track.id });
     }
 
     // Remove ringtones that no longer exist.
@@ -95,18 +96,19 @@ export class ProtectChime extends ProtectDevice<Chime> {
         this.timers.clear(subtype);
       }
 
-      this.accessory.removeService(service);
-      this.platform.persistence.persist(this.accessory);
+      this.removeService(service);
     }
   }
 
-  // Configure one chime switch (the buzzer or a ringtone speaker) for HomeKit. The kind ("buzzer" or "speaker") names the chime's sound source for playTone; the
-  // auto-reset timer is keyed by the switch's OWN subtype, not by kind, so concurrent ringtone plays never displace each other's reset - the registry's same-key
-  // replacement silently drops the displaced callback, which a shared "speaker" key would trigger, stranding every-but-the-last ringtone's tile on forever.
-  private configureChimeSwitch(name: string, kind: "buzzer" | "speaker", subtype: string): void {
+  // Configure one chime switch (the buzzer or a ringtone speaker) for HomeKit. The kind ("buzzer" or "speaker") names the chime's sound source for playTone, and the
+  // sound names what the switch plays, as playTone, the log, and the tone topic name it; the switch names itself as its caller says, by a name of its own or by the
+  // suffix it adds to the chime's name. The auto-reset timer is keyed by the switch's OWN subtype, not by kind, so concurrent ringtone plays never displace each
+  // other's reset - the registry's same-key replacement silently drops the displaced callback, which a shared "speaker" key would trigger, stranding every-but-the-last
+  // ringtone's tile on forever.
+  private configureChimeSwitch({ kind, sound, subtype, ...naming }: { kind: "buzzer" | "speaker"; sound: string; subtype: string } & ProtectServiceNaming): void {
 
     // Acquire the service.
-    const { service } = this.acquireService({ name: this.accessoryName + " " + toStartCase(name), serviceType: this.hap.Service.Switch, subtype });
+    const { service } = this.acquireService({ ...naming, serviceType: this.hap.Service.Switch, subtype });
 
     // Reflect and drive the play state for this sound source (buzzer or ringtone speaker).
     service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
@@ -136,7 +138,7 @@ export class ProtectChime extends ProtectDevice<Chime> {
 
       // Play the tone. The shared command-error helper that playTone routes through is the single failure log, so on failure we only revert the switch to its real state
       // and return - arming the auto-reset timer or logging playback past this point would leave a failed play showing as "playing" for the full duration.
-      if(!(await this.playTone(name, kind, tone))) {
+      if(!(await this.playTone(sound, kind, tone))) {
 
         this.reflectAfterSet(() => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(subtype)));
 
@@ -148,7 +150,7 @@ export class ProtectChime extends ProtectDevice<Chime> {
         () => service.updateCharacteristic(this.hap.Characteristic.On, this.timers.has(subtype)), PROTECT_DOORBELL_CHIME_SPEAKER_DURATION);
 
       // Inform the user.
-      this.log.info("Playing %s.", name);
+      this.log.info("Playing %s.", sound);
     });
 
     // Initialize the switch.

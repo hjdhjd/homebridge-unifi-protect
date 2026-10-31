@@ -7,11 +7,13 @@
  * construction-attaches its DoorbellCapability - the base constructors, the camera's configureDevice chain, the floating configure IIFE, the capability's configure
  * (the Doorbell service, LCD, physical chimes, chime volume), and the observers (the camera's plain-camera set, now including the always-armed isDoorbell
  * observer, the bare-motion lastMotion observer, and the capability-reconcile featureFlags observer, plus the capability's own). Suite B constructs
- * the full doorbell-plus-package family and pins the self-observing package camera: its exact persisted context, its
- * suffixed display name through the syncedName delegation, its observer census, and the fact that firmware, name, availability, and reachability all flow through
+ * the full doorbell-plus-package family and locks in the self-observing package camera: its exact persisted context, its
+ * suffixed display name through the homeKitName delegation, its observer census, and the fact that firmware, name, availability, and reachability all flow through
  * the package's own observers or the NVR's endpoints iterator. The reclassification-flap regression and the
- * deleted-copy-forward hints-equality pin guard the two known hazards of the reshape, and the UUID-seed pin guards the persistence-critical identity suffix against
- * drift. The pure-test unlocks ride along: the package selectChannel lens-2/URL-host rows and the parent selectSubstrateChannel pixel-ceiling row.
+ * deleted-copy-forward hints-equality assertion guard the known hazards of the reshape, and the UUID-seed assertion guards the persistence-critical identity
+ * suffix against drift. The file also holds the pure-test unlocks: the package selectChannel lens-2/URL-host rows and the parent selectSubstrateChannel pixel-ceiling
+ * row. Suite D names the package camera under its doorbell's custom name with name syncing off, and reads the package's log prefix with the shared record present and
+ * removed.
  *
  * Each suite holds ONE observer-wake subscription across all its phases, windowing the wake log per phase; the zero-wake-during-construction assertions are
  * vacuity-proofed by the same subscription later observing positive wakes. Test files run in separate processes under the node:test runner, so the subscriptions
@@ -280,7 +282,7 @@ describe("doorbell + package camera family construction (suite B)", () => {
     assert.equal(accessory.context.detectMotion, true, "motion awareness defaults on");
   });
 
-  test("the package camera's display name flows through the syncedName accessor with the display suffix applied", () => {
+  test("the package camera's display name flows through the homeKitName accessor with the display suffix applied", () => {
 
     const accessory = packageAccessory();
 
@@ -530,7 +532,138 @@ describe("doorbell bare-motion package forward (suite C)", () => {
   });
 });
 
-describe("the package camera UUID-seed pin", () => {
+/* Suite D names the package camera under its doorbell's custom name, with name syncing off, so a name the package carries is one the custom name put there. The
+ * package accessory is restored from the cache under the name a run before the custom name gave it, so the package's own configure pass is what renames it. Its log
+ * prefix reads the name the controller reports rather than the one HomeKit carries, and once the shared record is gone it reads the package accessory's own name,
+ * which nothing has to read the record for. Each test builds a fresh family and unwinds it in afterEach.
+ */
+describe("the package camera under a custom name (suite D)", () => {
+
+  // The doorbell's MAC, whose scope the package camera's hints resolve the custom name from, and the custom name set there.
+  const PARENT_MAC = "74ACB9000001";
+  const CUSTOM_NAME = "Porch";
+
+  let family: { controller: AbortController; doorbell: ProtectCamera } | undefined;
+
+  afterEach(() => {
+
+    family?.doorbell.cleanup();
+    family?.controller.abort();
+    family = undefined;
+  });
+
+  // Build the doorbell-plus-package family with name syncing off, the package restored from the cache under the controller's name for it, and the doorbell's
+  // custom name set or not.
+  async function buildFamily(options: { customName: boolean }): Promise<{ cameraId: string; doorbell: ProtectCamera; logEntries: readonly TestLogEntry[];
+    store: TestStateStore; }> {
+
+    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, name: "Front Door" });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller, logEntries, nvr } = makeTestNvr({ store,
+      userOptions: options.customName ? ["Enable.Device.Name." + PARENT_MAC + "=" + CUSTOM_NAME] : [] });
+
+    restoreAccessories(nvr, [makeTestAccessory("Front Door Package Camera", PARENT_MAC + ".PackageCamera")]);
+
+    const doorbell = constructDoorbell(nvr, makeTestAccessory("Front Door", PARENT_MAC), new TestCameraProjection(cameraConfig.id, store));
+
+    family = { controller, doorbell };
+
+    await settle();
+
+    return { cameraId: cameraConfig.id, doorbell, logEntries, store };
+  }
+
+  // The prefix of the one line the package camera logs when asked to, read from the line itself.
+  function packagePrefix(built: { doorbell: ProtectCamera; logEntries: readonly TestLogEntry[] }, line: string): string | undefined {
+
+    assert.ok(built.doorbell.packageCamera, "the package camera instance is live");
+    assert.doesNotThrow(() => built.doorbell.packageCamera?.log.info(line), "a package camera log line does not throw");
+
+    const entries = built.logEntries.filter((entry) => formatLogEntry(entry).endsWith(": " + line));
+
+    assert.equal(entries.length, 1, "the package camera logged the line once");
+
+    return entries[0] ? formatLogEntry(entries[0]).slice(0, -line.length) : undefined;
+  }
+
+  test("with Device.SyncName off, a doorbell's custom name names its package camera \"<custom name> Package Camera\"", async () => {
+
+    const built = await buildFamily({ customName: true });
+    const accessory = built.doorbell.packageCamera?.accessory as unknown as TestProtectAccessory | undefined;
+
+    assert.ok(accessory, "the package camera instance is live");
+    assert.equal(built.doorbell.accessory.displayName, CUSTOM_NAME, "the doorbell carries its custom name");
+    assert.equal(accessory.displayName, CUSTOM_NAME + " Package Camera", "the package's own configure pass renamed it under the doorbell's custom name");
+    assert.equal(accessory.getService(Service.AccessoryInformation)?.getCharacteristic(Characteristic.Name).value, CUSTOM_NAME + " Package Camera",
+      "the HomeKit-visible name carries the custom name with the suffix");
+  });
+
+  // The package camera's log prefix with the shared record present, and then once the record is removed, as a detached timer callback in the removal grace reads it.
+  async function packagePrefixes(options: { customName: boolean }): Promise<{ present: string | undefined; removed: string | undefined }> {
+
+    const built = await buildFamily(options);
+    const present = packagePrefix(built, "Present line.");
+
+    built.store.removeCameraRecord(built.cameraId);
+
+    await settle();
+
+    return { present, removed: packagePrefix(built, "Removed line.") };
+  }
+
+  test("with the parent record removed, a package log line does not throw and its prefix carries Protect's name with the suffix", async () => {
+
+    // With no custom name the package accessory's own name is Protect's name with the suffix, so the prefix reads that name with the record and without it.
+    assert.deepEqual(await packagePrefixes({ customName: false }), { present: "Front Door Package Camera [Test Camera Model]: ",
+      removed: "Front Door Package Camera: " }, "the prefix is the parent's descriptor with the suffix, and the package accessory's own name once the record is gone");
+  });
+
+  test("under a custom name, a package log line still carries Protect's name with the suffix, and the package's own name once the parent record is removed", async () => {
+
+    // The log prefix reads the name the controller reports, so a custom name reaches it only once the record is gone, through the package accessory's own name.
+    assert.deepEqual(await packagePrefixes({ customName: true }), { present: "Front Door Package Camera [Test Camera Model]: ",
+      removed: CUSTOM_NAME + " Package Camera: " }, "the prefix carries Protect's name while the record stands, and the package's HomeKit name once it is gone");
+  });
+});
+
+describe("the doorbell's parts under name syncing (suite E)", () => {
+
+  test("a controller rename under SyncName renames a part of the doorbell and a part of its doorbell capability live", async () => {
+
+    // The doorbell's motion sensor is a part of the camera itself, and a physical chime switch is a part the doorbell capability stands up on the camera's accessory,
+    // so the rename reaching each shows the capability's parts are held by the host's one registry.
+    const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasChime: true, isDoorbell: true }, name: "Front Door" });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { controller, nvr } = makeTestNvr({ store, userOptions: [ "Enable.Device.SyncName", "Enable.Doorbell.PhysicalChime" ] });
+    const doorbell = constructDoorbell(nvr, makeTestAccessory("Front Door", cameraConfig.mac), new TestCameraProjection(cameraConfig.id, store));
+
+    await settle();
+
+    try {
+
+      const motion = doorbell.accessory.getService(Service.MotionSensor);
+      const chime = doorbell.accessory.getServiceById(Service.Switch, "DoorbellChime.mechanical");
+
+      assert.ok(motion && chime, "the doorbell carries its motion sensor and the capability's mechanical chime switch");
+      assert.equal(chime.getCharacteristic(Characteristic.ConfiguredName).value, "Front Door Physical Chime Mechanical",
+        "precondition: the chime starts under the controller's first name for the doorbell");
+
+      store.pushCameraPatch(cameraConfig.id, { name: "New Door" });
+
+      await settle();
+
+      assert.equal(motion.getCharacteristic(Characteristic.ConfiguredName).value, "New Door", "the doorbell's own part took the controller's new name");
+      assert.equal(chime.getCharacteristic(Characteristic.ConfiguredName).value, "New Door Physical Chime Mechanical",
+        "and so did the capability's part, its suffix after the new name");
+    } finally {
+
+      doorbell.cleanup();
+      controller.abort();
+    }
+  });
+});
+
+describe("the package camera UUID-seed assertion", () => {
 
   test("a cached accessory keyed by the literal MAC + .PackageCamera seed is found, not re-registered", async () => {
 
@@ -538,8 +671,8 @@ describe("the package camera UUID-seed pin", () => {
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { api, controller, nvr } = makeTestNvr({ store });
 
-    // The pin is the LITERAL seed string, deliberately not derived from the production constant: cached accessories in the field were keyed by exactly this value,
-    // so any drift in the persistence-critical identity suffix must break this fixture loudly.
+    // The seed is the LITERAL string, deliberately not derived from the production constant: cached accessories in the field were keyed by exactly this value, so
+    // any drift in the persistence-critical identity suffix must break this fixture loudly.
     const cached = makeTestAccessory("Cached Package", cameraConfig.mac + ".PackageCamera");
 
     restoreAccessories(nvr, [cached]);

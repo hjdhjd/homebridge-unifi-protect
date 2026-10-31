@@ -23,7 +23,7 @@
  * Co-located with production code under src/ so the type-check pass covers this file alongside everything else, while tsconfig.build.json excludes every *.helpers.ts,
  * *.fixtures.ts, and *.test.ts from the emitted dist/, so none of the rig reaches the published package.
  */
-import type { CameraController, CameraControllerOptions, ChangeReason, CharacteristicValue, Controller, ControllerServiceMap, Resolution, WithUUID } from "homebridge";
+import type { CameraController, CameraControllerOptions, CharacteristicValue, Controller, ControllerServiceMap, Resolution, WithUUID } from "homebridge";
 import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } from "./media/stream-delegate.ts";
 import type { DeepPartial, DeviceSelectors, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig,
   ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState, ProtectStateRecord, ProtectViewerConfig, StateModelKey,
@@ -31,6 +31,7 @@ import type { DeepPartial, DeviceSelectors, ProtectCameraConfig, ProtectChimeCon
 import type { ProtectAccessory, ProtectAccessoryContext } from "./types.ts";
 import { loadHomebridge, watchServerWarnings } from "homebridge-plugin-utils/testing";
 import type { AdvertisedStreams } from "./devices/cameras/camera.ts";
+import { ChangeReason } from "homebridge-plugin-utils";
 import type { ChannelProfile } from "./media/resolution.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectCameraHost } from "./media/camera-host.ts";
@@ -125,19 +126,11 @@ export function makeTestAccessory(displayName = "Test Accessory", seed = nextSee
   return new constructionApi.platformAccessory<ProtectAccessoryContext>(displayName, accessoryUuid(seed));
 }
 
-// The reasons HAP stamps on the changes its event notifications and its update path raise, each checked against the member of HAP's own const enum that names it,
-// the form HBPU's Homebridge double checks HAP's event names by, so a value that drifts from upstream fails the build here. The enum itself is out of reach at runtime
-// under this project's module syntax.
-const EVENT_REASON = "event" satisfies `${ChangeReason.EVENT}`;
-const UPDATE_REASON = "update" satisfies `${ChangeReason.UPDATE}`;
+// The new values of the changes one characteristic raised for one reason, in the order HAP raised them. The reasons are HBPU's runtime mirror of HAP's own enum, the
+// values HAP stamps on each change its event notifications and its update path raise.
+function changeValues(accessory: TestPlatformAccessory, characteristic: Characteristic, reason: ChangeReason): Nullable<CharacteristicValue>[] {
 
-// The new values of the changes one characteristic raised for one reason, in the order HAP raised them. HAP's reason enum is a string enum, so each change's reason
-// widens to the string it carries for the comparison.
-function changeValues(accessory: TestPlatformAccessory, characteristic: Characteristic, reason: string): Nullable<CharacteristicValue>[] {
-
-  const matches = (change: { characteristic: Characteristic; reason: string }): boolean => (change.characteristic === characteristic) && (change.reason === reason);
-
-  return accessory.changes.filter(matches).map((change) => change.newValue);
+  return accessory.changes.filter((change) => (change.characteristic === characteristic) && (change.reason === reason)).map((change) => change.newValue);
 }
 
 /**
@@ -153,7 +146,7 @@ function changeValues(accessory: TestPlatformAccessory, characteristic: Characte
  */
 export function writesTo(accessory: TestPlatformAccessory, characteristic: Characteristic): Nullable<CharacteristicValue>[] {
 
-  return changeValues(accessory, characteristic, UPDATE_REASON);
+  return changeValues(accessory, characteristic, ChangeReason.UPDATE);
 }
 
 /**
@@ -168,7 +161,7 @@ export function writesTo(accessory: TestPlatformAccessory, characteristic: Chara
  */
 export function eventsFrom(accessory: TestPlatformAccessory, characteristic: Characteristic): Nullable<CharacteristicValue>[] {
 
-  return changeValues(accessory, characteristic, EVENT_REASON);
+  return changeValues(accessory, characteristic, ChangeReason.EVENT);
 }
 
 /**

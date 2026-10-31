@@ -3,10 +3,10 @@
  * device-hints.test.ts: The base-capability concern net for the shared ProtectDevice feature-option hints derivation, netted once family-agnostically.
  *
  * configureHints (device.ts) is a BASE ProtectDevice behavior every family runs at construction: it derives its hints from feature options (enabled, logMotion,
- * motionDuration, occupancyDuration, smartOccupancy, standalone, syncName), clamps the durations to their floors (motionDuration >= 2, occupancyDuration >= 60), and
- * logs deviations from the defaults. Per the two-layer test architecture the base derivation/clamp/log logic is netted ONCE here against the shared minimal
- * TestBaseDevice vehicle (the all-quiet makeSensorConfig carrier) rather than re-asserted inside each family suite: every concern test builds the device with a
- * userOptions set, calls the test-only configureHintsFor window, and asserts the resulting hints + the deviation logs.
+ * motionDuration, nameOverride, occupancyDuration, smartOccupancy, standalone, syncName), clamps the durations to their floors (motionDuration >= 2,
+ * occupancyDuration >= 60), and logs deviations from the defaults. Per the two-layer test architecture the base derivation/clamp/log logic is netted ONCE here
+ * against the shared minimal TestBaseDevice vehicle (the all-quiet makeSensorConfig carrier) rather than re-asserted inside each family suite: every concern test
+ * builds the device with a userOptions set, calls the test-only configureHintsFor window, and asserts the resulting hints + the deviation logs.
  *
  * configureHints's PRODUCT is the hints object - a PUBLIC field (device.ts) consumed across the class hierarchy, the same field doorbell-construction.test.ts
  * reads directly - plus the user-visible deviation logs. So this suite reads device.hints DIRECTLY (typed Readonly<ProtectHints> at the read site for read-only intent)
@@ -96,7 +96,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
 
   describe("the defaults (no userOptions)", () => {
 
-    test("the seven base hints take their option defaults and no deviation log fires", () => {
+    test("the base hints take their option defaults and no deviation log fires", () => {
 
       const built = buildHintsDevice();
 
@@ -119,6 +119,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       assert.equal(loggedAt(built.logEntries, "info", "Motion event duration set to"), false, "no motion-duration deviation log at the defaults");
       assert.equal(loggedAt(built.logEntries, "info", "Occupancy event duration set to"), false, "no occupancy-duration deviation log at the defaults");
       assert.equal(loggedAt(built.logEntries, "info", "Syncing Protect device name"), false, "no syncName deviation log at the defaults (singular nor plural)");
+      assert.equal(loggedAt(built.logEntries, "info", "Custom HomeKit name set to"), false, "no custom-name log at the defaults");
     });
   });
 
@@ -198,6 +199,39 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       assert.equal(hints.motionDuration, 10, "motionDuration stays at its default");
       assert.equal(hints.occupancyDuration, 300, "occupancyDuration stays at its default");
       assert.equal(hints.standalone, false, "standalone stays at its default");
+    });
+  });
+
+  describe("the custom name (Device.Name)", () => {
+
+    // The option is scoped to the device alone, so each fixture addresses the carrier's own MAC, and the engine hands the hint the value it stored, trimmed at its edges.
+    test("a custom name set on the device resolves into nameOverride", () => {
+
+      const built = buildHintsDevice({ userOptions: ["Enable.Device.Name." + SENSOR_MAC + "=  Kitchen Sensor  "] });
+
+      device = built.device;
+
+      assert.equal(device.hints.nameOverride, "Kitchen Sensor", "the custom name resolves into the hint");
+    });
+
+    // An emoji alone is a name HomeKit's naming rules leave nothing of, so HBPU's custom-name rule counts it as no custom name and the device keeps its own name.
+    test("a custom name HomeKit can carry nothing of resolves to no custom name", () => {
+
+      const built = buildHintsDevice({ userOptions: ["Enable.Device.Name." + SENSOR_MAC + "=🙂"] });
+
+      device = built.device;
+
+      assert.equal(device.hints.nameOverride, null, "an emoji-only custom name resolves to null");
+      assert.equal(loggedAt(built.logEntries, "info", "Custom HomeKit name set to"), false, "and no custom-name log fires for it");
+    });
+
+    test("an unset custom name resolves to no custom name", () => {
+
+      const built = buildHintsDevice();
+
+      device = built.device;
+
+      assert.equal(device.hints.nameOverride, null, "no custom name resolves to null");
     });
   });
 

@@ -4,7 +4,7 @@
  */
 import { PLATFORM_NAME, PLUGIN_NAME } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext } from "../types.ts";
-import { membershipDelta, sanitizeName } from "homebridge-plugin-utils";
+import { acquireService, membershipDelta, sanitizeName } from "homebridge-plugin-utils";
 import type { CharacteristicValue } from "homebridge";
 import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectBase } from "../devices/device-base.ts";
@@ -247,15 +247,13 @@ export class ProtectLiveviews extends ProtectBase {
       newAccessory.context = {};
       this.platform.persistence.persist(newAccessory, { liveview: viewName, liveviewDerived: true, liveviewState, nvr: this.nvr.ufp.mac });
 
-      // Find the existing liveview switch, if we have one.
-      let switchService = newAccessory.getService(this.hap.Service.Switch);
+      // Acquire the liveview switch under the accessory's name, marking the accessory for the next save when the switch is new to it. HBPU's helper names a new
+      // switch in every name characteristic its kind supports, the one the Home app edits included, and leaves the names of a switch the accessory already carries
+      // as they stand.
+      const { service: switchService, transition } = acquireService({ accessory: newAccessory, name: newAccessory.displayName, serviceType: this.hap.Service.Switch });
 
-      // Add the liveview switch to the accessory, and mark it for the next save.
-      if(!switchService) {
+      if(transition === "attached") {
 
-        switchService = new this.hap.Service.Switch(newAccessory.displayName);
-
-        newAccessory.addService(switchService);
         this.platform.persistence.persist(newAccessory);
       }
 

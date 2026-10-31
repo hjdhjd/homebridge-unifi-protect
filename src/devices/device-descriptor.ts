@@ -4,10 +4,10 @@
  *
  * This module owns the pure renders of a Protect device or controller's identity: the model label a unit shows for itself, the name HomeKit shows for an accessory
  * standing for it, and the log descriptor composed around them - "Name [Model]" plainly, or "Name [Model] (address: IP mac: MAC)" with its network detail for
- * support triage. It is deliberately pure - `this`-free, free of any device or controller I/O, and holding one value import, HBPU's name sanitizer - so any consumer
- * (the nvr composition root, the controller's own accessories or a device class) can import it without forming a value-edge that would couple the device layer to the
- * root or to a sibling device class, keeping the device layer's module graph free of cross-sibling value edges, and every render is exhaustively testable from a
- * plain config object.
+ * support triage. It is deliberately pure - `this`-free, free of any device or controller I/O, and holding one value import, HBPU's naming rule - so any consumer (the
+ * nvr composition root, the controller's own accessories, a device class or the settings server) can import it without forming a value-edge that would couple the
+ * device layer to the root or to a sibling device class, keeping the device layer's module graph free of cross-sibling value edges, and every render is exhaustively
+ * testable from a plain config object.
  *
  * Why this lives in the plugin and not in the unifi-protect library: composing a human display string is presentation, which is a consumer concern. The library's job
  * is to expose structured fields (name, marketName, host, mac, type), and how a consumer formats them for a log line or a HomeKit name is the consumer's choice. This
@@ -17,9 +17,11 @@
  *
  * The format prefers the human marketName for the model label, falls back to the raw wire type, and renders "unknown" when a unit reports neither; the displayed name
  * falls back to the model when a unit carries no user-assigned name or an empty one, and in HomeKit, where the name is sanitized to what HomeKit accepts, also when the
- * name sanitizes to nothing; and the optional network suffix carries the address (omitted when the host is empty or absent) and the MAC.
+ * name sanitizes to nothing, and a custom name the user set for a device in the plugin's settings comes ahead of them wherever HomeKit can carry it; and the optional
+ * network suffix carries the address (omitted when the host is empty or absent) and the MAC.
  */
-import { sanitizeName } from "homebridge-plugin-utils";
+import { resolveNameOverride, sanitizeName } from "homebridge-plugin-utils";
+import type { Nullable } from "homebridge-plugin-utils";
 
 // The two fields a Protect device or controller reports its hardware by. The controller omits the market name on some units and the hardware type on others, so both
 // members are optional and every model read takes whichever one the unit reports.
@@ -48,6 +50,13 @@ interface DescribeDeviceOptions {
   readonly name?: string | null;
 }
 
+// Options for deviceDisplayName. `override` is the raw value of the device's Device.Name option, as the option engine answers it, which the name rule resolves itself so
+// a caller may hand it over as read.
+interface DeviceDisplayNameOptions {
+
+  readonly override?: Nullable<string>;
+}
+
 /**
  * Render the model label for a Protect device or controller.
  *
@@ -64,18 +73,66 @@ export function describeDeviceModel(device: DeviceModelConfig): string {
 }
 
 /**
- * Derive the name HomeKit shows for each accessory standing for a Protect device or controller itself. An accessory named for more than its device composes its own
- * name, and a liveview switch falls back to this rule when its composed name sanitizes to nothing.
- *
- * @param device - Any record carrying the model fields the label above reads and an optional user-assigned name.
- *
- * @returns The sanitized name, the sanitized model label when the name sanitizes to nothing, or "unknown" when the model label does too.
+ * The name HomeKit shows for an accessory standing for a Protect device or controller, and the device's own name the rule passed over to reach it.
  */
-export function deviceDisplayName(device: DeviceModelConfig & { name?: string }): string {
+export interface DeviceDisplayNaming {
+
+  /** The name HomeKit shows, as HomeKit's naming rules leave it, which is never empty. */
+  readonly name: string;
+
+  /** The device's own name the rule passed over because HomeKit can display nothing of it, or `null` when a custom name applies or the rule passed over none. */
+  readonly passedOver: Nullable<string>;
+}
+
+/**
+ * Derive the name HomeKit shows for each accessory standing for a Protect device or controller itself, and the device's own name the rule passed over to reach it,
+ * from one walk. An accessory named for more than its device composes its own name, and a liveview switch falls back to this rule when its composed name sanitizes
+ * to nothing.
+ *
+ * @param device           - Any record carrying the model fields the label above reads and an optional user-assigned name.
+ * @param options          - Optional. The device's custom name.
+ * @param options.override - Optional. The raw value of the device's Device.Name option, resolved here through HBPU's custom-name rule.
+ *
+ * @returns The name: the sanitized custom name where one resolves, the sanitized name otherwise, the sanitized model label when the name sanitizes to nothing, or
+ *          "unknown" when the model label does too. Beside it, the device's own name where it carries something and sanitizes to nothing, the name a user set on the
+ *          controller and would look for in HomeKit, and `null` otherwise.
+ */
+export function deviceDisplayNaming(device: DeviceModelConfig & { name?: string }, { override }: DeviceDisplayNameOptions = {}): DeviceDisplayNaming {
 
   // HAP refuses an accessory whose display name is empty, and a name that is empty, blank or made only of characters HomeKit disallows sanitizes to nothing, so each
-  // step falls through on an empty sanitized result rather than on an absent field alone. The literal last step names the accessory when the model sanitizes away too.
-  return sanitizeName(device.name ?? "") || sanitizeName(describeDeviceModel(device)) || "unknown";
+  // step falls through on an empty sanitized result rather than on an absent field alone. Whether a custom name counts at all is HBPU's rule, which refuses one HomeKit
+  // can carry nothing of, so a refused one falls through to the device's own name as if the user had set none, and one it resolves names the device ahead of its own
+  // name, which the walk then never passes over. The literal last step names the accessory when the model sanitizes away too.
+  const custom = resolveNameOverride(override);
+
+  if(custom !== null) {
+
+    return { name: sanitizeName(custom), passedOver: null };
+  }
+
+  const name = sanitizeName(device.name ?? "");
+
+  if(name.length) {
+
+    return { name, passedOver: null };
+  }
+
+  return { name: sanitizeName(describeDeviceModel(device)) || "unknown", passedOver: device.name?.length ? device.name : null };
+}
+
+/**
+ * Derive the name HomeKit shows for each accessory standing for a Protect device or controller itself, the name {@link deviceDisplayNaming} answers.
+ *
+ * @param device           - Any record carrying the model fields the label above reads and an optional user-assigned name.
+ * @param options          - Optional. The device's custom name.
+ * @param options.override - Optional. The raw value of the device's Device.Name option, resolved here through HBPU's custom-name rule.
+ *
+ * @returns The sanitized custom name where one resolves, the sanitized name otherwise, the sanitized model label when the name sanitizes to nothing, or "unknown" when
+ *          the model label does too.
+ */
+export function deviceDisplayName(device: DeviceModelConfig & { name?: string }, options: DeviceDisplayNameOptions = {}): string {
+
+  return deviceDisplayNaming(device, options).name;
 }
 
 /**

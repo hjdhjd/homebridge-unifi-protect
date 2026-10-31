@@ -75,8 +75,7 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
     // Remove the switches whose liveview the controller no longer lists, marking the accessory for the next save, then add a switch for each liveview it newly lists.
     for(const service of currentLiveviewSwitches.filter(x => toRemove.includes(x.subtype ?? ""))) {
 
-      this.accessory.removeService(service);
-      this.platform.persistence.persist(this.accessory);
+      this.removeService(service);
     }
 
     this.addLiveviewSwitch(toAdd);
@@ -172,8 +171,9 @@ export class ProtectViewer extends ProtectDevice<Viewer> {
       // Retrieve the name assigned to this liveview.
       const liveviewName = this.nvr.client.liveviews.find(x => x.id === liveviewId)?.name;
 
-      // Acquire the service.
-      const { service } = this.acquireService({ name: liveviewName, serviceType: this.hap.Service.Switch, subtype: liveviewId });
+      // Acquire the service, named for its liveview, which is controller data, so the switch carries a name of its own: the viewer's name stands in only for a
+      // liveview the controller names nothing.
+      const { service } = this.acquireService({ name: liveviewName ?? this.accessoryName, serviceType: this.hap.Service.Switch, subtype: liveviewId });
 
       this.configureLiveviewSwitch(service, { initialized: false });
     }

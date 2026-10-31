@@ -333,7 +333,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
     // Now create the package camera accessory through the NVR composition root. The package camera is a HomeKit sub-view of this same physical device, so it shares our
     // live camera projection rather than holding a synthesized config snapshot. It is self-observing: its display name is the parent's name plus the display suffix,
-    // applied through its syncedName delegation, and its own name, firmware, and availability observers keep it tracking the shared device live - this capability owns
+    // applied through its homeKitName delegation, and its own name, firmware, and availability observers keep it tracking the shared device live - this capability owns
     // only its lifecycle (the WHEN, the observers, the sweep triggers), never its construction; only the new lives at the composition root, so no sibling-class
     // value-import.
     this.packageCamera = this.nvr.createPackageCamera(packageCameraAccessory, this.#device);
@@ -454,8 +454,8 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
       // Validate whether we should have this service enabled.
       // If we don't have the physical capabilities or the feature option enabled, disable the switch and we're done.
-      const { service } = this.validService({ name: this.accessoryName + " Physical Chime " + toStartCase(chimeSetting), serviceType: this.hap.Service.Switch,
-        subtype: physicalChimeType, validate: this.ufp.featureFlags.hasChime && this.hasFeature("Doorbell.PhysicalChime") });
+      const { service } = this.validService({ serviceType: this.hap.Service.Switch, subtype: physicalChimeType, suffix: " Physical Chime " + toStartCase(chimeSetting),
+        validate: this.ufp.featureFlags.hasChime && this.hasFeature("Doorbell.PhysicalChime") });
 
       if(!service) {
 
@@ -523,8 +523,8 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
   private configureProtectChimeLightbulb(): boolean {
 
     // Validate whether we should have this service enabled.
-    const { service } = this.validService({ name: this.accessoryName + " Chime Volume", serviceType: this.hap.Service.Lightbulb,
-      subtype: ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME, validate: this.hasFeature("Doorbell.Volume.Dimmer") });
+    const { service } = this.validService({ serviceType: this.hap.Service.Lightbulb, subtype: ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME, suffix: " Chime Volume",
+      validate: this.hasFeature("Doorbell.Volume.Dimmer") });
 
     if(!service) {
 
@@ -566,8 +566,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // Validate whether we should have this service enabled.
     // The authentication contact sensor is disabled by default unless the user enables it. We only make it available if we have at least one of the
     // fingerprint sensor or the NFC sensor available.
-    const { service } = this.validService({ name: this.accessoryName + " Authenticated", serviceType: this.hap.Service.ContactSensor,
-      subtype: ProtectReservedNames.CONTACT_AUTHSENSOR,
+    const { service } = this.validService({ serviceType: this.hap.Service.ContactSensor, subtype: ProtectReservedNames.CONTACT_AUTHSENSOR, suffix: " Authenticated",
       validate: this.hasFeature("Doorbell.AuthSensor") && (this.ufp.enableNfc || this.ufp.featureFlags.hasFingerprintSensor) });
 
     if(!service) {
@@ -842,8 +841,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
       // The message has been deleted on the doorbell - remove it from HomeKit, mark the accessory for the next save, and inform the user about it.
       this.log.info("Removing saved doorbell message: %s.", switchService.subtype?.slice(switchService.subtype.indexOf(".") + 1));
-      this.accessory.removeService(switchService);
-      this.platform.persistence.persist(this.accessory);
+      this.host.removeService(switchService);
     }
   }
 

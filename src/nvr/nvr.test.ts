@@ -4,9 +4,9 @@
  * removal-stability arithmetic, the disruption-expectation gating (the classification, its induced and recency halves, and the episode-latch), the induced-reboot resume
  * decision, the scheduled-reboot arithmetic with the recording-count rule behind its deferral, and the address override rule - plus the NvrHealth connection-input
  * mapping those drive, and the real controller root's disabled-controller path, its stability sweep's liveviews pass, its connect retry, its address override, the
- * accessory cache saves its adoption asks for, the name it adds a camera under when the camera's own name sanitizes to nothing, its removal of a package camera
- * whose parent is gone, and its device-removal cascade: the guards that leave an accessory alone, the name each removal is logged under, the package camera a
- * removal takes with it, and what a removal releases.
+ * accessory cache saves its adoption asks for, the name it adds a camera under when the camera's own name sanitizes to nothing or the user gave it a custom name,
+ * its removal of a package camera whose parent is gone, and its device-removal cascade: the guards that leave an accessory alone, the name each removal is logged
+ * under, the package camera a removal takes with it, and what a removal releases.
  *
  * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively owns the entire device and
  * media graph. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and assert those here, exercising the controller's real
@@ -1389,6 +1389,29 @@ describe("the controller root's accessory cache saves", () => {
 
 describe("the controller root's device names", () => {
 
+  // Every accessory the root hands Homebridge, read as the call hands it: whether the root registered it on the bridge or published it on its own, its UUID, and the
+  // display name it carries at that moment, which the configure pass after the call moves on from.
+  const captureMintedNames = (api: TestHomebridgeApi): { kind: "publish" | "register"; name: string; uuid: string }[] => {
+
+    const minted: { kind: "publish" | "register"; name: string; uuid: string }[] = [];
+    const publish = api.publishExternalAccessories.bind(api);
+    const register = api.registerPlatformAccessories.bind(api);
+
+    api.publishExternalAccessories = (pluginIdentifier, accessories): void => {
+
+      minted.push(...accessories.map((accessory) => ({ kind: "publish" as const, name: accessory.displayName, uuid: accessory.UUID })));
+      publish(pluginIdentifier, accessories);
+    };
+
+    api.registerPlatformAccessories = (pluginIdentifier, platformName, accessories): void => {
+
+      minted.push(...accessories.map((accessory) => ({ kind: "register" as const, name: accessory.displayName, uuid: accessory.UUID })));
+      register(pluginIdentifier, platformName, accessories);
+    };
+
+    return minted;
+  };
+
   /* HAP refuses an accessory whose display name is empty, and a Protect name that is empty sanitizes to nothing, so the root adds such a camera under its market
    * name, as it adds a camera reporting no name at all. Each camera is adopted at login and registered on the bridge under the name it was added under.
    */
@@ -1421,6 +1444,50 @@ describe("the controller root's device names", () => {
         assert.equal(accessory.displayName, "Test Camera Model", "the camera was added under its market name");
         assert.ok(api.calls.some((call) => (call.kind === "register") && call.accessories.includes(accessory)),
           "the camera was registered on the bridge under that name");
+      } finally {
+
+        shutdown();
+        controller.abort();
+
+        await settle();
+      }
+    });
+  }
+
+  /* A camera the user gave a custom name is minted under it, because a standalone camera is published under the name it is minted with before its configure pass
+   * runs. The configure pass names the accessory as well, so the name is read as the root hands the accessory to Homebridge: the double records the accessory
+   * itself, which the configure pass then renames, and only a read at the call sees the name the camera was minted under. A custom name HomeKit can carry nothing
+   * of counts as none, so the camera is minted under the name the controller reports for it, never under an empty one HAP would refuse.
+   */
+  for(const { expected, override, standalone, title } of [
+
+    { expected: "Porch", override: "Porch", standalone: false, title: "a camera with a custom name is registered on the bridge under it" },
+    { expected: "Front Door", override: "🙂", standalone: false,
+      title: "a camera whose custom name HomeKit can carry nothing of is registered under the name the controller reports for it" },
+    { expected: "Porch", override: "Porch", standalone: true, title: "a standalone camera with a custom name is published under it" }
+  ]) {
+
+    test(title, async () => {
+
+      const clock = new TestClock(TEST_CLOCK_EPOCH);
+      const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+      const cameraConfig: ProtectCameraConfig = { ...makeCameraConfig({ channels: G2_PRO_CHANNELS, name: "Front Door" }), isAdopted: true, isAdoptedByOther: false,
+        modelKey: "camera" };
+      const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig], nvr: nvrConfig }));
+      const { api, controller, nvr: double } = makeTestNvr({ clock, store, userOptions: [ "Enable.Device.Name." + cameraConfig.mac + "=" + override,
+        ...(standalone ? ["Enable.Device.Standalone." + cameraConfig.mac] : []) ] });
+      const client = makeConnectedClient({ nvrConfig, store });
+      const { platform, shutdown } = makeRootPlatform(double);
+      const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
+      const minted = captureMintedNames(api);
+
+      try {
+
+        await root.login();
+        await settle();
+
+        assert.deepEqual(minted.filter((entry) => entry.uuid === accessoryUuid(cameraConfig.mac)), [{ kind: standalone ? "publish" : "register", name: expected,
+          uuid: accessoryUuid(cameraConfig.mac) }], "the camera was handed to Homebridge once, under the name it was minted with");
       } finally {
 
         shutdown();

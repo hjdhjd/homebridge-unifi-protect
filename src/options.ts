@@ -207,7 +207,8 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
     { default: true, description: "Enable the ambient light sensor for this device in HomeKit.", meta: { hasCameraFeature: ["hasLuxCheck"], hasSensorProperty: ["lightSettings"], modelKey: [ "camera", "sensor" ] }, name: "AmbientLightSensor" },
     { default: false, description: "Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app.", name: "Standalone" },
     { default: true, description: "Attempt to restart misbehaving devices. This is always done very conservatively and only after periods of extended device-specific issues.", meta: { modelKey: ["camera"] }, name: "SelfHealing" },
-    { default: false, description: "Synchronize the UniFi Protect name of this device with HomeKit. Synchronization is one-way only, syncing the device name from UniFi Protect to HomeKit.", name: "SyncName" }
+    { default: false, defaultValue: "", description: "Custom HomeKit name for this device and its parts. It always applies, so a rename in the Home app yields to it wherever HomeKit allows.", inputSize: 30, name: "Name", scopes: ["device"] },
+    { default: false, description: "Synchronize the UniFi Protect name of this device and its parts with HomeKit. A rename in the Home app yields to it wherever HomeKit allows. A custom Name takes precedence.", name: "SyncName" }
   ],
 
   // Doorbell options.

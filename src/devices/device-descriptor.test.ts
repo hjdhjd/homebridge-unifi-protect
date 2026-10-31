@@ -5,13 +5,14 @@
  *
  * Each is a pure free function - a config record in, a rendered string out, no this, no HAP - so the natural coverage is to import the REAL leaf and drive them with
  * plain config objects, exactly as motion-policy.test.ts / chime-volume.test.ts drive their pure leaves. They reproduce the established device-name format, so the
- * cases cover the resolver's marketName-present, marketName-empty, marketName-absent, and nothing-reported edges, the name derivation's sanitized-name, empty-name,
- * model-fallback and unknown-fallback edges, and the descriptor's plain and rich modes plus its marketName-empty, marketName-absent, no-model, no-name, empty-name,
- * host-empty, and name-override edges. The absent-field cases are what a controller that omits marketName on some units and type on others actually delivers, and
- * they are written as records that simply lack the key rather than carry an empty one, so a fallback chain that only handles the empty spelling fails here.
+ * cases cover the resolver's marketName-present, marketName-empty, marketName-absent, and nothing-reported edges, the name derivation's custom-name, sanitized-name,
+ * empty-name, model-fallback and unknown-fallback edges, and the descriptor's plain and rich modes plus its marketName-empty, marketName-absent, no-model, no-name,
+ * empty-name, host-empty, and name-override edges. The absent-field cases are what a controller that omits marketName on some units and type on others actually
+ * delivers, and they are written as records that simply lack the key rather than carry an empty one, so a fallback chain that only handles the empty spelling fails
+ * here.
  */
 import { describe, test } from "node:test";
-import { describeDevice, describeDeviceModel, deviceDisplayName } from "./device-descriptor.ts";
+import { describeDevice, describeDeviceModel, deviceDisplayName, deviceDisplayNaming } from "./device-descriptor.ts";
 import assert from "node:assert/strict";
 
 // A representative device config: a named camera carrying a market name, host, and MAC.
@@ -73,6 +74,44 @@ describe("deviceDisplayName", () => {
 
     // The model label is the controller's own string, so it too can carry nothing HomeKit accepts, and the literal last step still names the accessory.
     assert.equal(deviceDisplayName({ marketName: "🙂" }), "unknown");
+  });
+
+  test("a device whose record lacks a name key, or carries an empty market name beside its hardware type, falls to the model it reports", () => {
+
+    const { name: _name, ...noName } = camera;
+
+    assert.equal(deviceDisplayName(noName), "G5 Flex", "a record carrying no name key at all falls to the market name");
+    assert.equal(deviceDisplayName({ ...noName, marketName: "" }), "camera", "an empty market name falls through to the hardware type");
+  });
+
+  test("a custom name HomeKit can carry names the accessory ahead of the device's own name, trimmed and sanitized", () => {
+
+    assert.equal(deviceDisplayName(camera, { override: "Reading Nook" }), "Reading Nook", "a plain custom name is the accessory's name");
+    assert.equal(deviceDisplayName(camera, { override: "  Reading Nook  " }), "Reading Nook", "a padded custom name is trimmed");
+    assert.equal(deviceDisplayName(camera, { override: "Bedtime 🌙" }), "Bedtime", "a custom name carrying a character HomeKit disallows is sanitized");
+  });
+
+  test("a custom name HomeKit can carry nothing of falls through to the device's own name, and on to the model when that sanitizes to nothing too", () => {
+
+    // An emoji alone and punctuation alone are names HomeKit's naming rules leave nothing of, so they count as no custom name at all, as an empty or absent one does.
+    for(const override of [ "🙂", "---", "", "   ", null, undefined ]) {
+
+      assert.equal(deviceDisplayName(camera, { override }), "Basement Foyer", JSON.stringify(override) + " falls through to the device's own name");
+    }
+
+    assert.equal(deviceDisplayName({ ...camera, name: "🙂" }, { override: "---" }), "G5 Flex", "each step falls through on an empty sanitized result");
+  });
+});
+
+describe("deviceDisplayNaming", () => {
+
+  test("answers the device's own name the walk passed over where it carries something and sanitizes to nothing, and nothing otherwise", () => {
+
+    assert.deepEqual(deviceDisplayNaming({ ...camera, name: "🙂" }), { name: "G5 Flex", passedOver: "🙂" }, "a name HomeKit can display none of is passed over");
+    assert.deepEqual(deviceDisplayNaming(camera), { name: "Basement Foyer", passedOver: null }, "a name HomeKit can display passes nothing over");
+    assert.deepEqual(deviceDisplayNaming({ ...camera, name: "" }), { name: "G5 Flex", passedOver: null }, "an empty name carries nothing to pass over");
+    assert.deepEqual(deviceDisplayNaming({ ...camera, name: "🙂" }, { override: "Den" }), { name: "Den", passedOver: null },
+      "a custom name that applies names the device ahead of its own name, which the walk never reaches");
   });
 });
 

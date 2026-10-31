@@ -87,18 +87,18 @@ interface AlarmContactDescriptor {
   readonly label: string;
   readonly log: string;
   readonly mqtt: MqttTopicEntry;
-  readonly name: string;
   readonly subtype: string;
+  readonly suffix: string;
 }
 
 // The alarm-family rows, alarm sound first so its position in the enabled-sensors log stays stable. Each gate mirrors its twin's controller enable signal: the
 // alarm-sound settings toggle, and the glass-break capability channel being present AND its own settings toggle enabled.
 const SENSOR_ALARM_CONTACTS: readonly AlarmContactDescriptor[] = [
 
-  { field: "alarmTriggeredAt", gate: (config) => config.alarmSettings.isEnabled, label: "alarm sound", log: "Alarm", mqtt: mqttTopics.alarm, name: " Alarm Sound",
-    subtype: ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND },
+  { field: "alarmTriggeredAt", gate: (config) => config.alarmSettings.isEnabled, label: "alarm sound", log: "Alarm", mqtt: mqttTopics.alarm,
+    subtype: ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND, suffix: " Alarm Sound" },
   { field: "glassBreakTriggeredAt", gate: (config) => (config.featureFlags.glassBreak !== undefined) && config.glassBreakSettings.isEnabled, label: "glass break",
-    log: "Glass break", mqtt: mqttTopics.glassbreak, name: " Glass Break", subtype: ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK }
+    log: "Glass break", mqtt: mqttTopics.glassbreak, subtype: ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK, suffix: " Glass Break" }
 ];
 
 // The noun phrases a fault sentence prints for each flag the smoke leaf hands back. Presentation lives here in the device layer because the leaf deals only in typed
@@ -382,8 +382,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       // Validate whether we should have this service enabled. The transition the gate answers is "attached" exactly when the service is new to its lifetime - the first
       // configure or a late capability creating it - and "kept" for a service restored across a restart or already present from an earlier reconcile. This drives the
       // once-per-lifetime VALUE seed below alongside the first-configure signal.
-      const { service, transition } = this.validService({ name: this.accessoryName + descriptor.name, serviceType: this.hap.Service.ContactSensor,
-        subtype: descriptor.subtype, validate: descriptor.gate(config) });
+      const { service, transition } = this.validService({ serviceType: this.hap.Service.ContactSensor, subtype: descriptor.subtype, suffix: descriptor.suffix,
+        validate: descriptor.gate(config) });
 
       if(!service) {
 
@@ -563,8 +563,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
     for(const sensor of [
 
-      { channel: "external" as const, isDetected: "externalLeakDetectedAt", mqtt: mqttTopics.leakExternal,
-        name: " External " + (isMoistureSensor ? "Moisture" : "Leak") + " Sensor", subtype: ProtectReservedNames.LEAKSENSOR_EXTERNAL },
+      { channel: "external" as const, isDetected: "externalLeakDetectedAt", mqtt: mqttTopics.leakExternal, subtype: ProtectReservedNames.LEAKSENSOR_EXTERNAL,
+        suffix: " External " + (isMoistureSensor ? "Moisture" : "Leak") + " Sensor" },
       { channel: "internal" as const, isDetected: "leakDetectedAt", mqtt: mqttTopics.leak, subtype: ProtectReservedNames.LEAKSENSOR_INTERNAL }
     ]) {
 
@@ -577,8 +577,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
       if(oldService) {
 
-        this.accessory.removeService(oldService);
-        this.platform.persistence.persist(this.accessory);
+        this.removeService(oldService);
       }
 
       // A channel toggled off releases its MQTT get handler BEFORE the validService continue skips the rest of the loop body, mirroring the occupancy / motion ordering.
@@ -589,7 +588,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
       // Validate whether we should have this service enabled. The transition the gate answers is "attached" exactly when this channel's service is newly created this
       // pass.
-      const { service, transition } = this.validService({ name: this.accessoryName + (sensor.name ?? ""), serviceType, subtype: sensor.subtype, validate: enabled });
+      const { service, transition } = this.validService({ serviceType, subtype: sensor.subtype, suffix: sensor.suffix, validate: enabled });
 
       if(!service) {
 
@@ -766,9 +765,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   // the Protect app, not a wire reading that flaps, so turning it off there should take the sensor away immediately.
   private configureVapeSensor(): boolean {
 
-    const { service } = this.validService({ name: this.accessoryName + " Vape", serviceType: this.hap.Service.ContactSensor,
-      subtype: ProtectReservedNames.CONTACT_SENSOR_VAPE, validate: capabilityGate({ capability: airQualityMetricLive(this.airQuality.vape),
-        toggle: this.hasFeature("Sensor.Vape") && this.vapeSensitivity.isEnabled }) });
+    const { service } = this.validService({ serviceType: this.hap.Service.ContactSensor, subtype: ProtectReservedNames.CONTACT_SENSOR_VAPE, suffix: " Vape",
+      validate: capabilityGate({ capability: airQualityMetricLive(this.airQuality.vape), toggle: this.hasFeature("Sensor.Vape") && this.vapeSensitivity.isEnabled }) });
 
     if(!service) {
 

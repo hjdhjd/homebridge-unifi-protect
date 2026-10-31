@@ -24,6 +24,7 @@
  * the device's irLedMode reading. Each suite's distinguishing mutations are traced in its tests' comments - the predicate's hasService and toggle clauses, the
  * early-return removal (lock only), and the (transition === "attached") || (source === "construct") establishment condition.
  */
+import { ACCESSORY_SAVE_WINDOW_MS, setAccessoryName, setServiceName } from "homebridge-plugin-utils";
 import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, controllerEvents, makeProtectState, makeTestAccessory, writesTo } from "../../testing.helpers.ts";
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
@@ -31,7 +32,6 @@ import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { formatLogEntry, logCount, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import { makeTestNvr, restoreAccessories } from "../../nvr/testing.helpers.ts";
-import { ACCESSORY_SAVE_WINDOW_MS } from "homebridge-plugin-utils";
 import type { ObserverWakePayload } from "../../diagnostics.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
@@ -41,6 +41,8 @@ import type { TestProtectAccessory } from "../../testing.helpers.ts";
 import type { TestProtectNvr } from "../../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { getEventListeners } from "node:events";
+import { smartDetectLabel } from "../../options.ts";
 
 // Every harness controller this file opens, aborted once at the end so no observe loop outlives the suite. The constructions are per-test and numerous, so the capture
 // rides the construction itself rather than each test's own teardown.
@@ -2886,6 +2888,84 @@ describe("the camera capability reconcile - the user's Protect-side detection se
       // have created this sensor at adoption, so the vacuity guard above is what makes this a real live arrival -> both assertions are needed.
       assert.ok(smartDetectSensor(accessory, "vehicle"), "the re-enabled detection gained its contact sensor live");
       assert.ok(smartDetectSensor(accessory, "person"), "the already-enabled detection kept its contact sensor across the re-enable");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+});
+
+describe("the camera capability reconcile - the smart-detect contact sensors under a name the plugin owns", () => {
+
+  // The custom name these rows set at the camera's own MAC, and the name an earlier run left a restored camera and its sensors carrying.
+  const CUSTOM_NAME = "Front Camera";
+  const RESTORED_NAME = "Old Camera";
+
+  // The camera's lifetime signal, which every watch it holds registers on. The cast is confined to this suite: the signal is the spine's own, and the removal row reads
+  // its registrations to show a removed sensor's watch leaves none behind.
+  const signalOf = (camera: ProtectCamera): AbortSignal => (camera as unknown as { signal: AbortSignal }).signal;
+
+  test("under a custom name, an object sensor a restored camera carries follows the custom name while a plate sensor keeps its own", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "licensePlate", "person" ] } });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Device.Name." + cameraConfig.mac + "=" + CUSTOM_NAME, "Enable.Motion.SmartDetect",
+      "Enable.Motion.SmartDetect.ObjectSensors", "Enable.Motion.SmartDetect.ObjectSensors.LicensePlate.ABC123" ] });
+    const accessory = makeTestAccessory(RESTORED_NAME, cameraConfig.mac);
+
+    // The camera comes back from the cache under the name an earlier run gave it and the sensors it named, so each is kept rather than created and only the rule can
+    // move one off that name.
+    setAccessoryName(accessory, RESTORED_NAME);
+    setServiceName(accessory.addService(Service.ContactSensor, RESTORED_NAME + " Person", ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + ".person"),
+      RESTORED_NAME + " Person");
+    setServiceName(accessory.addService(Service.ContactSensor, RESTORED_NAME + " License Plate ABC123",
+      ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + ".ABC123"), RESTORED_NAME + " License Plate ABC123");
+
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+
+    await settle();
+
+    try {
+
+      const person = smartDetectSensor(accessory, "person");
+      const plate = plateSensor(accessory, "ABC123");
+
+      assert.ok(person && plate, "the camera kept each sensor it was restored with");
+      assert.equal(person.getCharacteristic(Characteristic.ConfiguredName).value, CUSTOM_NAME + " " + smartDetectLabel("person"),
+        "the object sensor, named from the camera by the plugin's label, took the custom name");
+      assert.equal(plate.getCharacteristic(Characteristic.ConfiguredName).value, RESTORED_NAME + " License Plate ABC123",
+        "the plate sensor, named for the user's plate, kept its name");
+    } finally {
+
+      camera.cleanup();
+    }
+  });
+
+  test("under a custom name, an object sensor a detection switched off in Protect removes is let go, leaving one registration fewer on the camera's signal", async () => {
+
+    const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasSmartDetect: true, smartDetectTypes: [ "person", "vehicle" ] } });
+    const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
+    const { nvr } = buildTestNvr({ store, userOptions: [ "Enable.Device.Name." + cameraConfig.mac + "=" + CUSTOM_NAME, "Enable.Motion.SmartDetect",
+      "Enable.Motion.SmartDetect.ObjectSensors" ] });
+    const accessory = makeTestAccessory("Test Camera", cameraConfig.mac);
+    const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
+
+    await settle();
+
+    try {
+
+      assert.ok(smartDetectSensor(accessory, "vehicle")?.testCharacteristic(Characteristic.ConfiguredName),
+        "precondition: the vehicle sensor stands, a kind the Home app renames");
+
+      const standing = getEventListeners(signalOf(camera), "abort").length;
+
+      // The user switches vehicle detection off in Protect, so the reconcile's prune removes its sensor through the camera's service lifecycle.
+      store.pushCameraPatch(cameraConfig.id, cameraPatch({ smartDetectSettings: { audioTypes: [], enableTamperDetection: false, objectTypes: ["person"] } }));
+
+      await settle();
+
+      assert.equal(smartDetectSensor(accessory, "vehicle"), undefined, "the prune removed the vehicle sensor");
+      assert.equal(getEventListeners(signalOf(camera), "abort").length, standing - 1, "and its watch released its registration on the camera's signal");
     } finally {
 
       camera.cleanup();

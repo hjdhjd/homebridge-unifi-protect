@@ -39,6 +39,7 @@
  * The isolation model mirrors the light reference: a beforeEach builds a fresh sensor so the recording calls, the characteristic state, the observer baselines, and
  * store.observerCount are clean every test, the wake log is windowed per push via a captured baseline, and an afterEach unwinds the sensor's per-accessory abort.
  */
+import { ACCESSORY_SAVE_WINDOW_MS, ServiceEventTypes, setAccessoryName, setServiceName } from "homebridge-plugin-utils";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, writesTo } from "../testing.helpers.ts";
 import type { CharacteristicKind, TestProtectAccessory } from "../testing.helpers.ts";
 import { ProtectSensor, narratesTransition } from "./sensor.ts";
@@ -47,8 +48,7 @@ import type { TestClock, TestHomebridgeApi, TestLogEntry, TestMqttClient } from 
 import { TestRecordingDispatch, makeTestNvr, restoreAccessories } from "../nvr/testing.helpers.ts";
 import { TestSensorProjection, makeSensorConfig, makeSmokeStatus } from "./testing.helpers.ts";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
-import { logCount, loggedAt, settle, triggerGet } from "homebridge-plugin-utils/testing";
-import { ACCESSORY_SAVE_WINDOW_MS } from "homebridge-plugin-utils";
+import { logCount, loggedAt, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import type { CharacteristicValue } from "homebridge";
 import { NOT_CAPABLE_AIR_QUALITY } from "./air-quality-policy.ts";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -58,6 +58,7 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { getEventListeners } from "node:events";
 
 // The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
 // which is the tail rather than the child topic the registration lands on.
@@ -2808,6 +2809,122 @@ describe("real ProtectSensor construction and family behavior", () => {
       "the seed stated the clear alarm and each fresh trigger stated true, the repeat included");
 
     built.sensor.cleanup();
+  });
+});
+
+describe("the sensor's parts held to the name the plugin owns", () => {
+
+  // The custom name these rows set at the carrier's own MAC, the name an earlier run left a restored accessory carrying, and the line a restore logs.
+  const CUSTOM_NAME = "Kitchen Sensor";
+  const RESTORED_NAME = "Old Sensor";
+  const RESTORED_LINE = "Restored the name the plugin owns for a service after the Home app renamed it.";
+  const customName = "Enable.Device.Name." + makeSensorConfig().mac + "=" + CUSTOM_NAME;
+
+  // The device's lifetime signal, which every watch it holds registers on. The cast is confined to this suite: the signal is the spine's own, and these rows read its
+  // registrations to show a removed part's watch leaves none behind.
+  const signalOf = (sensor: ProtectSensor): AbortSignal => (sensor as unknown as { signal: AbortSignal }).signal;
+
+  // An accessory as the cache restores it after an earlier run, carrying that run's name and the Battery it named.
+  const restoredWithBattery = (): TestProtectAccessory => {
+
+    const accessory = makeTestAccessory(RESTORED_NAME, makeSensorConfig().mac);
+
+    setAccessoryName(accessory, RESTORED_NAME);
+    setServiceName(accessory.addService(Service.Battery, RESTORED_NAME), RESTORED_NAME);
+    accessory.clearObservations();
+
+    return accessory;
+  };
+
+  afterEach(() => {
+
+    for(const controller of controllers) {
+
+      controller.abort();
+    }
+
+    controllers.length = 0;
+  });
+
+  test("reconcile passes keep a held part's watch rather than attaching another, and one rename in the Home app after them draws one restore", async () => {
+
+    const built = buildSensor({ alarmEnabled: true }, { userOptions: [customName] });
+
+    await settle();
+
+    const contact = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
+
+    assert.ok(contact, "the alarm-sound contact sensor stands");
+
+    const listeners = contact.listeners(ServiceEventTypes.CHARACTERISTIC_CHANGE);
+    const registrations = getEventListeners(signalOf(built.sensor), "abort").length;
+
+    // Each push replaces the whole record, which wakes the sensor.config reconcile, so every pass re-validates the contact sensor and hands back the service held.
+    for(const value of [ 41, 42, 43 ]) {
+
+      built.store.pushSensorPatch("test-sensor-1", { stats: { humidity: { status: "", value } } });
+
+      // eslint-disable-next-line no-await-in-loop -- Each pass settles before the next push, so every push drives a reconcile pass of its own.
+      await settle();
+    }
+
+    assert.deepEqual(contact.listeners(ServiceEventTypes.CHARACTERISTIC_CHANGE), listeners, "the part carries the very listeners it carried before the passes");
+    assert.equal(getEventListeners(signalOf(built.sensor), "abort").length, registrations, "and the device's signal holds no registration more");
+
+    await triggerSet(contact.getCharacteristic(Characteristic.ConfiguredName), "Den Alarm");
+    await settle();
+
+    assert.equal(contact.getCharacteristic(Characteristic.ConfiguredName).value, CUSTOM_NAME + " Alarm Sound", "the owned name is back on the part");
+    assert.equal(logCount(built.logEntries, "info", RESTORED_LINE), 1, "and one restore was logged");
+
+    built.sensor.cleanup();
+  });
+
+  test("a watched part a config push adds is let go when a later push removes it, leaving one registration fewer on the device's signal", async () => {
+
+    const built = buildSensor({}, { userOptions: [customName] });
+
+    await settle();
+
+    built.store.pushSensorPatch("test-sensor-1", { alarmSettings: { isEnabled: true } });
+
+    await settle();
+
+    const contact = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND);
+
+    assert.ok(contact?.testCharacteristic(Characteristic.ConfiguredName), "precondition: the push added the contact sensor, a kind the Home app renames");
+
+    const standing = getEventListeners(signalOf(built.sensor), "abort").length;
+
+    built.store.pushSensorPatch("test-sensor-1", { alarmSettings: { isEnabled: false } });
+
+    await settle();
+
+    assert.equal(built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_ALARM_SOUND), undefined,
+      "the later push's verdict removed the contact sensor");
+    assert.equal(getEventListeners(signalOf(built.sensor), "abort").length, standing - 1, "and its watch released its registration on the device's signal");
+
+    built.sensor.cleanup();
+  });
+
+  test("the Battery a restored accessory carries is renamed under a custom name and carries no watch, a kind HomeKit names with Name alone", async () => {
+
+    const plain = buildSensor({}, { accessory: restoredWithBattery(), restored: true });
+    const owned = buildSensor({}, { accessory: restoredWithBattery(), restored: true, userOptions: [customName] });
+
+    await settle();
+
+    const plainBattery = plain.accessory.getService(Service.Battery);
+    const ownedBattery = owned.accessory.getService(Service.Battery);
+
+    assert.ok(plainBattery && ownedBattery, "each accessory kept the Battery it was restored with");
+    assert.equal(plainBattery.getCharacteristic(Characteristic.Name).value, RESTORED_NAME, "with no custom name the Battery keeps its name");
+    assert.equal(ownedBattery.getCharacteristic(Characteristic.Name).value, CUSTOM_NAME, "with one it takes the custom name");
+    assert.equal(ownedBattery.listenerCount(ServiceEventTypes.CHARACTERISTIC_CHANGE), plainBattery.listenerCount(ServiceEventTypes.CHARACTERISTIC_CHANGE),
+      "and it carries no change listener beyond the ones the unwatched Battery carries");
+
+    plain.sensor.cleanup();
+    owned.sensor.cleanup();
   });
 });
 

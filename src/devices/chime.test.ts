@@ -27,6 +27,7 @@ import { TestChimeProjection, makeChimeConfig, makeRingtoneConfig } from "./test
 import type { TestClock, TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import { loggedAt, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
+import { setAccessoryName, setServiceName } from "homebridge-plugin-utils";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../settings.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
@@ -51,14 +52,14 @@ const controllers: AbortController[] = [];
 // spawnObservers paths. Returns logEntries and mqtt (the light suite needs neither; the chime asserts both the failure log lines and the captured MQTT tone handler).
 // The accessory factory is injectable so the legacy-removal test can pre-seed a Lightbulb and a bare speaker Switch before construction.
 function buildChime(configOptions: Parameters<typeof makeChimeConfig>[0] = {},
-  harnessOptions: { accessory?: TestProtectAccessory; ringtones?: ProtectRingtoneConfig[] } = {}): {
+  harnessOptions: { accessory?: TestProtectAccessory; ringtones?: ProtectRingtoneConfig[]; userOptions?: string[] } = {}): {
   accessory: TestProtectAccessory; chime: ProtectChime; clock: TestClock; controller: AbortController; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient;
   projection: TestChimeProjection; store: TestStateStore;
 } {
 
   const chimeConfig = makeChimeConfig(configOptions);
   const store = new TestStateStore(makeProtectState({ chimes: [chimeConfig], ringtones: harnessOptions.ringtones ?? [] }));
-  const { clock, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store });
+  const { clock, controller, logEntries, mqtt, nvr } = makeTestNvr({ mqtt: true, store, userOptions: harnessOptions.userOptions });
 
   controllers.push(controller);
 
@@ -445,5 +446,28 @@ describe("real ProtectChime construction and play behavior", () => {
 
       fixture.chime.cleanup();
     }
+  });
+
+  test("under a custom name, the buzzer a restored chime carries follows the custom name while a ringtone's switch keeps the ringtone's name", () => {
+
+    // The chime comes back from the cache under the name an earlier run gave it and the switches it named, so each is kept rather than created and only the rule can
+    // move one off that name.
+    const restored = makeTestAccessory("Old Chime", makeChimeConfig().mac);
+
+    setAccessoryName(restored, "Old Chime");
+    setServiceName(restored.addService(Service.Switch, "Old Chime Buzzer", ProtectReservedNames.SWITCH_DOORBELL_CHIME_BUZZER), "Old Chime Buzzer");
+    setServiceName(restored.addService(Service.Switch, "Old Chime Ding", ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".test-ringtone-1"), "Old Chime Ding");
+
+    const built = buildChime({}, { accessory: restored, ringtones: [makeRingtoneConfig({ name: "Ding" })],
+      userOptions: ["Enable.Device.Name." + makeChimeConfig().mac + "=Kitchen Chime"] });
+    const buzzer = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_BUZZER);
+    const ringtone = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".test-ringtone-1");
+
+    assert.ok(buzzer && ringtone, "the chime kept each switch it was restored with");
+    assert.equal(buzzer.getCharacteristic(Characteristic.ConfiguredName).value, "Kitchen Chime Buzzer", "the buzzer, named from the chime, took the custom name");
+    assert.equal(ringtone.getCharacteristic(Characteristic.ConfiguredName).value, "Old Chime Ding",
+      "the ringtone's switch, named for the controller's ringtone, kept its name");
+
+    built.chime.cleanup();
   });
 });

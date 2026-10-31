@@ -544,6 +544,22 @@ describe("real ProtectRelay construction and behavior", () => {
 
     assert.deepEqual(relayProjection.toggleCalls, [{ outputId: 0 }], "a \"true\" SET on the output topic drove the toggle path for output 0");
   });
+
+  test("under a custom name, a rename in the Home app of an output's switch stands, since an output's label stands in for the controller's name for it", async () => {
+
+    const built = buildRelay({}, { userOptions: ["Enable.Device.Name." + relayConfig.mac + "=Garage Relay"] });
+    const output0 = built.accessory.getServiceById(Service.Switch, outputSubtype(0));
+
+    assert.ok(output0, "output 0's switch exists");
+    assert.equal(output0.displayName, "Garage Relay Output 1", "precondition: the switch was created under the custom name the accessory carries");
+
+    await triggerSet(output0.getCharacteristic(Characteristic.ConfiguredName), "Gate");
+    await settle();
+
+    assert.equal(output0.getCharacteristic(Characteristic.ConfiguredName).value, "Gate", "the Home app's name for the output stands");
+
+    built.relay.cleanup();
+  });
 });
 
 describe("the relay's outputs restated per broker session", () => {

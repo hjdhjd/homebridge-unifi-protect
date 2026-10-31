@@ -9,7 +9,7 @@ import type { LivestreamAudioFormat, StreamingDelegate } from "../../media/strea
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS, PROTECT_NVR_REBOOT_RECENCY_MS,
   PROTECT_SEGMENT_RESOLUTION } from "../../settings.ts";
-import type { ProtectAccessory, ProtectPersistedContextState } from "../../types.ts";
+import type { ProtectAccessory, ProtectPersistedContextState, ProtectServiceNaming } from "../../types.ts";
 import { RECORDING_AUDIO_STAND_IN, describeAudioFormat, livestreamAudioFormat } from "../../media/stream-delegate.ts";
 import { STREAM_QUALITY_TIERS, smartDetectLabel } from "../../options.ts";
 import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl, selectSubstrateChannelFrom } from "../../media/resolution.ts";
@@ -914,8 +914,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       }
 
       // We don't have this contact sensor enabled, remove it and mark the accessory for the next save.
-      this.accessory.removeService(objectService);
-      this.platform.persistence.persist(this.accessory);
+      this.removeService(objectService);
       this.log.info("Disabling smart motion license plate contact sensor: %s.", objectService.subtype?.slice(objectService.subtype.indexOf(".") + 1));
     }
 
@@ -935,8 +934,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       }
 
       // We don't have this contact sensor enabled, remove it and mark the accessory for the next save.
-      this.accessory.removeService(objectService);
-      this.platform.persistence.persist(this.accessory);
+      this.removeService(objectService);
       this.log.info("Disabling smart motion contact sensor: %s.", smartDetectLabel(smartDetectType));
     }
 
@@ -945,12 +943,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // statement into recurring noise. Each removal above already narrates itself as it happens, so the prunes need no equivalent gate.
     let sensorsCreated = 0;
 
-    // A utility for us to add contact sensors.
-    const addSmartDetectContactSensor = (name: string, serviceId: string): void => {
+    // A utility for us to add contact sensors. An object sensor is named from the camera by the detection's label, which is the plugin's own text, and a plate sensor
+    // carries a name of its own, since a plate is the user's data rather than the plugin's.
+    const addSmartDetectContactSensor = (options: { subtype: string } & ProtectServiceNaming): void => {
 
       // Acquire the service. The transition it answers says whether this call created the sensor, the same establishment signal the Access lock and the night vision
       // dimmer read from their gates.
-      const { service, transition } = this.acquireService({ name, serviceType: this.hap.Service.ContactSensor, subtype: serviceId });
+      const { service, transition } = this.acquireService({ ...options, serviceType: this.hap.Service.ContactSensor });
 
       // Initialize a freshly created sensor to its resting state, and only a freshly created one: an existing sensor's state belongs to the delivery path, so re-stamping
       // it here would reset a tripped detection the moment an unrelated capability change drove a reconcile, silently cancelling a live smart-motion event.
@@ -971,8 +970,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       for(const smartDetectType of [...objectSensorTypes].toSorted()) {
 
-        addSmartDetectContactSensor(this.accessoryName + " " + smartDetectLabel(smartDetectType),
-          ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType);
+        addSmartDetectContactSensor({ subtype: ProtectReservedNames.CONTACT_MOTION_SMARTDETECT + "." + smartDetectType,
+          suffix: " " + smartDetectLabel(smartDetectType) });
 
         enabledContactSensors.push(smartDetectType);
       }
@@ -996,8 +995,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       // Get the list of plates.
       for(const licenseOption of this.detectLicensePlate.filter(plate => plate.length)) {
 
-        addSmartDetectContactSensor(this.accessoryName + " License Plate " + licenseOption,
-          ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + licenseOption);
+        addSmartDetectContactSensor({ name: this.accessoryName + " License Plate " + licenseOption,
+          subtype: ProtectReservedNames.CONTACT_MOTION_SMARTDETECT_LICENSE + "." + licenseOption });
 
         enabledContactSensors.push(licenseOption);
       }
@@ -1094,8 +1093,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Validate whether we should have this service enabled, adding the switch to the camera if needed. The mute switch exists only beside a Doorbell service, so the
     // verdict removes it from a camera that carries none, and a camera without the switch holds no muted state.
     const hasDoorbell = !!this.accessory.getService(this.hap.Service.Doorbell);
-    const { service } = this.validService({ name: this.accessoryName + " Doorbell Mute", serviceType: this.hap.Service.Switch,
-      subtype: ProtectReservedNames.SWITCH_DOORBELL_MUTE, validate: this.hasFeature("Doorbell.Mute") && hasDoorbell });
+    const { service } = this.validService({ serviceType: this.hap.Service.Switch, subtype: ProtectReservedNames.SWITCH_DOORBELL_MUTE, suffix: " Doorbell Mute",
+      validate: this.hasFeature("Doorbell.Mute") && hasDoorbell });
 
     if(!service) {
 
@@ -1137,8 +1136,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     // Validate whether we should have this service enabled, adding the switch to the camera if needed.
-    const { service: triggerService } = this.validService({ name: this.accessoryName + " Doorbell Trigger", serviceType: this.hap.Service.Switch,
-      subtype: ProtectReservedNames.SWITCH_DOORBELL_TRIGGER, validate: enabled });
+    const { service: triggerService } = this.validService({ serviceType: this.hap.Service.Switch, subtype: ProtectReservedNames.SWITCH_DOORBELL_TRIGGER,
+      suffix: " Doorbell Trigger", validate: enabled });
 
     if(!triggerService) {
 
@@ -1146,8 +1145,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       // the accessory for the next save.
       if(!this.ufp.featureFlags.isDoorbell && doorbellService) {
 
-        this.accessory.removeService(doorbellService);
-        this.platform.persistence.persist(this.accessory);
+        this.removeService(doorbellService);
       }
 
       return false;
@@ -1698,8 +1696,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // Validate whether we should have this service enabled. The switch exists only for a camera that can back HomeKit Secure Video, since it governs a recording arm
     // no other camera's controller carries.
-    const { service } = this.validService({ name: this.accessoryName + " HKSV Recording", serviceType: this.hap.Service.Switch,
-      subtype: ProtectReservedNames.SWITCH_HKSV_RECORDING, validate: this.hasFeature("Video.HKSV.Recording.Switch") && this.isHksvCapable });
+    const { service } = this.validService({ serviceType: this.hap.Service.Switch, subtype: ProtectReservedNames.SWITCH_HKSV_RECORDING, suffix: " HKSV Recording",
+      validate: this.hasFeature("Video.HKSV.Recording.Switch") && this.isHksvCapable });
 
     if(!service) {
 
@@ -1742,9 +1740,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // transition the gate answers says whether this pass created the dimmer, which is the establishment-push decision input only - it does NOT gate the wiring below
     // (the onGet/onSet re-bind on every configure, which re-establishes the handlers after a Homebridge restart restores the cached service but never its runtime
     // wiring).
-    const { service, transition } = this.validService({ name: this.accessoryName + " Night Vision", serviceType: this.hap.Service.Lightbulb,
-      subtype: ProtectReservedNames.LIGHTBULB_NIGHTVISION,
-      validate: capabilityGate({ capability: hasNightVisionHardware, toggle: this.hasFeature("Device.NightVision.Dimmer") }) });
+    const { service, transition } = this.validService({ serviceType: this.hap.Service.Lightbulb, subtype: ProtectReservedNames.LIGHTBULB_NIGHTVISION,
+      suffix: " Night Vision", validate: capabilityGate({ capability: hasNightVisionHardware, toggle: this.hasFeature("Device.NightVision.Dimmer") }) });
 
     if(!service) {
 
@@ -1834,10 +1831,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       const ufpRecordingSetting = ufpRecordingSwitchType.slice(ufpRecordingSwitchType.lastIndexOf(".") + 1);
 
-      const switchName = this.accessoryName + " UFP Recording " + toStartCase(ufpRecordingSetting);
+      const switchSuffix = " UFP Recording " + toStartCase(ufpRecordingSetting);
 
       // Validate whether we should have this service enabled.
-      const { service } = this.validService({ name: switchName, serviceType: this.hap.Service.Switch, subtype: ufpRecordingSwitchType,
+      const { service } = this.validService({ serviceType: this.hap.Service.Switch, subtype: ufpRecordingSwitchType, suffix: switchSuffix,
         validate: this.hasFeature("Nvr.Recording.Switch") });
 
       if(!service) {
