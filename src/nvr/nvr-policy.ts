@@ -10,50 +10,76 @@
  * root, for the same reason the unifi-protect library keeps its reducer pure and apart from its client and the plugin keeps the NvrHealth reducer apart from its
  * event-sink wrapper: a decision separated from the effect it drives is independently testable, and the test is the proof the separation is real. ProtectNvr
  * transitively imports the entire device and media graph (cameras, streaming, snapshots); a pure predicate should never have to stand that up to be exercised. This
- * module imports only what its decisions read - the library's auth-error type, recovery schedule and device-collection keys, HBPU's error and URL-host formatters, and
- * the plugin's refusal schedule - so it loads and tests in isolation.
+ * module imports only what its decisions read - the library's configuration error and its readings of a controller refusal and of a refused sign-in, its recovery
+ * and refusal schedules and its device-collection keys, and HBPU's error and URL-host formatters - so it loads and tests in isolation.
  */
 import type { ConnectionState, ProtectDeviceConfig, StateStore } from "unifi-protect";
-import { DEVICE_COLLECTION_KEYS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError } from "unifi-protect";
+import { DEVICE_COLLECTION_KEYS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS,
+  ProtectConfigurationError, isControllerRefusal, isSignInRefusal } from "unifi-protect";
 import type { Nullable, RetryBackoff } from "homebridge-plugin-utils";
 import { formatErrorMessage, formatUrlHost } from "homebridge-plugin-utils";
 import type { NvrPhase } from "./nvr.ts";
-import { PROTECT_CONNECT_REFUSAL_SCHEDULE_MS } from "../settings.ts";
 
-// The library's recovery schedule for a fault it cannot explain, its staged delays and its steady floor composed into the shape the refusal schedule is held in, so
-// the connect retry holds each schedule the same way. It reads the library's numbers rather than restating them.
+/**
+ * A retried connect attempt's failure, as the connect retry policy reports it to the caller. The policy reports a run's first failure and then each turn between a
+ * rate limit and any other fault, and, outside a rate limit, each change of reason, so a run of rate limits is one report whichever spelling its 429 arrives in.
+ */
+export interface ConnectFailure {
+
+  /** Whether the controller was rate limiting requests: a refusal that is no refused sign-in, as the library's connection classes read one. */
+  readonly rateLimited: boolean;
+
+  /** The reason the attempt failed, formatted as the text a user reads. */
+  readonly reason: string;
+}
+
+// The library's recovery schedule for a fault it cannot explain, its staged delays and its steady floor composed into the shape its refusal schedule is published in,
+// so the connect retry holds each schedule the same way. This mirrors how the library composes the same pair for its own recovery loop, and it reads the library's
+// numbers rather than restating them.
 const RECOVERY_SCHEDULE_MS = { backoff: [...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS], steady: PROTECT_RECOVERY_STEADY_INTERVAL_MS };
 
 /**
  * The startup-resilient connect retry policy, as a pure stateful factory: the decision the retry consults after each failed attempt, and the wait it asks for before
  * the next one. A pure factory, so the schedule logic is testable without standing up a client - the separation of the retry *decision* from the connect *effect*.
  *
- * A refused sign-in waits by the refusal schedule, and every other fault by the library's recovery schedule, the one its connection monitor walks for a fault it
- * cannot explain, so a controller that fails at startup is retried on the cadence the library keeps for one that fails mid-session. A refusal is a fact about the
- * credentials rather than the network - the controller answered, and asking again moments later cannot change its answer - and UniFi OS locks an account after
- * repeated failed sign-ins, so a refusal is retried slowly while a controller that is merely slow to appear is probed at once and then at a quicker pace. Which
- * faults are refusals, and how slowly a refusal is retried, are the library's to publish, as its recovery schedule is; the plugin reads a refusal as the library's
- * authentication error, its reading of a refused sign-in, and holds the refusal schedule as its own constant.
+ * A refusal waits by the library's refusal schedule, and every other fault by its recovery schedule, the one its connection monitor walks for a fault it cannot
+ * explain, so a controller that fails at startup is retried on the cadence the library keeps for one that fails mid-session. A refusal is the controller's answer
+ * rather than the network's silence - the controller answered, and asking again moments later cannot change its answer. UniFi OS refuses sign-ins once an account
+ * passes a threshold of failed attempts it does not publish, and a rate limit is the controller asking to be asked less often, so a refusal backs off slowly while a
+ * controller that is merely slow to appear is probed at once and then at a quicker pace. Which faults are refusals, and how slowly a refusal is retried, are the
+ * library's to publish, and the plugin reads them rather than restating them: what counts as a refusal is the reading the library's own recovery chooses its
+ * schedule by, {@link isControllerRefusal}, every spelling of a refused identity, privilege or request rate, the one a refused bootstrap document read carries as
+ * its cause included. The retry therefore paces a controller as recovery does, except that recovery alone also lengthens a wait toward a `Retry-After` hint a
+ * controller sends, up to the refusal schedule's steady interval, a reading the library keeps inside its recovery.
  *
  * Each schedule is walked from its first rung when its class of fault begins, so a change of class restarts the new schedule rather than landing partway down it.
- * Each settles onto a steady floor it holds for as long as the run lasts, so nothing here gives up: the decision always answers true, and the caller's shutdown is
- * the only end of a run that never connects.
+ * Each settles onto a steady floor it holds for as long as the run lasts, so every fault a controller or a network can recover from is retried, and the caller's
+ * shutdown is what ends a run that never connects.
  *
- * The run also reports itself, because a retry without end is otherwise silent for as long as it lasts. A failed attempt hands its reason to `onFailure` when the
- * run's first failure arrives and again whenever the reason changes, so a caller hears why the connect is failing and when that changes rather than hearing every
- * attempt. The comparison is on the formatted reason, the text a user reads, so faults that read identically are one reason, and a timeout giving way to a
- * different fault is a new one.
+ * The one fault the decision refuses to retry is an address no URL can carry, which unifi-protect refuses as a {@link ProtectConfigurationError} before it sends
+ * anything. The same address is refused the same way on every attempt, so asking again can only repeat the refusal, and the decision answers false for it. The
+ * veto answers ahead of the report below and leaves the run's state alone, because the run ends on it and the caller says why in words of its own.
  *
- * @param options - The callback that receives each newly-arrived reason, optional.
+ * The run also reports itself, because a retry without end is otherwise silent for as long as it lasts. A retried attempt hands its failure to `onFailure` when the
+ * run's first failure arrives and again whenever what failed changes, so a caller hears why the connect is failing and when that changes rather than hearing every
+ * attempt. Each report says whether the failure is a rate limit, read as the library's connection classes read one: a refusal that is no refused sign-in,
+ * {@link isSignInRefusal} being the narrower reading the library chooses its own announcement by, so a caller can tell the controller asking to be asked less often
+ * from one that waits on a person to correct the credentials. That reading is also what decides a change. A rate limit is the one failure a caller says by its
+ * class rather than its reason, so a turn between a rate limit and any other fault is always reported, and a run of rate limits is one report however its 429 is
+ * spelled, bare or as the cause a bootstrap error carries, which is the rule the library's own connection keeps when it announces a loss once per class and again
+ * on a change of class. Every other fault is compared on its formatted reason, the text a user reads, so two faults that read identically are one reason and a
+ * timeout giving way to a different fault is two.
+ *
+ * @param options - The callback that receives each failure the run reports, optional.
  *
  * @returns The `backoff` and `shouldRetry` pair for the retry options. They close over whether the last failure was a refusal, the run's rung on that class's
- * schedule, and the last reason reported.
+ * schedule, and the last failure reported.
  */
-export function createConnectRetryPolicy({ onFailure }: { onFailure?: (reason: string) => void } = {}): { backoff: RetryBackoff;
+export function createConnectRetryPolicy({ onFailure }: { onFailure?: (failure: ConnectFailure) => void } = {}): { backoff: RetryBackoff;
   shouldRetry: (error: unknown) => boolean; } {
 
   let refused = false;
-  let reported: string | undefined;
+  let reported: ConnectFailure | undefined;
   let rung = 0;
 
   return {
@@ -64,14 +90,20 @@ export function createConnectRetryPolicy({ onFailure }: { onFailure?: (reason: s
      */
     backoff: (): number => {
 
-      const schedule = refused ? PROTECT_CONNECT_REFUSAL_SCHEDULE_MS : RECOVERY_SCHEDULE_MS;
+      const schedule = refused ? PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS : RECOVERY_SCHEDULE_MS;
 
       return schedule.backoff[rung - 1] ?? schedule.steady;
     },
 
     shouldRetry: (error: unknown): boolean => {
 
-      const refusal = error instanceof ProtectAuthError;
+      // An address no URL can carry ends the run before anything is counted or reported, so no retrying reason reaches the caller ahead of its own report.
+      if(error instanceof ProtectConfigurationError) {
+
+        return false;
+      }
+
+      const refusal = isControllerRefusal(error);
 
       // A change of class restarts the rung count, so the wait that follows walks the new class's schedule from its first rung.
       if(refusal !== refused) {
@@ -82,13 +114,15 @@ export function createConnectRetryPolicy({ onFailure }: { onFailure?: (reason: s
 
       rung++;
 
+      const rateLimited = refusal && !isSignInRefusal(error);
       const reason = formatErrorMessage(error);
 
-      // A run of identical failures reads as one report, and only a reason that differs from the last one reported earns another.
-      if(reason !== reported) {
+      // A failure earns a report when its rate-limit reading differs from the last report's, which a run's first failure always does, having no report to match.
+      // Within a run of rate limits nothing more earns one, whatever its reason reads, while any other fault earns one whenever its reason differs from the last.
+      if((rateLimited !== reported?.rateLimited) || (!rateLimited && (reason !== reported.reason))) {
 
-        reported = reason;
-        onFailure?.(reason);
+        reported = { rateLimited, reason };
+        onFailure?.(reported);
       }
 
       return true;

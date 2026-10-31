@@ -3,11 +3,11 @@
  * nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP } from "homebridge";
-import { APIEvent, createMqttClient, debugGatedLog, formatSeconds, loopFaultReporter, membershipDelta, mqttConnectionSettings, prefixedLog, retry,
-  superviseLoop } from "homebridge-plugin-utils";
+import { APIEvent, createMqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, membershipDelta, mqttConnectionSettings, prefixedLog,
+  retry, superviseLoop } from "homebridge-plugin-utils";
 import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
   ProtectDeviceConfig, ProtectLogging, ProtectNvrConfig, StateStore } from "unifi-protect";
-import { DEVICE_COLLECTION_KEYS, ProtectClient, channels as protectChannels } from "unifi-protect";
+import { DEVICE_COLLECTION_KEYS, ProtectClient, maskAddressCredentials, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, MqttClient, Nullable } from "homebridge-plugin-utils";
 import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnostics.ts";
 import { OVERRIDE_ADDRESS_ZONE_WARNING, canTransition, createConnectRetryPolicy, createLivestreamEpisodeLatch, deviceInventory, isDisruptionExpected,
@@ -17,6 +17,7 @@ import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, Pro
 import { countActiveHksvRecordings, deviceEndpoints } from "./nvr-endpoints.ts";
 import { describeDevice, deviceDisplayName } from "../devices/device-descriptor.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
+import type { ConnectFailure } from "./nvr-policy.ts";
 import { DeviceRemovalCascade } from "./nvr-removal-cascade.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
@@ -85,8 +86,8 @@ export class ProtectNvr {
 
   private api: API;
   // The unifi-protect client - the single owner of protocol truth (reduced state, realtime decode, refresh failsafe, connection health). Established by connect()
-  // through the connect port and torn down through its Symbol.asyncDispose. Definite-assignment typed for the connected lifetime; it is genuinely undefined only in
-  // the narrow window before the first connect() (guarded where that window is reachable, e.g. disconnect()).
+  // through the connect port and torn down through its Symbol.asyncDispose. Definite-assignment typed for the connected lifetime; it is genuinely undefined until a
+  // connect succeeds, which a controller whose address can never work never does (guarded where that state is reachable, e.g. disconnect()).
   public client!: ProtectClient;
   public readonly config: ProtectNvrOptions;
   public readonly configuredDevices: Map<string, ProtectDevices>;
@@ -168,7 +169,8 @@ export class ProtectNvr {
     this.lastRebootObservedAt = null;
     this.liveviews = null;
     this.mqtt = null;
-    this.name = nvrOptions.address;
+    // Every line this controller writes before it connects is prefixed with this name, so the address it starts from is named through unifi-protect's mask.
+    this.name = maskAddressCredentials(nvrOptions.address);
     this.#overrideAddress = null;
     this._phase = "connecting";
     this.platform = platform;
@@ -208,8 +210,8 @@ export class ProtectNvr {
       warn: routeClientContext((message: string): void => this.platform.pluginLog.warn(message))
     };
 
-    /* The controller half of this logger's per-call debug scope. The client field is definite-assigned at connect, so the pre-connect window is real even though
-     * the field's type says otherwise; the confined widening makes that window readable here without weakening the post-connect typing anywhere else. An
+    /* The controller half of this logger's per-call debug scope. The client field is definite-assigned at connect, so the unconnected state is real even though
+     * the field's type says otherwise; the confined widening makes that state readable here without weakening the post-connect typing anywhere else. An
      * unconnected controller resolves its debug lines at global scope - the only scope that can name it before its identity is known.
      */
     const controllerMac = (): string | undefined => (this.client as ProtectClient | undefined)?.nvr.config.mac;
@@ -563,22 +565,35 @@ export class ProtectNvr {
 
   /* Establish a connection to the Protect controller. The unifi-protect library's ProtectClient.connect() is atomic - it logs in, fetches the initial bootstrap, seeds
    * the reducer, and brings up the realtime events channel as one ready-or-throws operation, owning retry/backoff and the periodic refresh failsafe internally. We
-   * wrap it in a startup-resilient retry that waits by the policy's schedules: the slow refusal schedule while the controller refuses our sign-in, and the library's
-   * own recovery schedule for every other fault. The retry never gives up...it runs until the controller accepts us or we shut down, so a sign-in the controller
-   * starts accepting again is picked up by a later attempt rather than by a restart. The waits run on the platform's clock, so a suite walks the whole ladder on
-   * virtual time. Safe to call more than once - each call establishes a fresh client under a fresh policy.
+   * wrap it in a startup-resilient retry that waits by the library's own recovery schedules: its slower refusal schedule while the controller refuses our sign-in,
+   * the privilege it needs or the rate of our requests, and its recovery schedule for every other fault. The retry runs until the controller accepts us or we shut
+   * down, so a sign-in the controller starts accepting again is picked up by a later attempt rather than by a restart. The waits run on the platform's clock, so a
+   * suite walks the whole ladder on virtual time. Safe to call more than once - each call establishes a fresh client under a fresh policy.
    *
-   * The policy tells us why a retried attempt failed when a run of failures begins and whenever its reason changes, and we say so at error level: an unbounded
-   * retry that reports nothing leaves a user with no way to tell a controller that is slow to appear from one that refuses us on every attempt. An attempt torn down
-   * by our own shutdown is an orderly teardown rather than a reason to report.
+   * The one exception is an address no URL can carry. The library refuses it before anything is sent, and refuses it the same way on every attempt, so the policy
+   * vetoes it, the retry ends on the first attempt, and we say once that the address needs correcting. Nothing on the controller can change that answer.
+   *
+   * The policy tells us why a retried attempt failed when a run of failures begins and whenever what it fails with changes, and we say so: an unbounded retry that
+   * reports nothing leaves a user with no way to tell a controller that is slow to appear from one that refuses us on every attempt. A run of rate limits is told
+   * once, whichever spelling each arrives in, any other failure whenever its reason changes, and a turn between a rate limit and any other failure is told again. A
+   * rate limit is said at warn level, in the library's own terms, because it is the controller asking to be asked less often and the retry already waits it out on
+   * the slower refusal schedule, so no person needs to act; every other failure is said at error level with its reason. An attempt torn down by our own shutdown is
+   * an orderly teardown rather than a reason to report.
    */
   private async connect(): Promise<boolean> {
 
     const { backoff, shouldRetry } = createConnectRetryPolicy({
 
-      onFailure: (reason: string): void => {
+      onFailure: ({ rateLimited, reason }: ConnectFailure): void => {
 
         if(this.#isShuttingDown()) {
+
+          return;
+        }
+
+        if(rateLimited) {
+
+          this.log.warn("Unable to connect to the Protect controller because it is rate limiting requests, and will keep trying on the slower refusal schedule.");
 
           return;
         }
@@ -594,10 +609,19 @@ export class ProtectNvr {
           { healthState: this.health.state, isHealthy: this.client.connection.isHealthy, isThrottled: this.client.connection.isThrottled, phase: this.phase },
           this.episodeCameraReachable(context.cameraId)), signal,
         username: this.config.username }), { attempts: Infinity, backoff, clock: this.platform.clock, shouldRetry, signal: this.signal });
-    } catch {
+    } catch(error) {
 
-      // The retry rejects only on the shutdown abort, because the policy never vetoes an attempt and the attempts are unbounded. That is an orderly teardown, not a
-      // failure to report.
+      /* The attempts are unbounded, so the retry rejects only on our own shutdown, which is an orderly teardown rather than a failure to report, or on the policy's
+       * veto of an address no URL can carry. The shutdown is read first, so a refused address meeting a shutdown in progress stays as quiet as every other attempt a
+       * shutdown ends. The veto is said here and nowhere else, because the policy reports nothing for it, and the line carries no credential: the library's message
+       * names the address masked, and so does this controller's prefix.
+       */
+      if(!this.#isShuttingDown()) {
+
+        this.log.error("Unable to connect to the Protect controller, and will not keep trying until its address is corrected in the plugin settings: %s.",
+          formatErrorMessage(error));
+      }
+
       return false;
     }
 
@@ -751,8 +775,8 @@ export class ProtectNvr {
     this.connectionSubscriptions = [];
 
     // Dispose the unifi-protect client - tearing down the connection monitor, livestream pool, state store, session, and transport pool, in that order. The client is
-    // definite-assignment typed for the connected lifetime, but a shutdown during the initial connect can reach here before connect() assigned it; the cast guards
-    // that window without widening the field's type for every connected-path read.
+    // definite-assignment typed for the connected lifetime, but a controller that has not connected, whatever kept it from connecting, reaches here with nothing
+    // assigned; the cast guards that state without widening the field's type for every connected-path read.
     const client = this.client as ProtectClient | undefined;
 
     if(client) {

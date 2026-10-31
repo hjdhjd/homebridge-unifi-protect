@@ -120,18 +120,24 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
      * address, so the first entry at an address is the one we read, and every later entry there is skipped ahead of the checks below, with one warning per address
      * however many entries repeat it. The listing form is HBPU's listed-address rule, the one the settings page reads its controller list through, so the page and
      * the plugin agree on which entry at an address is the first. An address the rule gives no form never repeats another.
+     *
+     * An address is read trimmed. The rule already compares addresses that way while unifi-protect refuses an address with spaces around it, so an entry padded by
+     * hand is the controller its trimmed address names, and the listing form, the repeat warning, the connection, the request-health match and the log prefix all
+     * read that one form. The entry is read as a copy carrying the trimmed address, because the entry itself is Homebridge's own configuration object.
      */
     const firstEntries = new Map<string, { address: string; warned: boolean }>();
 
     // Loop through each configured NVR and instantiate it.
-    for(const controllerConfig of this.config.controllers) {
+    for(const entry of this.config.controllers) {
 
       // An entry that is not an object carries nothing to start.
-      if(!isObject(controllerConfig)) {
+      if(!isObject(entry)) {
 
         continue;
       }
 
+      // The type cannot say that a hand edit left the address something other than a string, so the trim asks before it reads one.
+      const controllerConfig = (typeof entry.address === "string") ? { ...entry, address: entry.address.trim() } : entry;
       const form = addressListingForm(controllerConfig.address);
 
       if(form !== null) {
@@ -153,8 +159,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
         firstEntries.set(form, { address: controllerConfig.address, warned: false });
       }
 
-      // We need an address, or there's nothing to do.
-      if(!controllerConfig.address) {
+      // We need an address, or there's nothing to do. A hand edit can leave the field any type, and a value that is not a string is no address at all.
+      if((typeof controllerConfig.address !== "string") || !controllerConfig.address) {
 
         this.log.info("No host or IP address has been configured.");
 

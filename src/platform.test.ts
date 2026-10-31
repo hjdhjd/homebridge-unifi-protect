@@ -5,23 +5,26 @@
  *
  * The claims under test are wiring claims, so the real class is what has to make them: that the configured options reach the feature-option engine through the
  * analysis rather than raw, that a translated configuration says so once, and that the controller walk reads one entry per listed address, warns once for each
- * address listed more than once, and reads a configured value that is not a list as no controllers. Each is asserted through observable behavior - what the
- * constructed engine resolves, and what the logger was handed - rather than by reading the platform's internals, so the rows survive a change in how the wiring is
- * spelled.
+ * address listed more than once, reads an address trimmed and one that is not a string as no address, and reads a configured value that is not a list as no
+ * controllers. Each is asserted through observable behavior - what the constructed engine resolves, and what the logger was handed - rather than by reading the
+ * platform's internals, so the rows survive a change in how the wiring is spelled. The one internal read is the list of controllers the walk built, which the
+ * platform keeps to itself, and which the trim rows read because a controller says nothing until it logs in.
  *
- * No row reaches a controller login, an FFmpeg probe, or the Homebridge launch handshake. A configuration with no controllers returns before the walk, and every
- * controller entry a row configures carries no credentials, so the walk builds no controller and the launch handler it registers is never called.
+ * No row reaches a controller login, an FFmpeg probe, or the Homebridge launch handshake. A configuration with no controllers returns before the walk, and nothing
+ * here emits the launch signal, so the launch handler the walk registers is never called. Most entries a row configures carry no credentials, so the walk builds
+ * no controller for them, and a row whose entry carries credentials ends with Homebridge's shutdown, so the controller built for it lets go of what it subscribed to.
  *
  * Every option entry configured here is written in the RETIRED option grammar, deliberately and throughout: what these rows exist to prove is that such a
  * configuration reaches the engine translated. That is the exemption the zero-residue sweeps carry for this file, alongside the translation layer's own suite.
  */
 import type { API, Logging } from "homebridge";
+import { APIEvent, FeatureOptions } from "homebridge-plugin-utils";
+import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { featureOptionCategories, featureOptions } from "./options.ts";
-import { FeatureOptions } from "homebridge-plugin-utils";
+import type { ProtectNvr } from "./nvr/nvr.ts";
 import { ProtectPlatform } from "./platform.ts";
 import type { ProtectPlatformConfig } from "./types.ts";
-import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { makeTestApi } from "./testing.helpers.ts";
 
@@ -57,9 +60,9 @@ function listedAgain(address: string): TestLogEntry {
  * @param options     - The configured feature options the platform is constructed with.
  * @param controllers - The configured controllers value, in whatever shape a hand edit could leave it, or absent for a configuration with none.
  *
- * @returns The constructed platform and every line its construction logged.
+ * @returns The API double the platform was handed, the constructed platform, and every line its construction logged.
  */
-function buildPlatform(options: string[], controllers?: unknown): { lines: TestLogEntry[]; platform: ProtectPlatform } {
+function buildPlatform(options: string[], controllers?: unknown): { api: TestHomebridgeApi; lines: TestLogEntry[]; platform: ProtectPlatform } {
 
   const lines: TestLogEntry[] = [];
   const sink = (level: TestLogEntry["level"]) => (message: string, ...params: unknown[]): void => {
@@ -73,7 +76,19 @@ function buildPlatform(options: string[], controllers?: unknown): { lines: TestL
   const config: ProtectPlatformConfig = { controllers: controllers as ProtectPlatformConfig["controllers"], name: "UniFi Protect", options, platform: "UniFi Protect" };
   const api = makeTestApi();
 
-  return { lines, platform: new ProtectPlatform(log as unknown as Logging, config, api as unknown as API) };
+  return { api, lines, platform: new ProtectPlatform(log as unknown as Logging, config, api as unknown as API) };
+}
+
+/* The controllers the walk built, in the order it built them. The platform keeps the list to itself, and a controller it builds logs nothing until it logs in,
+ * which no row here reaches, so this is the one internal the rows read.
+ *
+ * @param platform - The constructed platform.
+ *
+ * @returns The controllers the walk constructed.
+ */
+function configuredControllers(platform: ProtectPlatform): ProtectNvr[] {
+
+  return (platform as unknown as { controllers: ProtectNvr[] }).controllers;
 }
 
 describe("platform construction and the legacy feature-option translation", () => {
@@ -155,13 +170,50 @@ describe("platform construction and the configured controllers", () => {
       "each address's first entry is read, and the repeated address warns once however many entries repeat it");
   });
 
-  // An entry with no address has no form to repeat, so entries with no address are never one controller and each still reaches the address check.
+  /* An entry with no address has no form to repeat, so entries with no address are never one controller and each still reaches the address check. An address a hand
+   * edit left a number is no address at all, so it reaches the same check rather than the credentials one behind it.
+   */
   test("entries at distinct addresses, and entries with no address, warn nothing", () => {
 
-    const { lines } = buildPlatform([], [ { address: "10.0.0.1" }, { address: "10.0.0.2" }, {}, {}, { address: "" }, { address: "" } ]);
+    const { lines } = buildPlatform([], [ { address: "10.0.0.1" }, { address: "10.0.0.2" }, {}, {}, { address: "" }, { address: "" }, { address: 10001 } ]);
 
-    assert.deepEqual(lines, [ NO_CREDENTIALS, NO_CREDENTIALS, NO_HOST, NO_HOST, NO_HOST, NO_HOST ],
-      "every entry is read and nothing is reported, because no address repeats");
+    assert.deepEqual(lines, [ NO_CREDENTIALS, NO_CREDENTIALS, NO_HOST, NO_HOST, NO_HOST, NO_HOST, NO_HOST ],
+      "every entry is read and nothing is reported, because no address repeats, and the entry a hand edit left a number is read as one with no address");
+  });
+
+  /* An address padded with spaces is the controller its trimmed form names, because the listed-address rule reads the padded and trimmed forms as one address while
+   * unifi-protect refuses the padded one. The padded entry listed first is the case that matters: kept with its spaces, it would be the one entry the platform reads,
+   * and the clean entry behind it the one skipped. Each entry carries credentials so the walk builds its controller, and the username tells the two apart.
+   */
+  test("a padded entry before its clean form is one controller at the trimmed address, warned about once", (t) => {
+
+    const { api, lines, platform } = buildPlatform([], [ { address: " 10.0.0.1 ", password: "password", username: "padded" },
+      { address: "10.0.0.1", password: "password", username: "clean" } ]);
+
+    t.after(() => void api.emit(APIEvent.SHUTDOWN));
+
+    assert.deepEqual(lines, [listedAgain("10.0.0.1")], "the repeat warns once, naming the address as the plugin reads it");
+    assert.deepEqual(configuredControllers(platform).map((controller) => [ controller.config.address, controller.config.username ]), [[ "10.0.0.1", "padded" ]],
+      "and the first entry is the one constructed, at its trimmed address");
+  });
+
+  test("a padded entry alone reaches its controller trimmed, and the entry Homebridge handed over is left as it stands", (t) => {
+
+    const entry = { address: "\tunifi.local  ", password: "password", username: "username" };
+    const { api, lines, platform } = buildPlatform([], [entry]);
+    const [controller] = configuredControllers(platform);
+
+    t.after(() => void api.emit(APIEvent.SHUTDOWN));
+
+    assert.ok(controller, "the entry carries an address and credentials, so a controller is constructed for it");
+    assert.equal(controller.config.address, "unifi.local", "the controller connects to the trimmed address, the form unifi-protect can carry");
+    assert.deepEqual(lines, [], "a single entry repeats nothing");
+
+    // A controller that has not connected prefixes its lines with its configured address, so a line it logs shows the form its prefix reads.
+    controller.log.info("Probing the prefix.");
+
+    assert.deepEqual(lines, [{ level: "info", message: "unifi.local: Probing the prefix.", params: [] }], "and its lines are prefixed with that form until it connects");
+    assert.equal(entry.address, "\tunifi.local  ", "the trim reads a copy, so Homebridge's own configuration object keeps what it was handed");
   });
 
   // A string is the shape a walk with no list check reads character by character, logging a line for each; an object and a number are controls, which read as no

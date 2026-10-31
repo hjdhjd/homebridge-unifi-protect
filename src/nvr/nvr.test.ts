@@ -15,24 +15,28 @@
  * with an injected clock, so the test proves both the mapping and the reducer/window behavior it feeds.
  *
  * The root's one external boundary is its connect port, so a path that is the root's own rather than a decision it delegates runs through the real root: it is built
- * over the controller double's platform with a client double answering the port, and the platform's shutdown registration is run at the end of each row so no
- * process-global diagnostics subscription outlives it. The device-removal cascade runs through the real root the same way: it is a companion the root constructs
- * (nvr-removal-cascade.ts), and the controller double constructs the same one, so the cascade these rows record is the code every removal in either runs.
+ * over the controller double's platform with a client double answering the port, a row that needs the library's own refusal keeping that platform and running the
+ * real connect in the double's place, and the platform's shutdown registration is run at the end of each row so no process-global diagnostics subscription outlives
+ * it. The device-removal cascade runs
+ * through the real root the same way: it is a companion the root constructs (nvr-removal-cascade.ts), and the controller double constructs the same one, so the
+ * cascade these rows record is the code every removal in either runs.
  */
 import { ACCESSORY_SAVE_WINDOW_MS, retry } from "homebridge-plugin-utils";
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../camera.fixtures.ts";
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
-import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError, channels as protectChannels } from "unifi-protect";
+import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError, ProtectAuthorizationError,
+  ProtectBootstrapError, ProtectCertificateError, ProtectConfigurationError, ProtectNetworkError, ProtectRequestError, channels as protectChannels } from "unifi-protect";
 import type { ProtectCameraConfig, ProtectClient, ProtectNvrConfig } from "unifi-protect";
 import { TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr,
   restoreAccessories } from "./testing.helpers.ts";
-import { TestClock, formatLogEntry, logCount, loggedAt, settle, settleUntil } from "homebridge-plugin-utils/testing";
+import { TestClock, assertNoUnhandledRejections, formatLogEntry, linesAt, logCount, loggedAt, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, countActiveRecordingViews, createConnectRetryPolicy,
   createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption, isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest,
   isWithinRebootRecency, resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describe, test } from "node:test";
+import type { ConnectFailure } from "./nvr-policy.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import { NvrHealth } from "./nvr-health.ts";
 import type { NvrPhase } from "./nvr.ts";
@@ -48,16 +52,21 @@ import { once } from "node:events";
 // every symptom from the same clock the observer reads, so only the window's arithmetic reaches an assertion.
 const HEALTH_CLOCK_EPOCH = 1000000;
 
-// A stand-in non-authentication fault. The retry policy branches solely on `error instanceof ProtectAuthError`, so any other error value exercises the non-auth path;
-// a plain Error is the clearest representative of "network / transient".
+// A stand-in for a fault other than a refusal. The retry policy reads a refusal through the library's isControllerRefusal and stops only on a configuration error,
+// so any other error value exercises the recovery path; a plain Error is the clearest representative of "network / transient".
 const networkError = new Error("connection refused");
 
-// A refused sign-in, in the library's authentication error, which is the class the retry policy reads a refusal by.
+// A refused sign-in, in the library's authentication error, the spelling a controller that rejects the configured credentials answers with.
 const refusalError = new ProtectAuthError("bad credentials");
 
-// The wait between connect attempts while the controller refuses the sign-in, transcribed rather than read from the plugin's settings, so a schedule that drifts
-// toward a pace that could lock the account reddens a row.
-const REFUSAL_WAIT_MS = 5 * 60 * 1000;
+// A refused request rate in each of its spellings: bare, the 429 answer the library's request error carries, and wrapped, as the cause of the fetch-stage bootstrap
+// error a refused bootstrap read arrives in.
+const rateLimitError = new ProtectRequestError("The UniFi Protect controller answered the request with HTTP status 429.", { statusCode: 429 });
+const wrappedRateLimitError = new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.", { cause: rateLimitError, stage: "fetch" });
+
+// Every spelling of a refusal the library reads as one: a refused identity, in its authentication error, a refused privilege, in its authorization error, and a
+// refused request rate, the 429 answer its request error carries.
+const REFUSAL_SPELLINGS = [ refusalError, new ProtectAuthorizationError("not an administrator"), rateLimitError ];
 
 /* Walk HBPU's retry over a fresh connect retry policy on a test clock: each attempt fails with the next of the given errors, and the attempt after the last of them
  * connects. Each pass lets the failed attempt reach the wait the retry asks the clock for, then steps the clock to that wait's deadline, so the run walks the
@@ -71,7 +80,7 @@ async function walkConnectRetry(failures: readonly Error[]): Promise<{ reports: 
 
   const clock = new TestClock();
   const reports: string[] = [];
-  const { backoff, shouldRetry } = createConnectRetryPolicy({ onFailure: (reason: string): void => void reports.push(reason) });
+  const { backoff, shouldRetry } = createConnectRetryPolicy({ onFailure: ({ reason }: ConnectFailure): void => void reports.push(reason) });
 
   let attempt = 0;
 
@@ -110,40 +119,120 @@ describe("connect retry policy", () => {
       PROTECT_RECOVERY_STEADY_INTERVAL_MS ]);
   });
 
-  test("a refused sign-in waits five minutes before every retry, however many times it is refused", async () => {
+  test("a refused sign-in, privilege or request rate, in every spelling, waits out the library's refusal schedule, then holds at its floor", async () => {
 
-    // A run of refusals, so a policy that stopped retrying a refusal would end the walk rejected rather than connected.
-    const failures = Array.from({ length: PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.length + 2 }, () => refusalError);
+    const { backoff, steady } = PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS;
+    // More than one failure past the last staged delay, so the floor is shown to hold rather than to be one more rung.
+    const expected = [ ...backoff, steady, steady ];
 
-    assert.deepEqual((await walkConnectRetry(failures)).waits, failures.map(() => REFUSAL_WAIT_MS), "every retry after a refusal waits five minutes");
+    // Each spelling walks the whole schedule on its own, so a spelling the policy misread as an ordinary fault would open on the recovery schedule's first rung.
+    for(const refusal of REFUSAL_SPELLINGS) {
+
+      // eslint-disable-next-line no-await-in-loop -- Each spelling walks a retry of its own, and one walk at a time keeps each assertion's message its own spelling's.
+      assert.deepEqual((await walkConnectRetry(Array.from({ length: expected.length }, () => refusal))).waits, expected, refusal.message);
+    }
+
+    // A refused identity, a refused privilege and a refused request rate are one class, so a run that moves among them walks one schedule rather than restarting it.
+    const interleaved = Array.from({ length: expected.length }, (_, index) => REFUSAL_SPELLINGS[index % REFUSAL_SPELLINGS.length] ?? refusalError);
+
+    assert.deepEqual((await walkConnectRetry(interleaved)).waits, expected);
+  });
+
+  test("a refusal a bootstrap error carries as its cause waits as the bare refusal does, and any other wrapped fault as an ordinary one", async () => {
+
+    const { backoff, steady } = PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS;
+    const refusalWaits = [ ...backoff, steady, steady ];
+
+    /* The library's bootstrap wraps a refused document read, whether the controller refused the session, a privilege or the request rate, as the cause of a
+     * fetch-stage bootstrap error. That is a controller that answered and refused, so the wrapper waits exactly as the bare refusal does.
+     */
+    for(const refusal of REFUSAL_SPELLINGS) {
+
+      const wrapped = new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.", { cause: refusal, stage: "fetch" });
+
+      // eslint-disable-next-line no-await-in-loop -- Each wrapper walks a retry of its own, and one walk at a time keeps each assertion's message its own refusal's.
+      assert.deepEqual((await walkConnectRetry(Array.from({ length: refusalWaits.length }, () => wrapped))).waits, refusalWaits, refusal.message);
+    }
+
+    // A document that arrived and could not be read carries no refusal, so its wrapper walks the recovery schedule like any other fault.
+    const unreadable = new ProtectBootstrapError("Unable to parse the UniFi Protect controller bootstrap.",
+      { cause: new SyntaxError("Unexpected end of JSON input"), stage: "parse" });
+
+    assert.deepEqual((await walkConnectRetry(Array.from({ length: PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.length + 2 }, () => unreadable))).waits,
+      [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS ]);
+  });
+
+  test("a request the controller answered with a status other than a rate limit waits out the library's recovery schedule, bare or wrapped", async () => {
+
+    const recoveryWaits = [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS ];
+
+    /* A 404 is an answer a controller gives while it reboots, and the library classifies it as the same request error it classifies a rate limit as. It refuses
+     * nothing, because the controller is not yet serving the request rather than asking to be asked less often, so it walks the recovery schedule bare and as the
+     * cause of a fetch-stage bootstrap error alike...a policy that read every request error as a refusal would open it on the refusal schedule's first rung.
+     */
+    const notFound = new ProtectRequestError("The UniFi Protect controller answered the request with HTTP status 404.", { statusCode: 404 });
+    const wrapped = new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.", { cause: notFound, stage: "fetch" });
+
+    for(const failure of [ notFound, wrapped ]) {
+
+      // eslint-disable-next-line no-await-in-loop -- Each spelling walks a retry of its own, and one walk at a time keeps each assertion's message its own spelling's.
+      assert.deepEqual((await walkConnectRetry(Array.from({ length: recoveryWaits.length }, () => failure))).waits, recoveryWaits, failure.message);
+    }
   });
 
   test("a change of class restarts the new class's schedule at its first rung, whichever way the class changes", async () => {
 
     const [ firstRecovery, secondRecovery, thirdRecovery ] = PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS;
+    const [ firstRefusal, secondRefusal ] = PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff;
 
     /* A run of ordinary faults, then refusals, then ordinary faults again. The retry hands each wait its own attempt number, which counts the whole run, so a wait
      * that read it would land each change partway down the new schedule rather than on its first rung.
      */
     const { waits } = await walkConnectRetry([ networkError, networkError, networkError, refusalError, refusalError, networkError, networkError ]);
 
-    assert.deepEqual(waits, [ firstRecovery, secondRecovery, thirdRecovery, REFUSAL_WAIT_MS, REFUSAL_WAIT_MS, firstRecovery, secondRecovery ]);
+    assert.deepEqual(waits, [ firstRecovery, secondRecovery, thirdRecovery, firstRefusal, secondRefusal, firstRecovery, secondRecovery ]);
   });
 
-  test("every class of fault is retried at every rung of its schedule, its steady floor included", () => {
+  test("every class of fault but a refused address is retried at every rung of its schedule, its steady floor included", () => {
 
-    // More than one failure past the recovery schedule's last staged delay, so each class is asked about on its floor as well as on each of its rungs.
-    const run = PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.length + 2;
+    // More than one failure past the longer schedule's last staged delay, so each class is asked about on its floor as well as on each of its rungs.
+    const run = Math.max(PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.length, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.length) + 2;
 
-    for(const failure of [ networkError, refusalError, new TypeError("Cannot read properties of undefined (reading 'nvr')") ]) {
+    for(const failure of [ networkError, new TypeError("Cannot read properties of undefined (reading 'nvr')"), ...REFUSAL_SPELLINGS ]) {
 
       const { shouldRetry } = createConnectRetryPolicy();
 
       for(let attempt = 1; attempt <= run; attempt++) {
 
-        assert.equal(shouldRetry(failure), true, "nothing gives up, so every failure of every class is retried");
+        assert.equal(shouldRetry(failure), true, "a fault the controller or the network can recover from is retried however long the run has lasted");
       }
     }
+  });
+
+  test("the connect retry policy stops at an address no URL can carry without reporting it, and retries a refused certificate, an unresolvable host and a " +
+    "refused sign-in", () => {
+
+    const reports: string[] = [];
+    const { shouldRetry } = createConnectRetryPolicy({ onFailure: ({ reason }: ConnectFailure): void => void reports.push(reason) });
+
+    // The library's own refusal of an address carrying more than a host and a port, worded as unifi-protect words it.
+    assert.equal(shouldRetry(new ProtectConfigurationError("The controller address \"nvr.local/path\" carries more than a host and a port.")), false,
+      "the same address is refused the same way on every attempt, so the run ends on the first");
+    assert.deepEqual(reports, [], "and the veto reaches no report, so no retrying reason is said ahead of the caller's own line");
+
+    /* The negative controls, each asked of the same policy, since the veto leaves the run's state alone. A refused certificate and an unresolvable host are faults an
+     * operator fixes while the process runs, and a refused sign-in is fatal to the library yet still retried here, because a password corrected on the controller is
+     * picked up by the next attempt...a veto reading the library's fatal class rather than the configuration class would stop the last of these.
+     */
+    const controls = [ new ProtectCertificateError({ cause: new Error("self-signed certificate"), host: "nvr.local" }),
+      new ProtectNetworkError("Unable to resolve nvr.local.", { code: "ENOTFOUND" }), refusalError ];
+
+    for(const control of controls) {
+
+      assert.equal(shouldRetry(control), true, control.message);
+    }
+
+    assert.equal(reports.length, controls.length, "and each is reported as the retried fault it is");
   });
 
   test("a run reports its first failure, and a repeat of the same reason stays silent", async () => {
@@ -159,7 +248,7 @@ describe("connect retry policy", () => {
     assert.equal(createConnectRetryPolicy().shouldRetry(refusalError), true);
   });
 
-  test("a run reports again whenever the reason changes, a return to an earlier reason included", async () => {
+  test("a run of failures other than a rate limit reports again whenever the reason changes, a return to an earlier reason included", async () => {
 
     /* An unreachable controller that starts refusing the sign-in, then becomes unreachable again. The return is what tells a comparison against the last reason
      * apart from one against every reason ever seen...the latter would stay silent when the first fault returns and hide from the user that the fault moved again.
@@ -167,6 +256,58 @@ describe("connect retry policy", () => {
     const { reports } = await walkConnectRetry([ networkError, networkError, refusalError, refusalError, networkError ]);
 
     assert.deepEqual(reports, [ "connection refused", "bad credentials", "connection refused" ]);
+  });
+
+  test("a run of rate limits reports once, whichever spelling each arrives in, as bare and wrapped rate limits alternate", async () => {
+
+    const { backoff, steady } = PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS;
+    const expected = [ ...backoff, steady, steady ];
+
+    /* A rate limit's bare and wrapped spellings read as different texts, so a comparison on the text would report each time the spelling alternates, while every
+     * attempt meets the same controller asking to be asked less often. The run keeps one class throughout, so it walks the refusal schedule without a restart.
+     */
+    const { reports, waits } = await walkConnectRetry(Array.from({ length: expected.length },
+      (_, index) => ((index % 2) === 0) ? rateLimitError : wrappedRateLimitError));
+
+    assert.deepEqual(reports, ["The UniFi Protect controller answered the request with HTTP status 429"], "the run of rate limits is reported once, by its first");
+    assert.deepEqual(waits, expected);
+  });
+
+  test("a turn from a rate limit to any other failure reports again, and so does the turn back to a rate limit", async () => {
+
+    /* A controller limiting the request rate that drops off the network, then limits the rate again in the other spelling. Every rate limit shares one report, and
+     * that report still gives way to a failure of another kind and returns after it...a run that remembered having said a rate limit at all would stay silent on
+     * the return and hide from the user that the fault moved back.
+     */
+    const { reports } = await walkConnectRetry([ rateLimitError, networkError, wrappedRateLimitError ]);
+
+    assert.deepEqual(reports, [ "The UniFi Protect controller answered the request with HTTP status 429", "connection refused",
+      "Unable to fetch the UniFi Protect controller bootstrap: The UniFi Protect controller answered the request with HTTP status 429" ]);
+
+    // A refused sign-in shares a rate limit's refusal class, so a report keyed on the class would say nothing when the credentials need a person's correction.
+    const { reports: signInTurn } = await walkConnectRetry([ rateLimitError, refusalError, wrappedRateLimitError ]);
+
+    assert.deepEqual(signInTurn, [ "The UniFi Protect controller answered the request with HTTP status 429", "bad credentials",
+      "Unable to fetch the UniFi Protect controller bootstrap: The UniFi Protect controller answered the request with HTTP status 429" ]);
+  });
+
+  test("a report says a rate limit is one, bare or wrapped, and says a refused sign-in, a network fault or another status, bare or wrapped, is not", () => {
+
+    /* A rate limit is the one refusal that is no refused sign-in, and a fetch-stage bootstrap error carries it as its cause, as the library's reading sees through. A
+     * 503 is an answer the same request error carries without refusing anything, so it is no rate limit, bare or wrapped.
+     */
+    const unavailable = new ProtectRequestError("The UniFi Protect controller answered the request with HTTP status 503.", { statusCode: 503 });
+    const wrappedUnavailable = new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.", { cause: unavailable, stage: "fetch" });
+
+    for(const [ failure, rateLimited ] of [ [ rateLimitError, true ], [ wrappedRateLimitError, true ], [ refusalError, false ], [ networkError, false ],
+      [ unavailable, false ], [ wrappedUnavailable, false ] ] as const) {
+
+      const reports: ConnectFailure[] = [];
+
+      createConnectRetryPolicy({ onFailure: (report: ConnectFailure): void => void reports.push(report) }).shouldRetry(failure);
+
+      assert.deepEqual(reports.map((report) => report.rateLimited), [rateLimited], failure.message);
+    }
   });
 });
 
@@ -756,25 +897,41 @@ describe("the controller root's stability sweep", () => {
   });
 });
 
+/* The line a controller whose address can never work logs once its connect retry stops, transcribed rather than referenced so a wording that drifts by a character
+ * in its one home reddens a row.
+ *
+ * @param prefix - The controller's log prefix.
+ * @param reason - The library's refusal, as the line carries it.
+ *
+ * @returns The line as the logger renders it.
+ */
+function addressRefused(prefix: string, reason: string): string {
+
+  return prefix + ": Unable to connect to the Protect controller, and will not keep trying until its address is corrected in the plugin settings: " + reason;
+}
+
 describe("the controller root's connect retry", () => {
 
-  /* A controller that refuses the configured sign-in at startup is retried for as long as the plugin runs, five minutes between attempts, and the user is told why
-   * once rather than on every attempt. The connect port refuses every attempt and records the platform clock's time at each, so the spacing is read from the
-   * attempts themselves, and the clock stops a millisecond short of each wait first, so a retry that came early reddens the row. The run is walked to its fourth
-   * attempt, which a policy that stopped retrying after a few refusals would never reach. That attempt is still in flight when the plugin shuts down, and fails with
-   * the abort it is handed, as a sign-in torn down mid-request does. Shutdown is the only end of the run, and an orderly one: the login returns and the aborted
-   * attempt is not reported.
+  /* A controller that refuses the configured sign-in at startup is retried for as long as the plugin runs, on the library's refusal schedule, and the user is told
+   * why once rather than on every attempt. The connect port refuses every attempt and records the platform clock's time at each, so the spacing is read from the
+   * attempts themselves, and the clock stops a millisecond short of each wait first, so a retry that came early reddens the row. The run is walked through every
+   * staged delay and onto the schedule's floor, which a policy that stopped retrying after a few refusals would never reach. The attempt after the last wait is
+   * still in flight when the plugin shuts down, and fails with the abort it is handed, as a sign-in torn down mid-request does. Shutdown is the only end of the run,
+   * and an orderly one: the login returns and the aborted attempt is not reported.
    */
-  test("a refused sign-in is reported once at error and retried five minutes apart until shutdown ends the run", async () => {
+  test("a refused sign-in is reported once at error and retried on the library's refusal schedule until shutdown ends the run", async () => {
 
     const { clock, controller, logEntries, nvr: double } = makeTestNvr({ store: new TestStateStore(makeProtectState({ nvr: makeNvrConfig() })) });
+    const { backoff, steady } = PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS;
+    // Every staged delay, then more than one wait at the floor, so the run is seen settling onto the floor and carrying on there rather than stopping.
+    const waits = [ ...backoff, steady, steady ];
     const attempts: number[] = [];
     const { platform, shutdown } = makeRootPlatform(double);
     const root = new ProtectNvr(platform, double.config, async ({ signal }): Promise<ProtectClient> => {
 
       attempts.push(clock.now());
 
-      if((attempts.length === 4) && signal) {
+      if((attempts.length > waits.length) && signal) {
 
         await once(signal, "abort");
 
@@ -790,23 +947,23 @@ describe("the controller root's connect retry", () => {
 
       await settleUntil(() => attempts.length === 1, { description: "the first sign-in attempt" });
 
-      for(let attempt = 2; attempt <= 4; attempt++) {
+      for(const [ index, wait ] of waits.entries()) {
 
-        clock.advance(REFUSAL_WAIT_MS - 1);
+        clock.advance(wait - 1);
 
         // eslint-disable-next-line no-await-in-loop -- Each step reads the attempts the previous one let run, so the steps are serial by intent.
         await settle();
 
-        assert.equal(attempts.length, attempt - 1, "no attempt runs before five minutes have passed since the last refusal");
+        assert.equal(attempts.length, index + 1, "no attempt runs before its wait on the refusal schedule has passed since the last refusal");
 
         clock.advance(1);
 
         // eslint-disable-next-line no-await-in-loop -- Each step reads the attempts the previous one let run, so the steps are serial by intent.
-        await settleUntil(() => attempts.length === attempt, { description: "sign-in attempt " + attempt.toString() });
+        await settleUntil(() => attempts.length === (index + 2), { description: "sign-in attempt " + (index + 2).toString() });
       }
 
-      assert.deepEqual(attempts.map((at) => at - (attempts[0] ?? 0)), [ 0, REFUSAL_WAIT_MS, 2 * REFUSAL_WAIT_MS, 3 * REFUSAL_WAIT_MS ],
-        "each attempt after a refusal runs five minutes after the one before it");
+      assert.deepEqual(attempts.slice(1).map((at, index) => at - (attempts[index] ?? 0)), waits,
+        "each attempt after a refusal runs one wait of the refusal schedule after the one before it");
       assert.equal(logCount(logEntries, "error", "Unable to connect to the Protect controller, and will keep trying: bad credentials."), 1,
         "the refusal is reported once at error, and its repeats are not");
 
@@ -816,7 +973,7 @@ describe("the controller root's connect retry", () => {
 
       await login;
 
-      assert.equal(attempts.length, 4, "shutdown ends the run without another attempt");
+      assert.equal(attempts.length, waits.length + 1, "shutdown ends the run without another attempt");
       assert.deepEqual(logEntries.slice(reported).filter((entry) => entry.level === "error").map(formatLogEntry), [],
         "and the attempt the shutdown aborted is not reported, so the run ends with nothing at error");
     } finally {
@@ -825,6 +982,250 @@ describe("the controller root's connect retry", () => {
       controller.abort();
 
       await settle();
+    }
+  });
+
+  /* A controller whose configured address no URL can carry is refused by the library before anything is sent, and the same way on every attempt, so the run ends
+   * on its first attempt with one line saying the address needs correcting and no retrying line ahead of it. The connect port refuses as the library does, worded
+   * as unifi-protect words it. Nothing shuts the plugin down until the run has ended on its own, so the login returning is the retry stopping, and the controller
+   * is left in its first phase with no client. The shutdown it still takes afterward has no client to dispose, and completes without a word or a stray rejection.
+   */
+  test("a login whose connect is refused as an address no URL can carry stops after its first attempt, waits for nothing, and says so once", async () => {
+
+    const { clock, controller, logEntries, nvr: double } = makeTestNvr({ store: new TestStateStore(makeProtectState({ nvr: makeNvrConfig() })) });
+    const refusal = "The controller address \"nvr.local/path\" carries more than a host and a port.";
+    const { platform, shutdown } = makeRootPlatform(double);
+    // The controller double's own removal gate arms a timer on the clock as the double is built, so what the root asks of the clock is read from here on.
+    const armed = clock.requested.length;
+    const pending = clock.pending;
+
+    let attempts = 0;
+
+    const root = new ProtectNvr(platform, { ...double.config, address: "nvr.local/path" }, async (): Promise<ProtectClient> => {
+
+      attempts++;
+
+      throw new ProtectConfigurationError(refusal);
+    });
+
+    try {
+
+      // The login is started rather than awaited, so a retry that waited behind the refusal reddens the row here rather than leaving it hanging on that wait.
+      let returned = false;
+
+      const login = root.login().then((): void => {
+
+        returned = true;
+      });
+
+      await settleUntil(() => returned, { description: "the login returning on its own, before any shutdown" });
+      await login;
+
+      assert.equal(attempts, 1, "the address is refused on the first attempt and never asked about again");
+      assert.deepEqual(clock.requested.slice(armed), [], "so no wait is armed behind the refusal");
+      assert.equal(clock.pending, pending, "and nothing more is left to come due");
+      assert.deepEqual(linesAt(logEntries, "error"), [addressRefused("nvr.local/path", refusal)],
+        "the refusal is said once, in the line that says the retry stopped, with no retrying line ahead of it");
+      assert.equal(root.phase, "connecting", "the controller never connected, so it stays in its first phase");
+
+      await assertNoUnhandledRejections(async (): Promise<void> => {
+
+        shutdown();
+
+        await settle();
+      });
+
+      assert.equal(root.phase, "shuttingDown", "the shutdown a controller that never connected still takes completes");
+      assert.deepEqual(linesAt(logEntries, "error"), [addressRefused("nvr.local/path", refusal)], "and adds no line of its own");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
+  });
+
+  /* A controller whose address carries credentials never connects, so every line it writes is prefixed with the name it takes from that address. The connect is the
+   * real one, which refuses such an address before it sends anything, so the line saying the retry stopped carries the address wherever it names it: the prefix the
+   * root takes from it, and the library's own refusal quoted after that prefix. Every level is captured, debug included, through the shutdown that ends the run: the
+   * gate is turned on and a debug line arrives on the warn channel, so a line of any level that named the address raw would land here.
+   */
+  test("a controller that never connects prefixes its lines with its address as unifi-protect masks it, so the credentials reach no line", async () => {
+
+    const { controller, logEntries, nvr: double } = makeTestNvr({ store: new TestStateStore(makeProtectState({ nvr: makeNvrConfig() })),
+      userOptions: ["Enable.Log.Debug"] });
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, { ...double.config, address: "user:secret@10.0.0.1" });
+
+    try {
+
+      // The login is started rather than awaited, so a retry that waited behind the refusal reddens the row here rather than leaving it hanging on that wait.
+      let returned = false;
+
+      const login = root.login().then((): void => {
+
+        returned = true;
+      });
+
+      await settleUntil(() => returned, { description: "the login returning on its own, before any shutdown" });
+      await login;
+
+      shutdown();
+
+      await settle();
+
+      assert.deepEqual(linesAt(logEntries, "error"), [addressRefused("***@10.0.0.1", "The controller address \"***@10.0.0.1\" carries more than a host and a port.")],
+        "the prefix names the address masked through its last @, as the library's message does");
+      assert.deepEqual(logEntries.map(formatLogEntry).filter((line) => line.includes("secret")), [], "and the password reaches no line at any level");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
+  });
+
+  /* The same refusal arriving from an attempt the plugin's shutdown has already aborted. The policy vetoes it as it vetoes any refused address, so the retry
+   * rejects at once, and the connect reads the shutdown before it says anything: a refused address meeting a shutdown in progress is as quiet as every other
+   * attempt a shutdown ends, and the login returns with nothing at error.
+   */
+  test("a configuration error landing after shutdown began says nothing", async () => {
+
+    const { controller, logEntries, nvr: double } = makeTestNvr({ store: new TestStateStore(makeProtectState({ nvr: makeNvrConfig() })) });
+    const { platform, shutdown } = makeRootPlatform(double);
+
+    let attempts = 0;
+
+    const root = new ProtectNvr(platform, { ...double.config, address: "nvr.local/path" }, async ({ signal }): Promise<ProtectClient> => {
+
+      attempts++;
+
+      if(signal) {
+
+        await once(signal, "abort");
+      }
+
+      throw new ProtectConfigurationError("The controller address \"nvr.local/path\" carries more than a host and a port.");
+    });
+
+    try {
+
+      const login = root.login();
+
+      await settleUntil(() => attempts === 1, { description: "the first connect attempt" });
+
+      shutdown();
+
+      await login;
+
+      assert.equal(attempts, 1, "the attempt the shutdown met is the only one");
+      assert.deepEqual(linesAt(logEntries, "error"), [], "and the refusal it ended on is not said, because the plugin was already shutting down");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
+  });
+});
+
+describe("the controller root's report of a startup failure by its kind", () => {
+
+  // The line a startup rate limit is said with, and the line every other startup failure is said with, each transcribed so a wording that drifts reddens a row.
+  const RATE_LIMITED_LINE = "Unable to connect to the Protect controller because it is rate limiting requests, and will keep trying on the slower refusal schedule.";
+  const failedLine = (reason: string): string => "Unable to connect to the Protect controller, and will keep trying: " + reason + ".";
+
+  /* Log the real root in against a connect port that fails one attempt for each of the given failed attempts, in turn and with that attempt's failure, then shut
+   * the plugin down while the attempt after the last of them waits on its signal, as a sign-in torn down mid-request does, and answer the lines the run logged. Each
+   * failed attempt's wait is stepped on the platform's clock once that attempt has failed, so the run walks the schedule the policy chose on virtual time.
+   */
+  async function loginFailing(failedAttempts: readonly { failure: Error; wait: number }[]): Promise<readonly TestLogEntry[]> {
+
+    const { clock, controller, logEntries, nvr: double } = makeTestNvr({ store: new TestStateStore(makeProtectState({ nvr: makeNvrConfig() })) });
+    const { platform, shutdown } = makeRootPlatform(double);
+
+    let attempts = 0;
+
+    const root = new ProtectNvr(platform, double.config, async ({ signal }): Promise<ProtectClient> => {
+
+      const failedAttempt = failedAttempts[attempts++];
+
+      if(failedAttempt) {
+
+        throw failedAttempt.failure;
+      }
+
+      assert.ok(signal, "the root runs each attempt under its retry's signal");
+
+      await once(signal, "abort");
+
+      throw signal.reason;
+    });
+
+    try {
+
+      const login = root.login();
+
+      await settleUntil(() => attempts === 1, { description: "the first sign-in attempt" });
+
+      for(const [ index, { wait } ] of failedAttempts.entries()) {
+
+        clock.advance(wait);
+
+        // eslint-disable-next-line no-await-in-loop -- Each step reads the attempt the previous one let run, so the steps are serial by intent.
+        await settleUntil(() => attempts === (index + 2), { description: "sign-in attempt " + (index + 2).toString() });
+      }
+
+      shutdown();
+
+      await login;
+
+      return logEntries;
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
+  }
+
+  test("a startup rate limit, bare or wrapped, is said once at warn across repeated attempts, and nothing is said at error", async () => {
+
+    for(const failure of [ rateLimitError, wrappedRateLimitError ]) {
+
+      // eslint-disable-next-line no-await-in-loop -- Each spelling logs a root in of its own, and one at a time keeps each assertion's message its own spelling's.
+      const logEntries = await loginFailing(PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 2).map((wait) => ({ failure, wait })));
+
+      assert.equal(logCount(logEntries, "warn", RATE_LIMITED_LINE), 1, failure.message + ": the rate limit was said once at warn");
+      assert.deepEqual(linesAt(logEntries, "error"), [], failure.message + ": and nothing was said at error");
+    }
+  });
+
+  test("a startup rate limit alternating between bare and wrapped is said once at warn across the attempts, and nothing is said at error", async () => {
+
+    const { backoff } = PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS;
+
+    // Every rung of the refusal schedule, so the spelling alternates on each attempt the run makes before the plugin shuts down.
+    const logEntries = await loginFailing(backoff.map((wait, index) => ({ failure: ((index % 2) === 0) ? rateLimitError : wrappedRateLimitError, wait })));
+
+    assert.equal(logCount(logEntries, "warn", RATE_LIMITED_LINE), 1, "the rate limit was said once at warn, however its spelling alternated");
+    assert.deepEqual(linesAt(logEntries, "error"), [], "and nothing was said at error");
+  });
+
+  test("a refused sign-in and a network failure at startup are each said once at error with their reason, and neither as a rate limit", async () => {
+
+    for(const { failure, waits } of [ { failure: refusalError, waits: PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 2) },
+      { failure: networkError, waits: PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 2) } ]) {
+
+      // eslint-disable-next-line no-await-in-loop -- Each failure logs a root in of its own, and one at a time keeps each assertion's message its own failure's.
+      const logEntries = await loginFailing(waits.map((wait) => ({ failure, wait })));
+
+      assert.equal(logCount(logEntries, "error", failedLine(failure.message)), 1, failure.message + ": the failure was said once at error with its reason");
+      assert.equal(logCount(logEntries, "warn", RATE_LIMITED_LINE), 0, failure.message + ": and not as a rate limit");
     }
   });
 });
