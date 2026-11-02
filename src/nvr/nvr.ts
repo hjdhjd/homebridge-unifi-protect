@@ -53,12 +53,14 @@ import { servePlaylist } from "./nvr-playlist.ts";
  *   - `connecting`: initial setup, or post-disruption reconnection attempt. Real connection errors should still surface to the user (e.g., "invalid credentials"),
  *      but health-symptom observation is suspended because we have not yet established a baseline of "running" against which to weigh stress.
  *   - `running`: connected, normal steady-state operation. Errors are organic; health observation is active; consumers log unexpected events normally.
- *   - `rebooting`: the plugin initiated a controller reboot. Errors are induced (we know the controller is going away); health observation is suspended; consumers
- *      suppress noise about the disruption.
- *   - `shuttingDown`: terminal. The plugin or the host process is going away. Same suppression as `rebooting` but no recovery is expected.
+ *   - `rebooting`: the plugin initiated a controller reboot. The disruption is induced (we know the controller is going away); health observation is suspended;
+ *      consumers suppress noise about the disruption. The client logger's own lines hide on the reboot scheduler's gate rather than on this phase, so they show until the
+ *      controller accepts the command and again once a reboot is overdue.
+ *   - `shuttingDown`: terminal. The plugin or the host process is going away. Consumers suppress noise as in `rebooting` and the client logger's errors stay hidden, but
+ *      no recovery is expected.
  *
- * Transitions are owned by `ProtectNvr.transition()`. Components consume via `nvr.phase`. Derived predicates (currently `logApiErrors`) are getters that project
- * from phase, so phase is the lone mutable axis.
+ * Transitions are owned by `ProtectNvr.transition()`. Components consume via `nvr.phase`. `logApiErrors` is a getter over this phase and the reboot scheduler's gate,
+ * whose pending timer is its one value, so phase is the lone lifecycle axis and neither needs telling when the other moves.
  */
 export type NvrPhase = "connecting" | "rebooting" | "running" | "shuttingDown";
 
@@ -119,8 +121,9 @@ export class ProtectNvr {
   // The address override this controller's cameras resolve their RTSP URLs against, or null when none is configured or the configured one was set aside. Resolved once,
   // while the controller is configured at login.
   #overrideAddress: Nullable<string>;
-  // The scheduled reboot: when it fires, how long an active HKSV recording may hold it back, and how a command that took no effect is recognized. Handed the recording
-  // count and the connection health as suppliers it pulls at its own fire time; the reboot command itself and both phase moves run back here through its actions.
+  // The scheduled reboot: when it fires, how long an active HKSV recording may hold it back, how a command that took no effect is recognized, and whether a reboot is
+  // still on time, the gate the client logger reads. Handed the recording count, the connection health and the controller's availability as suppliers it pulls at its own
+  // fire time; the reboot command itself and the phase moves run back here through its actions.
   public readonly reboot: RebootScheduler;
   // The device-removal cascade: the guards, the package-camera cascade, the device's cleanup and retirement, and the shared tail every removal of one of our
   // accessories runs. Handed the controller's MAC and its state store as suppliers it pulls at use time; the acts the removal gate, the livestream-episode ledger and
@@ -141,8 +144,9 @@ export class ProtectNvr {
   readonly #shutdownController: AbortController;
   public systemInfo: Nullable<ProtectNvrSystemInfo>;
   private unsupportedDevices: Record<string, boolean>;
-  // The unifi-protect client logger. Shares the controller-log destination but gates error output through `logApiErrors` so induced-disruption noise is suppressed. Typed
-  // as the unifi-protect library's own ProtectLogging contract, single-sourced with what ProtectClient.connect() expects.
+  // The unifi-protect client logger. Shares the controller-log destination but hides warn and error output while a scheduled reboot is on time, so the outage we induced
+  // stays quiet until it is overdue, and error output through shutdown. Typed as the unifi-protect library's own ProtectLogging contract, single-sourced with what
+  // ProtectClient.connect() expects.
   private readonly clientLog: ProtectLogging;
   // The one place the device-category vocabulary is wired to its projections and constructors: adoption resolves the live unifi-protect projection through
   // `.projection` and builds the HomeKit device through `.construct`. Membership reads the client's own selector catalog through the same key: the membership observe
@@ -185,8 +189,9 @@ export class ProtectNvr {
 
     /* The unifi-protect client logger. The library logs complete sentences with structured context attached as trailing parameters, and rendering that context inline
      * would put raw object dumps in front of the user - so each non-debug level emits the sentence alone at its level and echoes the full line, context included, to
-     * debug, where the forensic detail belongs. Error output is additionally gated by logApiErrors so induced-disruption noise stays quiet; the debug echo stays
-     * ungated, so debug logging captures the full record even while the user-facing line is suppressed. Debug passes through untouched.
+     * debug, where the forensic detail belongs. Warn and error output each read the reboot scheduler's one gate, so a line is hidden only while a reboot is on time and
+     * nothing is held or replayed, with no match on the library's wording, and logApiErrors adds the terminal phase for errors; the debug echo stays ungated, so debug
+     * logging captures the full record even while the user-facing line is suppressed. Debug passes through untouched.
      */
     const routeClientContext = (write: (message: string) => void): ((message: string, ...parameters: unknown[]) => void) => {
 
@@ -212,7 +217,13 @@ export class ProtectNvr {
         }
       }),
       info: routeClientContext((message: string): void => this.platform.pluginLog.info(message)),
-      warn: routeClientContext((message: string): void => this.platform.pluginLog.warn(message))
+      warn: routeClientContext((message: string): void => {
+
+        if(!this.reboot.isRebootOnTime) {
+
+          this.platform.pluginLog.warn(message);
+        }
+      })
     };
 
     /* The controller half of this logger's per-call debug scope. The client field is definite-assigned at connect, so the unconnected state is real even though
@@ -292,6 +303,7 @@ export class ProtectNvr {
       activeRecordings: (): number => countActiveHksvRecordings(this.configuredDevices),
       clock: this.platform.clock,
       isConnectionHealthy: (): boolean => this.client.connection.isHealthy,
+      isControllerAvailable: (): boolean => this.isAvailable,
       log: this.log,
       phase: (): NvrPhase => this._phase,
       signal: this.signal
@@ -324,8 +336,8 @@ export class ProtectNvr {
    */
   async #shutdown(): Promise<void> {
 
-    // Tear down the scheduled reboot's timers. The reboot cycle and the no-op confirmation are both induced-lifecycle work that must not survive teardown - one
-    // would command a controller we are disposing, the other would narrate a reboot nobody is waiting on any more.
+    // Tear down the scheduled reboot's timers, each induced-lifecycle work that must not survive teardown - the cycle would command a controller we are disposing, and
+    // the no-op confirmation and the expected return would narrate a reboot nobody is waiting on any more. Ending the expected return also lets a library warn show.
     this.reboot.reset();
 
     // Tear down the device-removal timers unconditionally. The stability-sweep one-shot and every pending delayed removal are deferred destructive actions that must
@@ -526,18 +538,19 @@ export class ProtectNvr {
   }
 
   /**
-   * Whether API error logging is currently surfaced to the user. Derived from phase: errors are visible during `connecting` (so credential or address problems
-   * reach the user) and `running` (organic errors are real signal), but suppressed during `rebooting` and `shuttingDown` where the errors are induced by our own
-   * teardown. Read by the unifi-protect client logger callback in this NVR's constructor.
+   * Whether API error logging is currently surfaced to the user. Errors are hidden during `shuttingDown`, where they are induced by our own teardown, and while a
+   * scheduled reboot is on time, the gate the client logger's warn output reads too. Everywhere else they are visible: credential or address problems during
+   * `connecting`, organic errors during `running`, and during `rebooting` a failure of the command itself or a controller that refuses the sign-in once the reboot is
+   * overdue. Read by the unifi-protect client logger callback in this NVR's constructor.
    */
   public get logApiErrors(): boolean {
 
-    return (this._phase === "running") || (this._phase === "connecting");
+    return (this._phase !== "shuttingDown") && !this.reboot.isRebootOnTime;
   }
 
   // Move the NVR to a new lifecycle phase. The single chokepoint that keeps every derived effect aligned: it updates `_phase`, aborts the terminal shutdown signal on
   // entry to `shuttingDown`, then hands the phase to the health bridge so symptom observation matches whether we're in an induced disruption or organic operation.
-  // The `logApiErrors` getter is pure-derived from `_phase` and needs no explicit update here.
+  // The `logApiErrors` getter derives from `_phase` and the reboot scheduler's gate and needs no explicit update here.
   //
   // A no-op on same-phase transitions, and a no-op on any attempt to leave `shuttingDown` - that phase is terminal, so a stale reboot timer, a late-resolving
   // connect, or any other deferred wake that fires after teardown cannot resurrect the lifecycle. `canTransition` owns both rules. `shuttingDown` is observable
@@ -764,12 +777,12 @@ export class ProtectNvr {
   // transition while rebooting). The `_phase === "rebooting"` guard is a defensive method-boundary precondition: the recovery-edge predicate is the SSOT decision and
   // this guard asserts the contract, so an organic recovery while `running` is a no-op here. The un-strand property is inherent to the recovery edge - a real reboot
   // always drops then recovers the connection, so the edge always fires, depending on nothing but the connection's own health journey and no separate detection event.
-  // We clear the no-op confirmation timer (a real recovery edge proves the reboot took effect) and reset the pre-reboot health history: the controller is freshly
-  // booted, so any stress or library-throttle state latched before the reboot is no longer relevant. The suspend held across the whole rebooting phase kept induced
-  // symptoms out of the buffer, but the latched state enum and the throttle flag clear only on a reset or a fresh clearing observation, so we reset explicitly here -
-  // restoring the clean baseline the connect()-driven reset gives us. The library already narrates the recovery itself, so this method does not log a duplicate
-  // "back online" line. (The no-op path produces no recovery edge and resumes through the scheduler's own no-op confirmation instead, which deliberately does NOT
-  // reset: a controller that never actually rebooted keeps its still-relevant health history.)
+  // We clear the no-op confirmation and the expected return (a real recovery edge proves the reboot took effect) and reset the pre-reboot health history: the
+  // controller is freshly booted, so any stress or library-throttle state latched before the reboot is no longer relevant. The suspend held across the whole rebooting
+  // phase kept induced symptoms out of the buffer, but the latched state enum and the throttle flag clear only on a reset or a fresh clearing observation, so we reset
+  // explicitly here - restoring the clean baseline the connect()-driven reset gives us. The library already narrates the recovery itself, so this method does not log a
+  // duplicate "back online" line. (The no-op path produces no recovery edge and resumes through the scheduler's own no-op confirmation instead, which deliberately does
+  // NOT reset: a controller that never actually rebooted keeps its still-relevant health history.)
   private resumeFromInducedReboot(): void {
 
     if(this._phase !== "rebooting") {
@@ -1211,7 +1224,7 @@ export class ProtectNvr {
       for await (const transition of this.client.connection.observe({ signal: this.signal })) {
 
         // Conclude an induced reboot the moment the connection recovers - a non-healthy -> healthy edge while rebooting. The decision is the pure
-        // shouldResumeFromInducedReboot; this is the single existing consumer of the connection-state stream, so the check rides here rather than a second subscription.
+        // shouldResumeFromInducedReboot; this is the single existing consumer of the connection-state stream, so the check lives here rather than a second subscription.
         // We do it before the stability re-evaluation below so a resume's transition("running") + health.reset() land first, and that step sees the running phase.
         if(shouldResumeFromInducedReboot({ from: transition.from, phase: this._phase, to: transition.to })) {
 

@@ -292,10 +292,10 @@ export class TestProtectNvr {
       signal: init.signal
     });
 
-    /* The REAL reboot scheduler, wired the way ProtectNvr wires its own (nvr.ts): the recording count and the connection health as suppliers it pulls at its own fire
-     * time, the double's recording log, the platform's test clock, and the controller lifetime signal its TimerRegistry binds to. The phase actions move the
-     * double's bare settable `phase` - the same field the recording delegate already reads - so the confirmation's still-rebooting guard and any induced-suppression
-     * read see the phase the choreography set, and the reboot action records its calls and consumes a test's injected failure.
+    /* The REAL reboot scheduler, wired the way ProtectNvr wires its own (nvr.ts): the recording count, the connection health and the controller's availability as
+     * suppliers it pulls at its own fire time, the double's recording log, the platform's test clock, and the controller lifetime signal its TimerRegistry binds to. The
+     * phase actions move the double's bare settable `phase` - the same field the recording delegate already reads - so the confirmation's still-rebooting guard and any
+     * induced-suppression read see the phase the choreography set, and the reboot action records its calls and consumes a test's injected failure.
      *
      * The scheduler arms NOTHING at construction: entering the schedule is an explicit call, so this member fires nothing in any suite that does not ask it to. That is
      * what keeps the embedding inert for every existing test, unlike the removal gate above whose construction seed arms a sweep.
@@ -323,6 +323,7 @@ export class TestProtectNvr {
       activeRecordings: (): number => countActiveHksvRecordings(this.configuredDevices),
       clock: init.platform.clock,
       isConnectionHealthy: (): boolean => this.client.connection.isHealthy,
+      isControllerAvailable: (): boolean => this.isAvailable,
       log: this.log,
       phase: (): NvrPhase => this.phase,
       signal: init.signal
@@ -829,8 +830,9 @@ export class TestConnection {
 
 /**
  * Build the client a connected controller root reads, for a row that runs the real root through its connect port: the controller record, the store, the liveview
- * collection and each camera's projection read through that store, a TestConnection as its connection monitor, and an activity stream that carries no event, so the
- * root's router finds none and ends. The client owns no resources, so its disposal does nothing.
+ * collection and each camera's projection read through that store, a TestConnection as its connection monitor, an activity stream that carries no event, so the root's
+ * router finds none and ends, and a reboot command the controller accepts, which a row replaces to hold or refuse it. The client owns no resources, so its disposal does
+ * nothing.
  *
  * @param options           - Client inputs.
  * @param options.nvrConfig - The controller record the root reads through client.nvr.config.
@@ -859,6 +861,10 @@ export function makeConnectedClient(options: { nvrConfig: ProtectNvrConfig; stor
       return [...store.snapshot().liveviews.values()];
     },
     nvr: { config: nvrConfig },
+    reboot: async (): Promise<void> => {
+
+      // No-op: the double's controller accepts the command, and a row moves the connection levers for whatever follows.
+    },
     state: store
   };
 

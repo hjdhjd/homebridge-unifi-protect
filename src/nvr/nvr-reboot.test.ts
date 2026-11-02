@@ -5,7 +5,7 @@
  * The scheduler owns a deliberate outage: it decides when the plugin asks a healthy controller to restart, how long an HKSV recording in flight may hold that back, what
  * a failed command does, and how a controller that accepted the command and never restarted is recognized. This suite constructs it directly against recording stubs, so
  * what is exercised is the class itself rather than any controller wired to it: the schedule arithmetic, the deferral chain and its cumulative ceiling, the phase
- * choreography around the command, the no-op confirmation and each half of its guard, and the lifetime signal.
+ * choreography around the command, the no-op confirmation and each half of its guard, the expected return and the gate it holds, and the lifetime signal.
  *
  * Timing is the subject here, so every arm builds its scheduler on its own test clock and drives time by advancing it: every timer the scheduler arms goes through
  * that clock, and every instant it reads comes from it. Each arm builds its own scheduler and its own recorder, so no arm inherits a cycle another one left pending.
@@ -23,6 +23,7 @@ import { TestClock, settle } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { NvrPhase } from "./nvr.ts";
+import { REBOOT_EXPECTED_RETURN_MS } from "./nvr-policy.ts";
 import { RebootScheduler } from "./nvr-reboot.ts";
 import { TEST_CLOCK_EPOCH } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
@@ -46,12 +47,17 @@ const NO_SCHEDULE_WARNING = "The scheduled reboot interval is not a number of ho
 const DEFERRAL_CEILING_MS = PROTECT_NVR_REBOOT_DEFERRAL_MAX * 1000;
 const CHECKS_TO_CEILING = DEFERRAL_CEILING_MS / PROTECT_NVR_REBOOT_CHECK_INTERVAL;
 
+// The line the bound logs for a controller that has not come back, transcribed rather than referenced so a wording that drifts by a character reddens a row.
+const OVERDUE_LINE = "The Protect controller has not returned from its scheduled reboot.";
+
 // Everything the scheduler's actions, log, and suppliers exchanged with the test. A plain mutable record rather than closures with accessors: an arm reads
 // recorder.rebootCalls or moves recorder.recordings directly, and the scheduler's own suppliers see that on their next pull.
 interface SchedulerRecorder {
 
   // Every action the scheduler ran, in order, so an arm can assert the choreography's sequence rather than only its effects.
   actions: string[];
+  // The availability verdict the bound's line pulls.
+  available: boolean;
   // The connection-health fact the confirmation's guard pulls.
   healthy: boolean;
   logLines: string[];
@@ -80,8 +86,8 @@ function buildScheduler(options: { holdReboot?: boolean } = {}): { advance: (ms:
 
   const clock = new TestClock(TEST_CLOCK_EPOCH);
   const controller = new AbortController();
-  const recorder: SchedulerRecorder = { actions: [], healthy: true, logLines: [], pendingReboot: null, phase: "running", rebootCalls: 0, rebootError: null,
-    recordings: 0 };
+  const recorder: SchedulerRecorder = { actions: [], available: true, healthy: true, logLines: [], pendingReboot: null, phase: "running", rebootCalls: 0,
+    rebootError: null, recordings: 0 };
   const sink = (message: string, ...parameters: unknown[]): void => {
 
     recorder.logLines.push(util.format(message, ...parameters));
@@ -130,6 +136,7 @@ function buildScheduler(options: { holdReboot?: boolean } = {}): { advance: (ms:
     activeRecordings: (): number => recorder.recordings,
     clock,
     isConnectionHealthy: (): boolean => recorder.healthy,
+    isControllerAvailable: (): boolean => recorder.available,
     log: { debug: sink, error: sink, info: sink, warn: sink },
     phase: (): NvrPhase => recorder.phase,
     signal: controller.signal
@@ -552,6 +559,225 @@ describe("the reboot scheduler: the no-op confirmation", () => {
 
       assert.deepEqual(linesMatching(recorder, "did not restart"), [], "the confirmation was cancelled, so the grace passed silently");
       assert.deepEqual(recorder.actions, [ "beginReboot", "reboot" ], "nothing resumed on a reboot that was already confirmed");
+    } finally {
+
+      controller.abort();
+    }
+  });
+});
+
+describe("the reboot scheduler: the expected return", () => {
+
+  // A genuine reboot drops the connection, which leaves the no-op confirmation inert, so what these rows read is the expected return alone. The bound's verdict reads
+  // out, so a key some exit fails to clear speaks at the span and reddens that exit's row.
+  const standOutage = (recorder: SchedulerRecorder): void => {
+
+    recorder.available = false;
+    recorder.healthy = false;
+  };
+
+  test("a reboot is on time from the accepted command to the bound, where a controller still out draws one line", async () => {
+
+    const { advance, controller, recorder, scheduler } = buildScheduler();
+
+    try {
+
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
+
+      assert.equal(scheduler.isRebootOnTime, false, "a schedule with nothing commanded holds nothing back");
+
+      await advance(DEFAULT_INTERVAL_MS);
+      standOutage(recorder);
+
+      assert.equal(scheduler.isRebootOnTime, true, "the accepted command starts the wait");
+
+      await advance(REBOOT_EXPECTED_RETURN_MS - 1);
+
+      assert.equal(scheduler.isRebootOnTime, true, "one millisecond short of the bound, it is still on time");
+      assert.deepEqual(linesMatching(recorder, "has not returned"), [], "and nothing has been said");
+
+      await advance(1);
+
+      assert.equal(scheduler.isRebootOnTime, false, "the bound ends the wait");
+      assert.deepEqual(linesMatching(recorder, "has not returned"), [OVERDUE_LINE], "and the controller still being out earns one line");
+
+      await advance(REBOOT_EXPECTED_RETURN_MS);
+
+      assert.deepEqual(linesMatching(recorder, "has not returned"), [OVERDUE_LINE], "and only the one");
+    } finally {
+
+      controller.abort();
+    }
+  });
+
+  test("a controller that is available at the bound draws no line", async () => {
+
+    const { advance, controller, recorder, scheduler } = buildScheduler();
+
+    try {
+
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
+
+      await advance(DEFAULT_INTERVAL_MS);
+
+      recorder.healthy = false;
+
+      await advance(REBOOT_EXPECTED_RETURN_MS);
+
+      assert.equal(scheduler.isRebootOnTime, false, "the bound ends the wait all the same");
+      assert.deepEqual(linesMatching(recorder, "has not returned"), [], "and there is nothing to say of a controller the verdict reads as back");
+    } finally {
+
+      controller.abort();
+    }
+  });
+
+  test("a confirmed reboot ends the wait, and the bound says nothing", async () => {
+
+    const { advance, controller, recorder, scheduler } = buildScheduler();
+
+    try {
+
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
+
+      await advance(DEFAULT_INTERVAL_MS);
+      standOutage(recorder);
+      scheduler.noteRebootConfirmed();
+
+      assert.equal(scheduler.isRebootOnTime, false, "the recovery opened the gate at once");
+
+      await advance(REBOOT_EXPECTED_RETURN_MS);
+
+      assert.deepEqual(linesMatching(recorder, "has not returned"), [], "no bound was left to speak for a reboot that is over");
+    } finally {
+
+      controller.abort();
+    }
+  });
+
+  test("the no-op confirmation ends the wait, and the bound says nothing", async () => {
+
+    const { advance, controller, recorder, scheduler } = buildScheduler();
+
+    try {
+
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
+
+      await advance(DEFAULT_INTERVAL_MS);
+
+      recorder.available = false;
+
+      await advance(PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS);
+
+      assert.deepEqual(recorder.actions, [ "beginReboot", "reboot", "resumeRunning" ], "the grace found a controller that never restarted");
+      assert.equal(scheduler.isRebootOnTime, false, "which opened the gate");
+
+      await advance(REBOOT_EXPECTED_RETURN_MS);
+
+      assert.deepEqual(linesMatching(recorder, "has not returned"), [], "no bound was left to speak for a reboot that never happened");
+    } finally {
+
+      controller.abort();
+    }
+  });
+
+  test("the drain ends the wait, and the bound says nothing", async () => {
+
+    const { advance, controller, recorder, scheduler } = buildScheduler();
+
+    try {
+
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
+
+      await advance(DEFAULT_INTERVAL_MS);
+      standOutage(recorder);
+      scheduler.reset();
+
+      assert.equal(scheduler.isRebootOnTime, false, "the drain opened the gate");
+
+      await advance(REBOOT_EXPECTED_RETURN_MS);
+
+      assert.deepEqual(linesMatching(recorder, "has not returned"), [], "no bound survived the drain");
+    } finally {
+
+      controller.abort();
+    }
+  });
+
+  test("aborting the lifetime signal ends the wait, and the bound says nothing", async () => {
+
+    const { advance, controller, recorder, scheduler } = buildScheduler();
+
+    try {
+
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
+
+      await advance(DEFAULT_INTERVAL_MS);
+      standOutage(recorder);
+      controller.abort();
+
+      assert.equal(scheduler.isRebootOnTime, false, "the abort opened the gate");
+
+      await advance(REBOOT_EXPECTED_RETURN_MS);
+
+      assert.deepEqual(linesMatching(recorder, "has not returned"), [], "no bound survived the abort");
+    } finally {
+
+      controller.abort();
+    }
+  });
+
+  test("a failed command starts no wait", async () => {
+
+    const { advance, controller, recorder, scheduler } = buildScheduler();
+
+    try {
+
+      standOutage(recorder);
+      recorder.rebootError = new Error("the controller refused the command");
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
+
+      await advance(DEFAULT_INTERVAL_MS);
+
+      assert.equal(recorder.phase, "running", "the attempt rolled back");
+      assert.equal(scheduler.isRebootOnTime, false, "and nothing waits on a reboot the controller refused");
+    } finally {
+
+      controller.abort();
+    }
+  });
+
+  test("a command in flight has started no wait, on the first cycle or the next", async () => {
+
+    const { advance, controller, recorder, scheduler } = buildScheduler({ holdReboot: true });
+
+    try {
+
+      scheduler.schedule({ upSince: TEST_CLOCK_EPOCH });
+
+      await advance(DEFAULT_INTERVAL_MS);
+
+      assert.equal(recorder.rebootCalls, 1, "the command is outstanding");
+      assert.equal(scheduler.isRebootOnTime, false, "and the controller has accepted nothing yet");
+
+      recorder.pendingReboot?.resolve();
+
+      await settle();
+
+      assert.equal(scheduler.isRebootOnTime, true, "accepting it starts the wait");
+
+      standOutage(recorder);
+
+      await advance(DEFAULT_INTERVAL_MS);
+
+      assert.equal(recorder.rebootCalls, 2, "the next cycle's command is outstanding");
+      assert.equal(scheduler.isRebootOnTime, false, "and the wait the last one started is long over");
+
+      recorder.pendingReboot?.resolve();
+
+      await settle();
+
+      assert.equal(scheduler.isRebootOnTime, true, "accepting it starts the next wait");
     } finally {
 
       controller.abort();

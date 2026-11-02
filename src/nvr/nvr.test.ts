@@ -2,11 +2,11 @@
  *
  * nvr.test.ts: Unit tests for the controller root's pure decision logic - the startup-resilient connect retry policy, the request-outcome classifier, the
  * removal-stability arithmetic, the disruption-expectation gating (the classification, its induced and recency halves, and the episode-latch), the induced-reboot resume
- * decision, the scheduled-reboot arithmetic with the recording-count rule behind its deferral, and the address override rule - plus the NvrHealth connection-input
- * mapping those drive, and the real controller root's disabled-controller path, its stability sweep's liveviews pass, its connect retry, its address override, the
- * accessory cache saves its adoption asks for, the name it adds a camera under when the camera's own name sanitizes to nothing or the user gave it a custom name,
- * its removal of a package camera whose parent is gone, and its device-removal cascade: the guards that leave an accessory alone, the name each removal is logged
- * under, the package camera a removal takes with it, and what a removal releases.
+ * decision, the scheduled-reboot arithmetic with the recording-count rule behind its deferral and the span of its expected return, and the address override rule - plus
+ * the NvrHealth connection-input mapping those drive, and the real controller root's disabled-controller path, its stability sweep's liveviews pass, its connect retry,
+ * its address override, the accessory cache saves its adoption asks for, the name it adds a camera under when the camera's own name sanitizes to nothing or the user gave
+ * it a custom name, its removal of a package camera whose parent is gone, its device-removal cascade: the guards that leave an accessory alone, the name each removal is
+ * logged under, the package camera a removal takes with it, and what a removal releases, and the lines its client logger shows through a scheduled reboot.
  *
  * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively owns the entire device and
  * media graph. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and assert those here, exercising the controller's real
@@ -23,20 +23,22 @@
  * double.
  */
 import { ACCESSORY_SAVE_WINDOW_MS, APIEvent, retry } from "homebridge-plugin-utils";
+import type { ConnectOptions, ProtectCameraConfig, ProtectClient, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../camera.fixtures.ts";
-import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
-import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError, ProtectAuthorizationError,
-  ProtectBootstrapError, ProtectCertificateError, ProtectConfigurationError, ProtectNetworkError, ProtectRequestError, channels as protectChannels } from "unifi-protect";
-import type { ProtectCameraConfig, ProtectClient, ProtectNvrConfig } from "unifi-protect";
+import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS, PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL,
+  PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
+import { PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS,
+  PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError, ProtectConfigurationError,
+  ProtectNetworkError, ProtectRequestError, channels as protectChannels } from "unifi-protect";
+import { REBOOT_EXPECTED_RETURN_MS, canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, countActiveRecordingViews,
+  createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption, isRequestForController, isStabilityWindowElapsed,
+  isSuccessfulRequest, isWithinRebootRecency, resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr,
   restoreAccessories } from "./testing.helpers.ts";
 import { TestClock, TestMqttClient, assertNoUnhandledRejections, capturingLog, formatLogEntry, linesAt, logCount, loggedAt, settle,
   settleUntil } from "homebridge-plugin-utils/testing";
 import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
-import { canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, countActiveRecordingViews, createConnectRetryPolicy,
-  createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption, isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest,
-  isWithinRebootRecency, resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { describe, test } from "node:test";
 import type { ConnectFailure } from "./nvr-policy.ts";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -753,6 +755,16 @@ describe("scheduled-reboot arithmetic", () => {
 
     // A controller up longer than the interval does not reboot the instant we connect - the floor leaves it a minute to settle first.
     assert.equal(computeInitialRebootDelay({ intervalMs, nowMs, upSince: nowMs - (2 * intervalMs) }), 60000);
+  });
+
+  // The span sums the library's own numbers, and the anticipation window is the margin that keeps a typical reboot's recovery from drawing a warning seconds before it
+  // completes, which is why it reads as part of the sum rather than beside it. It also has to end before the shortest cycle can begin, or a next attempt would find it
+  // armed.
+  test("the expected return is the library's known-reboot schedule, one steady probe and its anticipation window, and ends before the shortest cycle", () => {
+
+    assert.equal(REBOOT_EXPECTED_RETURN_MS, PROTECT_RECOVERY_BACKOFF_KNOWN_MS.reduce((total, wait) => total + wait, 0) + PROTECT_RECOVERY_STEADY_INTERVAL_MS +
+      PROTECT_REBOOT_ANTICIPATION_WINDOW_MS);
+    assert.ok(REBOOT_EXPECTED_RETURN_MS < (PROTECT_NVR_REBOOT_MIN_INTERVAL * 60 * 60 * 1000));
   });
 });
 
@@ -1554,6 +1566,8 @@ describe("the controller root's orphan package camera removal", () => {
 interface LoggedInRoot {
 
   api: TestHomebridgeApi;
+  clientLog: ProtectLogging;
+  clock: TestClock;
   connection: TestConnection;
   double: TestProtectNvr;
   logEntries: readonly TestLogEntry[];
@@ -1591,13 +1605,24 @@ Promise<LoggedInRoot> {
 
   const client = makeConnectedClient({ nvrConfig, store });
   const { platform, shutdown } = makeRootPlatform(double);
-  const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
+  const connects: ConnectOptions[] = [];
+  const root = new ProtectNvr(platform, double.config, async (connect: ConnectOptions): Promise<ProtectClient> => {
+
+    connects.push(connect);
+
+    return client;
+  });
 
   // The root builds no client of its own beside one already standing, which is how an MQTT double reaches a row.
   root.mqtt = (options.mqtt ?? null) as unknown as ProtectNvr["mqtt"];
 
   await root.login();
   await settle();
+
+  // The logger the root handed the library, which is the one way the library's lines reach it.
+  const clientLog = connects[0]?.log;
+
+  assert.ok(clientLog, "the root hands the library its logger at connect");
 
   const stop = async (): Promise<void> => {
 
@@ -1607,7 +1632,7 @@ Promise<LoggedInRoot> {
     await settle();
   };
 
-  return { api, connection: client.connection as unknown as TestConnection, double, logEntries, root, stop, store };
+  return { api, clientLog, clock, connection: client.connection as unknown as TestConnection, double, logEntries, root, stop, store };
 }
 
 describe("the controller root's MQTT availability", () => {
@@ -2368,6 +2393,392 @@ describe("the device-removal cascade", () => {
 
       assert.deepEqual(logEntries.slice(recovered).map((entry) => [ entry.level, formatLogEntry(entry) ]),
         [[ "warn", "Porch Camera [Test Camera Model]: The livestream has recovered after 1 s." ]], "the recovery of the reclaimed episode is said at warn");
+    } finally {
+
+      await stop();
+    }
+  });
+});
+
+describe("the controller root's client logger through a scheduled reboot", () => {
+
+  // The cadence an enabled-without-a-value schedule waits, and the lines these rows drive the root's client logger with, each with the context the library attaches.
+  const REBOOT_INTERVAL_MS = PROTECT_NVR_REBOOT_INTERVAL * 60 * 60 * 1000;
+  const LIBRARY_ERROR = "A line the library logs at the error level.";
+  const LIBRARY_WARN = "A line the library logs at the warn level.";
+  const OVERDUE_LINE = "The Protect controller has not returned from its scheduled reboot.";
+
+  // Log a root in and run its schedule to the moment the controller accepts the command. A genuine reboot drops the connection within seconds, so this one reads
+  // unhealthy, which leaves the no-op confirmation inert and the outage the row's own to stand.
+  async function acceptReboot(options: Parameters<typeof logIn>[0] = {}): Promise<LoggedInRoot> {
+
+    const logged = await logIn(options);
+
+    logged.root.reboot.schedule({ upSince: TEST_CLOCK_EPOCH });
+    logged.clock.advance(REBOOT_INTERVAL_MS);
+
+    await settle();
+
+    logged.connection.isHealthy = false;
+
+    return logged;
+  }
+
+  // Say one line at each gated level through the root's client logger, as the library says them.
+  function sayBoth(clientLog: ProtectLogging): void {
+
+    clientLog.warn(LIBRARY_WARN, { level: "warn" });
+    clientLog.error(LIBRARY_ERROR, { level: "error" });
+  }
+
+  test("with no reboot in progress, a warn and an error show at once", async () => {
+
+    const { clientLog, logEntries, root, stop } = await logIn();
+
+    try {
+
+      assert.equal(root.reboot.isRebootOnTime, false, "nothing holds the gate");
+
+      sayBoth(clientLog);
+
+      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 1, "the warn shows");
+      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 1, "and so does the error");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a reboot on time shows neither level and logs no line of the plugin's, and each still echoes to debug", async () => {
+
+    const { clientLog, clock, connection, logEntries, stop } = await acceptReboot();
+
+    try {
+
+      connection.isRebooting = true;
+      sayBoth(clientLog);
+      clock.advance(REBOOT_EXPECTED_RETURN_MS - 1);
+
+      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 0, "the warn is hidden");
+      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 0, "and so is the error");
+      assert.equal(logCount(logEntries, "warn", OVERDUE_LINE), 0, "and the plugin has nothing to say yet");
+      assert.equal(logCount(logEntries, "debug", LIBRARY_WARN), 1, "the warn still reaches debug");
+      assert.equal(logCount(logEntries, "debug", LIBRARY_ERROR), 1, "and so does the error");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a reboot past the bound logs the plugin's line once, replays nothing, and shows each level afterward", async () => {
+
+    const { clientLog, clock, connection, logEntries, stop } = await acceptReboot();
+
+    try {
+
+      connection.isRebooting = true;
+      sayBoth(clientLog);
+      clock.advance(REBOOT_EXPECTED_RETURN_MS);
+
+      assert.equal(logCount(logEntries, "warn", OVERDUE_LINE), 1, "the bound logs the plugin's line");
+      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 0, "and no hidden warn comes back with it");
+      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 0, "nor any hidden error");
+
+      sayBoth(clientLog);
+
+      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 1, "a warn past the bound shows");
+      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 1, "and so does an error, a refused sign-in among them");
+
+      clock.advance(REBOOT_EXPECTED_RETURN_MS);
+
+      assert.equal(logCount(logEntries, "warn", OVERDUE_LINE), 1, "and the plugin's line is said once");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // The bound reads the verdict, so each fact on its own counts as a controller still out, and a connection that has concluded neither does not.
+  for(const { expected, facts, name } of [
+
+    { expected: 1, facts: { isLost: true, isRebooting: false }, name: "lost alone" },
+    { expected: 1, facts: { isLost: false, isRebooting: true }, name: "rebooting alone" },
+    { expected: 0, facts: { isLost: false, isRebooting: false }, name: "neither lost nor rebooting" }
+  ]) {
+
+    test("the bound with the controller " + name + " logs " + String(expected) + " line", async () => {
+
+      const { clock, connection, logEntries, stop } = await acceptReboot();
+
+      try {
+
+        Object.assign(connection, facts);
+        clock.advance(REBOOT_EXPECTED_RETURN_MS);
+
+        assert.equal(logCount(logEntries, "warn", OVERDUE_LINE), expected);
+      } finally {
+
+        await stop();
+      }
+    });
+  }
+
+  test("a recovery before the bound logs nothing, a warn after it shows at once, and a later loss meets no bound", async () => {
+
+    const { clientLog, clock, connection, logEntries, root, stop } = await acceptReboot();
+
+    try {
+
+      connection.isRebooting = true;
+      connection.transition({ from: "healthy", to: "lost" });
+
+      await settle();
+
+      connection.isHealthy = true;
+      connection.isRebooting = false;
+      connection.transition({ from: "lost", to: "healthy" });
+
+      await settle();
+
+      assert.equal(root.phase, "running", "the recovery edge concluded the reboot");
+      assert.equal(root.reboot.isRebootOnTime, false, "and opened the gate");
+
+      sayBoth(clientLog);
+
+      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 1, "a warn after the recovery shows at once");
+      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 1, "and so does an error");
+
+      connection.isLost = true;
+      clock.advance(REBOOT_EXPECTED_RETURN_MS);
+
+      assert.equal(logCount(logEntries, "warn", OVERDUE_LINE), 0, "a later loss meets no bound");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a controller that never restarted opens the gate at the grace, and a later loss meets no bound", async () => {
+
+    const { clientLog, clock, connection, logEntries, root, stop } = await logIn();
+
+    try {
+
+      root.reboot.schedule({ upSince: TEST_CLOCK_EPOCH });
+      clock.advance(REBOOT_INTERVAL_MS);
+
+      await settle();
+
+      assert.equal(root.reboot.isRebootOnTime, true, "the accepted command closed the gate");
+
+      clock.advance(PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS);
+
+      assert.equal(root.phase, "running", "the no-op confirmation found a healthy controller and resumed");
+      assert.equal(root.reboot.isRebootOnTime, false, "and opened the gate");
+
+      sayBoth(clientLog);
+
+      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 1, "a warn after it shows at once");
+      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 1, "and so does an error");
+
+      connection.isLost = true;
+      clock.advance(REBOOT_EXPECTED_RETURN_MS);
+
+      assert.equal(logCount(logEntries, "warn", OVERDUE_LINE), 0, "a later loss meets no bound");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a command in flight shows each level, in the phase that hides nothing of it", async () => {
+
+    const { clientLog, clock, logEntries, root, stop } = await logIn();
+    const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+
+    try {
+
+      root.client.reboot = async (): Promise<void> => promise;
+      root.reboot.schedule({ upSince: TEST_CLOCK_EPOCH });
+      clock.advance(REBOOT_INTERVAL_MS);
+
+      await settle();
+
+      assert.equal(root.phase, "rebooting", "the attempt moved the phase ahead of the command");
+
+      sayBoth(clientLog);
+
+      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 1, "the controller has accepted nothing, so a warn shows");
+      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 1, "and so does an error");
+
+      resolve();
+
+      await settle();
+
+      sayBoth(clientLog);
+
+      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 1, "the accepted command hides the next warn");
+      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 1, "and the next error");
+    } finally {
+
+      resolve();
+
+      await stop();
+    }
+  });
+
+  test("a refused command shows each level, on the way out of the phase and past it", async () => {
+
+    const { clientLog, clock, logEntries, root, stop } = await logIn();
+    const { promise, reject }: PromiseWithResolvers<void> = Promise.withResolvers();
+
+    try {
+
+      root.client.reboot = async (): Promise<void> => promise;
+      root.reboot.schedule({ upSince: TEST_CLOCK_EPOCH });
+      clock.advance(REBOOT_INTERVAL_MS);
+
+      await settle();
+
+      reject(new Error("The controller refused the command."));
+
+      await settle();
+
+      assert.equal(root.phase, "running", "the attempt rolled back");
+      assert.ok(loggedAt(logEntries, "error", "Unable to reboot the Protect controller: The controller refused the command."), "and said so");
+
+      sayBoth(clientLog);
+
+      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 1, "a warn shows");
+      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 1, "and so does an error");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // A recovery during the command's flight ends the reboot ahead of the command's answer, with no key yet for it to clear, so the answer must arm none. Armed anyway, the
+  // gate would hide the library's lines with the phase running, for a reboot that is over, and nothing but the bound would open it.
+  test("a recovery during the command's flight leaves the gate open once the command is accepted, and meets no bound", async () => {
+
+    const { clientLog, clock, connection, logEntries, root, stop } = await logIn();
+    const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+
+    try {
+
+      root.client.reboot = async (): Promise<void> => promise;
+      root.reboot.schedule({ upSince: TEST_CLOCK_EPOCH });
+      clock.advance(REBOOT_INTERVAL_MS);
+
+      await settle();
+
+      assert.equal(root.phase, "rebooting", "the attempt moved the phase ahead of the command");
+
+      connection.isHealthy = false;
+      connection.transition({ from: "healthy", to: "lost" });
+
+      await settle();
+
+      connection.isHealthy = true;
+      connection.transition({ from: "lost", to: "healthy" });
+
+      await settle();
+
+      assert.equal(root.phase, "running", "the recovery edge ended the reboot ahead of the command's answer");
+
+      resolve();
+
+      await settle();
+
+      assert.equal(root.reboot.isRebootOnTime, false, "the accepted command armed nothing");
+
+      sayBoth(clientLog);
+
+      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 1, "so a warn shows");
+      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 1, "and so does an error");
+
+      connection.isLost = true;
+      clock.advance(REBOOT_EXPECTED_RETURN_MS);
+
+      assert.equal(logCount(logEntries, "warn", OVERDUE_LINE), 0, "and a later loss meets no bound");
+
+      let commands = 0;
+
+      connection.isLost = false;
+      root.client.reboot = async (): Promise<void> => {
+
+        commands++;
+      };
+
+      clock.advance(REBOOT_INTERVAL_MS);
+
+      await settle();
+
+      assert.equal(commands, 1, "and the next cycle still comes round");
+    } finally {
+
+      resolve();
+
+      await stop();
+    }
+  });
+
+  // An MQTT client's end holds the terminal phase back while the final words go out, and the expected return has already ended by then, so this is the one window where
+  // the gate's opening shows: nothing has been torn down yet, so a line the library says here is a true one.
+  test("a shutdown in the middle of a reboot, an MQTT client still ending, opens the gate with a warn and an error showing", async () => {
+
+    const mqtt = new TestMqttClient({ log: capturingLog() });
+
+    mqtt.connected = true;
+
+    const { clientLog, connection, double, logEntries, root, stop } = await acceptReboot({ mqtt });
+    const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+
+    try {
+
+      connection.isRebooting = true;
+
+      assert.equal(root.reboot.isRebootOnTime, true, "the accepted command closed the gate");
+
+      mqtt.onEnd(async (): Promise<void> => promise);
+      double.platform.api.emit(APIEvent.SHUTDOWN);
+
+      assert.equal(root.phase, "rebooting", "the client's end holds the terminal phase back");
+      assert.equal(root.reboot.isRebootOnTime, false, "with the gate already open");
+
+      sayBoth(clientLog);
+
+      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 1, "so a warn shows");
+      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 1, "and so does an error");
+    } finally {
+
+      resolve();
+
+      await stop();
+    }
+  });
+
+  test("a shutdown in the middle of a reboot shows a warn, hides an error and meets no bound", async () => {
+
+    const { clientLog, clock, connection, logEntries, root, stop } = await acceptReboot();
+
+    try {
+
+      connection.isRebooting = true;
+
+      await stop();
+
+      assert.equal(root.phase, "shuttingDown", "the shutdown ran");
+      assert.equal(root.reboot.isRebootOnTime, false, "and opened the gate");
+
+      sayBoth(clientLog);
+
+      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 1, "a warn shows");
+      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 0, "and an error stays hidden in the terminal phase");
+
+      clock.advance(REBOOT_EXPECTED_RETURN_MS);
+
+      assert.equal(logCount(logEntries, "warn", OVERDUE_LINE), 0, "no bound survived the shutdown");
     } finally {
 
       await stop();

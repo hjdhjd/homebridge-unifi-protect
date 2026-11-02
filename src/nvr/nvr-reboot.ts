@@ -6,17 +6,19 @@
  * it fires, when a recording in flight is allowed to hold it back, how long holding back may go on, and how to tell a controller that accepted the command and restarted
  * from one that accepted it and did nothing at all. This module owns that whole choreography. The design follows three principles:
  *
- *   1. Facts in, actions out. The scheduler holds no controller reference and reads no controller state. The recording count, the connection health, and the lifecycle
- *      phase arrive as suppliers it pulls at its own fire time, so each decision reads the controller as of the instant it decides; the reboot command and the two phase
- *      moves are reached through the narrow {@link RebootSchedulerActions} surface handed at construction. That is what keeps this a decision rather than a second place
- *      the controller's lifecycle moves.
+ *   1. Facts in, actions out. The scheduler holds no controller reference and reads no controller state. The recording count, the connection health, the controller's
+ *      availability, and the lifecycle phase arrive as suppliers it pulls at its own fire time, so each decision reads the controller as of the instant it decides; the
+ *      reboot command and the phase moves are reached through the narrow {@link RebootSchedulerActions} surface handed at construction. That is what keeps this a
+ *      decision rather than a second place the controller's lifecycle moves.
  *
  *   2. Mechanism vs policy separation. The deferral decision, the initial-delay arithmetic, and the recording-count rule are pure and live in nvr-policy.ts
  *      (`classifyRebootAttempt`, `computeInitialRebootDelay`, `countActiveRecordingViews`); the timer mechanism is the library's `TimerRegistry`, bound to the
  *      controller's lifetime signal. What is left here is the choreography: the order the acts run in, and what each outcome arms next.
  *
- *   3. Two timers, two fixed keys, one drain. The reboot cycle and the no-op confirmation each own a key, and the registry's replace-on-register rule is what makes
- *      every re-arm safe without a clear-then-set dance at each site. Teardown cancels both together, as the single act {@link RebootScheduler.reset} performs.
+ *   3. A fixed key per timer, one drain. The reboot cycle, the no-op confirmation and the expected return each own a key, and the registry's replace-on-register rule is
+ *      what makes every re-arm safe without a clear-then-set dance at each site. The expected return's key doubles as the gate on the client logger's lines: a reboot is
+ *      on time exactly while that timer is pending, so the gate keeps no value of its own and no exit can leave it closed with nothing left to open it. Teardown cancels
+ *      every timer together, as the single act {@link RebootScheduler.reset} performs.
  *
  * The scheduler arms nothing at construction - entering the schedule is an explicit call - so a controller whose user never enabled scheduled reboots carries an inert
  * companion, and the controller's own configuration pass is the one place the feature turns on.
@@ -24,8 +26,8 @@
 import type { Clock, HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { PROTECT_NVR_REBOOT_CHECK_INTERVAL, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS, PROTECT_NVR_REBOOT_DEFERRAL_MAX, PROTECT_NVR_REBOOT_INTERVAL,
   PROTECT_NVR_REBOOT_MIN_INTERVAL } from "../settings.ts";
+import { REBOOT_EXPECTED_RETURN_MS, classifyRebootAttempt, computeInitialRebootDelay } from "./nvr-policy.ts";
 import { TimerRegistry, formatErrorMessage } from "homebridge-plugin-utils";
-import { classifyRebootAttempt, computeInitialRebootDelay } from "./nvr-policy.ts";
 import type { NvrPhase } from "./nvr.ts";
 import { exhaustiveGuard } from "../types.ts";
 
@@ -35,8 +37,8 @@ import { exhaustiveGuard } from "../types.ts";
  */
 export interface RebootSchedulerActions {
 
-  // Move the lifecycle into its induced rebooting phase, ahead of the command. Suppressing the errors our own outage produces and pausing health observation both
-  // follow from that phase rather than being separately arranged here.
+  // Move the lifecycle into its induced rebooting phase, ahead of the command. Pausing health observation follows from that phase rather than being separately arranged
+  // here...the client logger's lines stay showing until the controller accepts the command, which is what starts the wait for its return.
   beginReboot: () => void;
 
   // Command the controller to reboot, through the live client. Throws a classified error when the command itself fails.
@@ -55,12 +57,15 @@ export interface RebootSchedulerOptions {
   // How many camera views are actively transmitting HomeKit Secure Video recordings right now. Pulled at each deferral check rather than pushed at it, so the decision
   // reads the recordings as of its own fire time rather than whatever was true when the timer was armed.
   activeRecordings: () => number;
-  // The time source the scheduler reads each cycle instant from and arms its reboot cycle and its confirmation on.
+  // The time source the scheduler reads each cycle instant from and arms every timer on.
   clock: Clock;
   // Whether the controller's connection is currently healthy - the no-op confirmation's test for a controller that took the command and never restarted.
   isConnectionHealthy: () => boolean;
+  // Whether the plugin can vouch for the controller - the bound's test for a reboot that has not come back, read when the wait for its return ends.
+  isControllerAvailable: () => boolean;
   log: HomebridgePluginLogging;
-  // The controller's current lifecycle phase, read by the no-op confirmation to confirm we are still inside the reboot it was armed for.
+  // The controller's current lifecycle phase, read by the no-op confirmation to confirm we are still inside the reboot it was armed for, and ahead of arming the expected
+  // return, which has nothing to wait on once a recovery has ended the reboot.
   phase: () => NvrPhase;
   // The controller's lifetime signal. The scheduler's timers bind to it, so teardown drains whatever is armed and a registration after it is inert.
   signal: AbortSignal;
@@ -72,6 +77,10 @@ const REBOOT_CYCLE_TIMER = "cycle";
 
 // The no-op confirmation's timer key, armed once per successful reboot command.
 const REBOOT_CONFIRM_TIMER = "confirm";
+
+// The expected return's timer key, armed per accepted reboot command while the phase still reads rebooting. Whether it is armed is the answer to whether a reboot is on
+// time.
+const REBOOT_RETURN_TIMER = "return";
 
 /**
  * The scheduled reboot for one controller: when it fires, when a recording in flight holds it back, and how a command that took no effect is recognized.
@@ -86,6 +95,8 @@ export class RebootScheduler {
 
   readonly #isConnectionHealthy: () => boolean;
 
+  readonly #isControllerAvailable: () => boolean;
+
   readonly #log: HomebridgePluginLogging;
 
   readonly #phase: () => NvrPhase;
@@ -94,8 +105,8 @@ export class RebootScheduler {
   // anything, or promise the user that connectivity will resume against a controller we are disposing.
   readonly #signal: AbortSignal;
 
-  // Both timers the scheduler owns - the reboot cycle and the no-op confirmation - in one registry bound to the controller's lifetime, so teardown drains them as a
-  // single act and nothing can arm against a torn-down controller.
+  // Every timer the scheduler owns - the reboot cycle, the no-op confirmation and the expected return - in one registry bound to the controller's lifetime, so teardown
+  // drains them as a single act and nothing can arm against a torn-down controller.
   readonly #timers: TimerRegistry;
 
   public constructor(options: RebootSchedulerOptions) {
@@ -104,6 +115,7 @@ export class RebootScheduler {
     this.#activeRecordings = options.activeRecordings;
     this.#clock = options.clock;
     this.#isConnectionHealthy = options.isConnectionHealthy;
+    this.#isControllerAvailable = options.isControllerAvailable;
     this.#log = options.log;
     this.#phase = options.phase;
     this.#signal = options.signal;
@@ -111,17 +123,29 @@ export class RebootScheduler {
   }
 
   /**
-   * Note that the controller genuinely came back from the reboot, which makes the no-op confirmation moot: a real recovery is proof the command took effect, and the
-   * confirmation exists only to catch a controller that accepted the command and never restarted. Silently does nothing when no confirmation is pending.
+   * Whether a scheduled reboot is on time: the controller accepted the command with the phase still reading rebooting, and the span it is expected to return within has
+   * not yet passed. Each level of the client logger that hides a line reads this one answer, so the outage we induced stays quiet until it is overdue. It answers from
+   * the timer's own pending state and keeps no value, so a recovery, the no-op confirmation, the bound and teardown each open the gate simply by ending that timer.
+   */
+  public get isRebootOnTime(): boolean {
+
+    return this.#timers.has(REBOOT_RETURN_TIMER);
+  }
+
+  /**
+   * Note that the controller genuinely came back from the reboot, which makes the no-op confirmation and the expected return moot: a real recovery is proof the command
+   * took effect, the confirmation exists only to catch a controller that accepted the command and never restarted, and the bound speaks only for a reboot still in
+   * progress. Silently does nothing when neither is pending.
    */
   public noteRebootConfirmed(): void {
 
     this.#timers.clear(REBOOT_CONFIRM_TIMER);
+    this.#timers.clear(REBOOT_RETURN_TIMER);
   }
 
   /**
-   * Cancel every pending timer, the reboot cycle and the no-op confirmation alike. Both are induced-lifecycle work that must not survive teardown, so the controller
-   * runs this as it tears down, ahead of the lifetime signal's abort that disposes the registry as the backstop.
+   * Cancel every pending timer. Each is induced-lifecycle work that must not survive teardown, so the controller runs this as it tears down, ahead of the lifetime
+   * signal's abort that disposes the registry as the backstop.
    */
   public reset(): void {
 
@@ -227,9 +251,10 @@ export class RebootScheduler {
         exhaustiveGuard(decision);
     }
 
-    // Move into the `rebooting` phase before sending the command. From this point until we know the outcome, any API errors are induced by our own action and should be
-    // suppressed, and any livestream-stall or apiError symptoms are dropped by the health bridge, which closes observation in every non-`running` phase. On a failed
-    // attempt below we return to `running` so the next retry surfaces real errors organically.
+    // Move into the `rebooting` phase before sending the command. From this point until we know the outcome, any livestream-stall or apiError symptoms are dropped by the
+    // health bridge, which closes observation in every non-`running` phase, while the library's lines keep showing, because a command the controller has not yet accepted
+    // has induced nothing and a failure here is one the user needs to read. On a failed attempt below we return to `running` so the next retry observes health
+    // organically.
     this.#actions.beginReboot();
 
     try {
@@ -248,9 +273,9 @@ export class RebootScheduler {
         return;
       }
 
-      // The reboot command failed (a non-2xx, or a transport-level error). Roll back to `running` so error logging and health observation resume for the retry, and
-      // reschedule at the deferral cadence - a failure is just another reason to try again the next time we check. Propagate the cycle start so the ceiling keeps
-      // counting cumulative time across deferrals and retries.
+      // The reboot command failed (a non-2xx, or a transport-level error). Roll back to `running` so health observation resumes for the retry, and reschedule at the
+      // deferral cadence - a failure is just another reason to try again the next time we check. Propagate the cycle start so the ceiling keeps counting cumulative time
+      // across deferrals and retries.
       this.#actions.resumeRunning();
       this.#log.error("Unable to reboot the Protect controller: %s.", formatErrorMessage(error));
 
@@ -260,7 +285,9 @@ export class RebootScheduler {
     }
 
     // A shutdown that landed while the reboot POST was in flight makes the confirmation and next-cycle arming moot, and the "connectivity will resume" promise would be
-    // false against a controller we are disposing. Bail before the info log and before arming either timer.
+    // false against a controller we are disposing. Bail before the info log and before arming any timer. The signal fires only once the graceful MQTT end settles, so a
+    // command settling inside that grace passes this check and the one its rejection reads above...it says its one line as the plugin exits, and the abort drains
+    // whatever it armed, so nothing fires.
     if(this.#isShuttingDown()) {
 
       return;
@@ -281,9 +308,30 @@ export class RebootScheduler {
       if((this.#phase() === "rebooting") && this.#isConnectionHealthy()) {
 
         this.#log.warn("The controller did not restart after the reboot command; resuming normal monitoring.");
+        this.#timers.clear(REBOOT_RETURN_TIMER);
         this.#actions.resumeRunning();
       }
     }, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS);
+
+    /* Wait out the span the controller is expected to return within, which is what keeps the library's warn and error lines hidden. The library says a loss once per
+     * class rather than on each failed attempt, so a line this gate hides is not repeated, and a controller that never returns would otherwise stay silent...so if it is
+     * still out at the bound we say so ourselves, naming no cause. The registry drops this key before the firing runs, so the library's lines show from here on. A
+     * recovery or the no-op confirmation clears the key, which keeps this line from speaking for a reboot that is already over.
+     *
+     * A recovery during the command's flight moves the phase to running with no key yet for it to clear, so the key arms only while the phase still reads rebooting.
+     * The trade-off: the controller accepted this command, so its restart is still to come, and with no key armed that restart reads as an organic outage with the
+     * library's lines showing. Armed anyway, the key would hide those lines until the bound, because a recovery clears it only while the phase reads rebooting.
+     */
+    if(this.#phase() === "rebooting") {
+
+      this.#timers.setTimeout(REBOOT_RETURN_TIMER, () => {
+
+        if(!this.#isControllerAvailable()) {
+
+          this.#log.warn("The Protect controller has not returned from its scheduled reboot.");
+        }
+      }, REBOOT_EXPECTED_RETURN_MS);
+    }
 
     // Schedule the next reboot cycle at the full interval. We do not block on the outage; the recovery edge returns us to `running` asynchronously.
     this.#timers.setTimeout(REBOOT_CYCLE_TIMER, () => void this.#execute({ intervalHours }), intervalHours * 60 * 60 * 1000);

@@ -252,7 +252,8 @@ export interface NvrHealthEvents {
  *
  *   - `suspend()` / `resume()` are driven from the health bridge's `notePhase`, which the controller calls on every lifecycle transition, rather than called
  *      directly. The NVR's phase is the single source of truth for "induced vs organic disruption"; this class follows along. Calling `suspend()` directly is fine
- *      for tests but in production code should go through phase transitions so all derived effects (logApiErrors, future signals) stay aligned.
+ *      for tests but in production code should go through phase transitions so symptom observation stays aligned with every other reader of the phase. `logApiErrors`
+ *      reads the phase and the reboot scheduler's gate beside it, so it can move with no transition at all, and nothing in this class decides it.
  *   - `reset()` clears the symptom buffer and forces the state back to `healthy` without emitting `stateChange`. Reached through the bridge's own `reset()` after a
  *      successful reconnect, whether following a disconnect or an induced reboot; pre-disruption symptoms are no longer relevant. We deliberately do not emit on
  *      reset because that would surface a "responsive again" message at every reset boundary, which is misleading...the reset is internal bookkeeping, not a

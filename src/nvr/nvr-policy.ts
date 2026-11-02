@@ -5,17 +5,18 @@
  * This module is the home for all of the controller root's pure decision logic, separated from the ProtectNvr composition root that acts on it. It holds the
  * startup-resilient connect retry policy, the request-outcome classifier that feeds NvrHealth, induced-disruption and reboot-recency gating, the induced-reboot resume
  * decision, the per-episode livestream-recovery quiet latch, the scheduled-reboot deferral decision with its initial-delay arithmetic and its recording-count rule, the
- * removal-stability arithmetic, the rule that resolves the address override the cameras' RTSP URLs are composed against, and the reads of the controller's device
- * inventory out of its state store. Each is a pure function of its inputs. They live here, in a dependency-light leaf, rather than inside the ProtectNvr composition
- * root, for the same reason the unifi-protect library keeps its reducer pure and apart from its client and the plugin keeps the NvrHealth reducer apart from its
- * event-sink wrapper: a decision separated from the effect it drives is independently testable, and the test is the proof the separation is real. ProtectNvr
- * transitively imports the entire device and media graph (cameras, streaming, snapshots); a pure predicate should never have to stand that up to be exercised. This
- * module imports only what its decisions read - the library's configuration error and its readings of a controller refusal and of a refused sign-in, its recovery
- * and refusal schedules and its device-collection keys, and HBPU's error and URL-host formatters - so it loads and tests in isolation.
+ * span a scheduled reboot is expected to return within, the removal-stability arithmetic, the rule that resolves the address override the cameras' RTSP URLs are
+ * composed against, and the reads of the controller's device inventory out of its state store. Each is a pure function of its inputs. They live here, in a
+ * dependency-light leaf, rather than inside the ProtectNvr composition root, for the same reason the unifi-protect library keeps its reducer pure and apart from its
+ * client and the plugin keeps the NvrHealth reducer apart from its event-sink wrapper: a decision separated from the effect it drives is independently testable, and the
+ * test is the proof the separation is real. ProtectNvr transitively imports the entire device and media graph (cameras, streaming, snapshots); a pure predicate should
+ * never have to stand that up to be exercised. This module imports only what its decisions read - the library's configuration error and its readings of a controller
+ * refusal and of a refused sign-in, its recovery and refusal schedules, its reboot anticipation window and its device-collection keys, and HBPU's error and URL-host
+ * formatters - so it loads and tests in isolation.
  */
 import type { ConnectionState, ProtectDeviceConfig, StateStore } from "unifi-protect";
-import { DEVICE_COLLECTION_KEYS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS,
-  ProtectConfigurationError, isControllerRefusal, isSignInRefusal } from "unifi-protect";
+import { DEVICE_COLLECTION_KEYS, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
+  PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectConfigurationError, isControllerRefusal, isSignInRefusal } from "unifi-protect";
 import type { Nullable, RetryBackoff } from "homebridge-plugin-utils";
 import { formatErrorMessage, formatUrlHost } from "homebridge-plugin-utils";
 import type { NvrPhase } from "./nvr.ts";
@@ -335,6 +336,14 @@ export function computeInitialRebootDelay(options: { intervalMs: number; nowMs: 
 
   return Math.max(intervalMs - uptimeMs, 60 * 1000);
 }
+
+/**
+ * How long, in milliseconds from the controller accepting the command, a scheduled reboot may take before it counts as overdue: the library's known-reboot schedule, one
+ * more probe at its steady interval, and its anticipation window as margin. The span counts from acceptance while the probes count from the fault that follows it, so
+ * the margin keeps a typical reboot's recovery from drawing a warning seconds before it completes. It reads the library's numbers rather than restating them.
+ */
+export const REBOOT_EXPECTED_RETURN_MS = PROTECT_RECOVERY_BACKOFF_KNOWN_MS.reduce((total, wait) => total + wait, 0) + PROTECT_RECOVERY_STEADY_INTERVAL_MS +
+  PROTECT_REBOOT_ANTICIPATION_WINDOW_MS;
 
 /**
  * How many of the given camera views are actively transmitting a HomeKit Secure Video recording - the one definition of the rule the scheduled-reboot deferral rests
