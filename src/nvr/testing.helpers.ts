@@ -62,6 +62,10 @@ export interface TestProtectPlatform {
 
   readonly accessories: ProtectAccessory[];
   readonly api: TestHomebridgeApi;
+  // The platform's claim on an accessory, mirrored over the map below, so a row reads which owner stands behind an accessory and a removal's release lands where it does
+  // in production.
+  readonly claimAccessory: (accessory: ProtectAccessory, owner: { readonly isAvailable: boolean }) => void;
+  readonly claims: Map<string, { readonly isAvailable: boolean }>;
   readonly clock: TestClock;
   readonly codecSupport: { hostSystem: string };
   readonly config: ProtectOptions;
@@ -78,6 +82,7 @@ export interface TestProtectPlatform {
   readonly persistence: AccessoryPersistence;
   readonly pluginLog: HomebridgePluginLogging;
   readonly recordingProcessFactory: RecordingProcessFactory;
+  readonly releaseAccessory: (accessory: ProtectAccessory) => void;
   readonly streamingDelegateFactory: TestStreamingDelegateFactory;
   readonly testDebug: (context: { controller?: string; device?: string }) => boolean;
 }
@@ -131,7 +136,7 @@ export class TestProtectNvr {
 
     readonly cameras: readonly { config: ProtectCameraConfig }[];
     readonly chimes: readonly Chime[];
-    connection: { isHealthy: boolean };
+    connection: { isHealthy: boolean; isLost: boolean; isRebooting: boolean };
     controllerName: string | null;
     readonly liveviews: readonly ProtectNvrLiveviewConfig[];
     nvr: { config: ProtectNvrConfig };
@@ -260,6 +265,7 @@ export class TestProtectNvr {
       devices: this.configuredDevices,
       log: this.log,
       persistence: init.platform.persistence,
+      releaseAccessory: (accessory: ProtectAccessory): void => init.platform.releaseAccessory(accessory),
       state: (): TestStateStore => this.client.state
     });
 
@@ -339,6 +345,12 @@ export class TestProtectNvr {
 
     return isDisruptionExpected({ lastRebootMs: this.lastRebootObservedAt, nowMs: this.platform.clock.now(), phase: this.phase,
       windowMs: PROTECT_NVR_REBOOT_RECENCY_MS });
+  }
+
+  // The verdict every owner starts from, read as the production root reads it, over the double's settable connection levers.
+  public get isAvailable(): boolean {
+
+    return !this.client.connection.isLost && !this.client.connection.isRebooting;
   }
 
   // Read-through to the controller record, mirroring the production getter.
@@ -608,7 +620,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
     // property (not a store-rebuild getter like liveviews / ringtones below): the volume write and the test's assertion / rejection lever must see the SAME instance, so
     // the projections are captured once above. Projected to the library's Chime shape through the confined structural cast, exactly as the other client members project.
     chimes: chimes as unknown as Chime[],
-    connection: { isHealthy: true },
+    connection: { isHealthy: true, isLost: false, isRebooting: false },
     controllerName: options.controllerName ?? "Test Controller",
 
     // The controller-wide liveview collection, read through the store double's CURRENT state, mirroring the production client.liveviews array the viewer reconciles its
@@ -641,6 +653,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   // which the API double carries, so it takes the double as it is. Nothing here emits Homebridge's shutdown, so a save the persistence holds leaves only when its window
   // comes due on the test clock.
   const persistence = new AccessoryPersistence({ api, clock, platformName: PLATFORM_NAME, pluginIdentifier: PLUGIN_NAME });
+  const claims = new Map<string, { readonly isAvailable: boolean }>();
 
   const nvr = new TestProtectNvr({
 
@@ -654,6 +667,8 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
 
       accessories: accessories,
       api: api,
+      claimAccessory: (accessory: ProtectAccessory, owner: { readonly isAvailable: boolean }): void => void claims.set(accessory.UUID, owner),
+      claims: claims,
       clock: clock,
       codecSupport: { hostSystem: "macOS" },
       config: platformConfig,
@@ -664,6 +679,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       persistence: persistence,
       pluginLog: log,
       recordingProcessFactory: recordingProcessFactory,
+      releaseAccessory: (accessory: ProtectAccessory): void => void claims.delete(accessory.UUID),
       streamingDelegateFactory: factory,
 
       // The production predicate, mirrored exactly: the legacy plugin-wide flag, else a Log.Debug entry resolved at the caller's own device and controller scope. It
@@ -727,13 +743,15 @@ export function makeTestAccessoryFamily(options: { mac?: string; name?: string; 
   return { packageAccessory, parentAccessory };
 }
 
-/* The connection monitor a client double hands a real controller root: healthy, with each subscription kept under its event until the disposable handed back for it is
- * disposed, so a row reads how many of the root's subscriptions are still attached and delivers an event exactly as a live monitor would. The monitor makes no state
- * transition of its own, so the transitions a connected root observes are none.
+/* The connection monitor a client double hands a real controller root: healthy by default, its health and its loss and reboot verdicts each a lever a row moves, with
+ * each subscription kept under its event until the disposable handed back for it is disposed, so a row reads how many of the root's subscriptions are still attached and
+ * delivers an event exactly as a live monitor would. The monitor makes no state transition of its own, so the transitions a connected root observes are none.
  */
 export class TestConnection {
 
-  public readonly isHealthy = true;
+  public isHealthy = true;
+  public isLost = false;
+  public isRebooting = false;
   readonly #listeners = new Map<string, Set<() => void>>();
 
   public get listenerCount(): number {

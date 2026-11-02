@@ -5,10 +5,11 @@
  * The spine owns each owner's lifetime triple - its abort controller, the composed signal every observer, MQTT registration, and timer binds to, and the timer registry
  * that signal drains - so a device leaf, a controller-scoped accessory, and a capability composed onto a hosting device all inherit one lifecycle mechanism.
  */
-import type { API, HAP } from "homebridge";
+import type { API, CharacteristicValue, HAP, Service } from "homebridge";
+import type { CharacteristicTarget, HomebridgePluginLogging } from "homebridge-plugin-utils";
 import type { ProtectDeviceConfig, ProtectNvrConfig, ProtectState } from "unifi-protect";
-import { TimerRegistry, composeSignals, debugGatedLog, formatErrorMessage, loopFaultReporter, mqttTopic, prefixedLog, superviseLoop } from "homebridge-plugin-utils";
-import type { HomebridgePluginLogging } from "homebridge-plugin-utils";
+import { TimerRegistry, composeSignals, debugGatedLog, formatErrorMessage, loopFaultReporter, mqttTopic, notResponding, prefixedLog,
+  superviseLoop } from "homebridge-plugin-utils";
 import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
@@ -31,6 +32,11 @@ interface ObservedSlice<T> {
 
 export abstract class ProtectBase {
 
+  // The wrapper a characteristic handler goes through: a read or a write HomeKit makes while this owner's isAvailable reads false is refused with the status HomeKit
+  // shows as No Response, and the handler behind it never runs. The verdict is read on each call, so a recovery clears the refusal with nothing rewired. HomeKit marks a
+  // whole accessory from one refusing characteristic, and a handler left unwrapped answers a value nobody can vouch for. An owner holding many accessories binds a
+  // wrapper of its own for each one whose verdict reads more than this owner's, as the liveviews owner does for a switch, which also reads its liveview.
+  protected readonly answering: ReturnType<typeof notResponding>;
   public readonly api: API;
   // This owner's own abort controller - the handle its cleanup() aborts. Aborting it unwinds exactly this owner's observe loops and MQTT registrations and drains its
   // timers, leaving every other owner untouched.
@@ -76,6 +82,7 @@ export abstract class ProtectBase {
      */
     this.log = debugGatedLog(prefixedLog(nvr.platform.pluginLog, () => this.logName), () => nvr.platform.testDebug(this.debugScope));
 
+    this.answering = notResponding({ errorClass: this.hap.HapStatusError, unavailable: () => !this.isAvailable });
     this.controller = new AbortController();
     this.signal = composeSignals(this.controller.signal, parentSignal ?? nvr.signal);
     this.timers = new TimerRegistry({ clock: nvr.platform.clock, signal: this.signal });
@@ -179,6 +186,14 @@ export abstract class ProtectBase {
   protected get recordPresent(): boolean {
 
     return true;
+  }
+
+  // Whether the plugin can vouch for what this owner shows, the verdict No Response reads at every scope. A controller-scoped owner has no record of its own, so it
+  // answers the controller's verdict, and the security system adds whether a liveview still calls for it; a liveview switch adds its own liveview through the wrapper it
+  // binds, on top of this verdict. ProtectDevice adds the device's record to it, and a capability answers its host's.
+  public get isAvailable(): boolean {
+
+    return this.nvr.isAvailable;
   }
 
   // The single narrow-selector state-observe primitive, shared by every HomeKit-projection owner - device leaves and controller-scoped owners alike. The loop wakes only
@@ -322,6 +337,53 @@ export abstract class ProtectBase {
 
       return false;
     }
+  }
+
+  /* Bind a refusing read handler that answers the value a characteristic holds, for a characteristic the plugin only ever writes. HomeKit reads one with no handler
+   * without asking anyone, so it would answer a stale value through an outage. The read hands back what is already held, so it changes nothing while this owner is
+   * available, and binding again on a later pass replaces the handler rather than stacking a second one.
+   */
+  protected answerHeld(service: Service, characteristic: CharacteristicTarget): void {
+
+    const held = service.getCharacteristic(characteristic);
+
+    held.onGet(this.answering(() => held.value));
+  }
+
+  /* Run a set handler's body on the plugin's own behalf and state the value it set, the path an MQTT set and the plugin's own writes take past the refusal a HomeKit
+   * write meets. A characteristic's own set entry point would run the wrapped handler and drop its refusal, so a command would silently go nowhere through an outage;
+   * calling the body directly reaches the device and lets the command fail the way it fails with the controller away, through the same failure log. The value is stated
+   * only once the body resolves, the moment a HomeKit write takes effect, so a reflection the body arms still lands after it. The caller resolves the service ahead of
+   * the call, and a service that is gone runs nothing.
+   *
+   * A caller never waits on this: the body begins in the caller's turn and finishes on its own. So a body that rejects or throws has no one to report to, which is why
+   * the fault is said here and stays here, states nothing, and costs the caller's own loop nothing.
+   *
+   * @param options                - The set to run.
+   * @param options.characteristic - The characteristic the body sets.
+   * @param options.service        - The service carrying the characteristic, as the caller resolved it.
+   * @param options.set            - The set handler's body.
+   * @param options.value          - The value to set.
+   */
+  protected async driveSet({ characteristic, service, set, value }: { characteristic: CharacteristicTarget; service: Service | undefined;
+    set: (value: CharacteristicValue) => unknown; value: CharacteristicValue; }): Promise<void> {
+
+    if(!service) {
+
+      return;
+    }
+
+    try {
+
+      await set(value);
+    } catch(error) {
+
+      this.log.error("Unable to complete the request to update %s: %s.", service.displayName, formatErrorMessage(error));
+
+      return;
+    }
+
+    service.updateCharacteristic(characteristic, value);
   }
 
   /* Reflect a characteristic's true state back to HomeKit once the set handler that changed it has returned. HAP writes the requested value onto the characteristic

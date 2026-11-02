@@ -59,6 +59,8 @@ export class TestCameraHost implements ProtectCameraHost {
   public accessory: ProtectAccessory;
   public accessoryName = "Test Camera";
   public api: API;
+  // The flashlight states a streaming session drove, in order. The delegates under these suites never start or stop a session, so it reads empty there.
+  public readonly driveFlashlightCalls: boolean[] = [];
 
   // The settable feature predicate; defaults to "no feature enabled", the quiet default the delegate construction paths read against.
   public hasFeature: (option: string) => boolean = () => false;
@@ -106,6 +108,9 @@ export class TestCameraHost implements ProtectCameraHost {
 
   // Whether this camera can back HomeKit Secure Video. Settable so a recording-behavior test can flip it; defaults false.
   public isHksvCapable = false;
+
+  // Whether the plugin can vouch for this camera's values. No delegate reads it; it completes the device context. Defaults true.
+  public isAvailable = true;
 
   // The behavior-bearing reachability gate: the snapshot delegate returns null before any pipeline when this is false, so the two-sided snapshot test sets it both
   // ways. Defaults true.
@@ -216,6 +221,12 @@ export class TestCameraHost implements ProtectCameraHost {
     this.setStatusLedCalls.push(value);
 
     return true;
+  }
+
+  // The recordable flashlight interface, which a package session drives as it starts and stops.
+  public driveFlashlight(on: boolean): void {
+
+    this.driveFlashlightCalls.push(on);
   }
 
   // The behavior-bearing controller-snapshot interface: records the options and resolves the settable snapshotResult Buffer - the value the two-sided snapshot test

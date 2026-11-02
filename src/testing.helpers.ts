@@ -23,6 +23,8 @@
  * Co-located with production code under src/ so the type-check pass covers this file alongside everything else, while tsconfig.build.json excludes every *.helpers.ts,
  * *.fixtures.ts, and *.test.ts from the emitted dist/, so none of the rig reaches the published package.
  */
+import { AudioRecordingCodecType, AudioRecordingSamplerate, ChangeReason, H264Level, H264Profile, MediaContainerType, SRTPCryptoSuites,
+  VideoCodecType } from "homebridge-plugin-utils";
 import type { CameraController, CameraControllerOptions, CharacteristicValue, Controller, ControllerServiceMap, Resolution, WithUUID } from "homebridge";
 import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } from "./media/stream-delegate.ts";
 import type { DeepPartial, DeviceSelectors, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig,
@@ -31,7 +33,6 @@ import type { DeepPartial, DeviceSelectors, ProtectCameraConfig, ProtectChimeCon
 import type { ProtectAccessory, ProtectAccessoryContext } from "./types.ts";
 import { loadHomebridge, watchServerWarnings } from "homebridge-plugin-utils/testing";
 import type { AdvertisedStreams } from "./devices/cameras/camera.ts";
-import { ChangeReason } from "homebridge-plugin-utils";
 import type { ChannelProfile } from "./media/resolution.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectCameraHost } from "./media/camera-host.ts";
@@ -750,6 +751,47 @@ export class TestStreamingDelegate implements StreamingDelegate {
   }
 }
 
+/* Build HAP's own camera controller for a camera, with the arms production's delegate gives one: the recording arm and the motion link where the camera can back HomeKit
+ * Secure Video, and the streaming arm always. A registration therefore builds exactly the services production's does, and the delegates behind it do nothing, because the
+ * rows it serves read those services and no session ever starts.
+ *
+ * @param camera      - The camera the controller is for.
+ * @param resolutions - The resolutions the controller advertises.
+ *
+ * @returns The controller, ready to configure on the camera's accessory.
+ */
+function makeRealCameraController(camera: ProtectCameraHost, resolutions: Resolution[]): CameraController {
+
+  const idle = async (): Promise<void> => Promise.resolve();
+  const video = { parameters: { levels: [H264Level.LEVEL4_0], profiles: [H264Profile.MAIN] }, resolutions, type: VideoCodecType.H264 };
+  const options = {
+
+    delegate: { handleSnapshotRequest: idle, handleStreamRequest: idle, prepareStream: idle },
+    ...(camera.isHksvCapable ? {
+
+      recording: {
+
+        delegate: { closeRecordingStream: idle, handleRecordingStreamRequest: idle, updateRecordingActive: idle, updateRecordingConfiguration: idle },
+        options: {
+
+          audio: { codecs: [{ audioChannels: 1, samplerate: AudioRecordingSamplerate.KHZ_32, type: AudioRecordingCodecType.AAC_LC }] },
+          mediaContainerConfiguration: [{ fragmentLength: 4000, type: MediaContainerType.FRAGMENTED_MP4 }],
+          prebufferLength: 4000,
+          video
+        }
+      },
+      sensors: { motion: camera.accessory.getService(hap.Service.MotionSensor) }
+    } : {}),
+    streamingOptions: {
+
+      supportedCryptoSuites: [SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80],
+      video: { codec: { levels: [H264Level.LEVEL4_0], profiles: [H264Profile.MAIN] }, resolutions }
+    }
+  };
+
+  return new hap.CameraController(options as unknown as CameraControllerOptions);
+}
+
 // The stub StreamingDelegateFactory satisfying the platform's dependency-inversion interface. Records every create call (the camera identity, the resolutions array,
 // the recording audio format and the probe the derivation handed it, the delegate it returned, and whether the accessory carried a MotionSensor service at that moment)
 // so tests can assert the interface was exercised exactly once with exactly the advertised resolutions, read what the derivation's probe produced, prove a motion
@@ -762,6 +804,10 @@ export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
 
   public maxSourcePixels = Infinity;
 
+  // Whether each delegate carries HAP's own camera controller rather than the stand-in, for a row that reads the services a real registration gives an accessory. Off by
+  // default, since the stand-in builds no services and a row reading the controller log reads the stand-in's. Set it before construction.
+  public realControllers = false;
+
   public create(camera: ProtectCameraHost, derived: AdvertisedStreams): StreamingDelegate {
 
     // Capture the camera's controller identity through the same derivation production's ProtectStreamingDelegate reads at its own construction. This makes a
@@ -773,6 +819,11 @@ export class TestStreamingDelegateFactory implements StreamingDelegateFactory {
     // Install the timeshift-supervisor double at create time - before the camera's construction-time activation kick reads it - so the kick and the per-edge availability
     // kicks land on a spy rather than an inert stand-in. Cast at the confined double->production boundary the harness uses throughout.
     delegate.timeshift = makeTimeshiftSupervisorDouble() as unknown as StreamingDelegate["timeshift"];
+
+    if(this.realControllers) {
+
+      delegate.controller = makeRealCameraController(camera, derived.resolutions);
+    }
 
     this.createCalls.push({ audioFormat: derived.audioFormat, camera, delegate,
       motionSensorPresent: camera.accessory.getService(camera.api.hap.Service.MotionSensor) !== undefined, probe: derived.probe, resolutions: derived.resolutions });

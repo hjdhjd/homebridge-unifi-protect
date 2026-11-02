@@ -25,13 +25,13 @@
  * (getSwitchState === target), making the later toggle a genuine false->true change - setSwitchState in liveviews.ts continue()s a member already at its target, so it
  * would no-op.
  */
+import { ACCESSORY_SAVE_WINDOW_MS, HAPStatus } from "homebridge-plugin-utils";
 import { Characteristic, Service, TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
-import { logCount, loggedAt, settle, triggerSet } from "homebridge-plugin-utils/testing";
+import { hapStatus, logCount, loggedAt, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import { makeNvrConfig, makeTestNvr, restoreAccessories } from "../nvr/testing.helpers.ts";
-import { ACCESSORY_SAVE_WINDOW_MS } from "homebridge-plugin-utils";
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL } from "../settings.ts";
 import { ProtectLiveviews } from "./liveviews.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
@@ -368,6 +368,21 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
       false, "no switch register call was recorded for the reserved name");
   });
 
+  // A reserved name is read in any case: it calls for the security system and creates no switch.
+  test("a liveview name in another case, protect-away, builds the security system and no switch", async () => {
+
+    const built = buildLiveviews({ liveviews: [makeLiveviewConfig({ id: "lv-away", name: "protect-away" })] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const security = built.nvr.platform.accessories.find((accessory) => accessory.UUID === SECURITY_UUID);
+
+    assert.ok(security?.getService(Service.SecuritySystem), "the liveview called for the security system in spite of its case");
+    assert.equal(built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("away")), undefined, "the reserved name creates no switch");
+  });
+
   test("an orphan liveview switch (its liveview removed/renamed) is unregistered and logs the removal", async () => {
 
     // Pre-seed a cached switch accessory whose context.liveview ("Ghost") matches no current liveview, so the orphan-removal path removes one rather than no-opping.
@@ -685,6 +700,139 @@ describe("the liveviews reconcile through the membership delta and the removal g
     assert.ok(built.nvr.platform.accessories.some((accessory) => accessory.UUID === liveviewUuid("Scene")), "the returning liveview built its switch anew");
   });
 
+  // What a deleted liveview leaves the removal gate holding, each reached as the controller reaches it: a controller stable for its window schedules the removal, one not
+  // yet stable schedules nothing, and a flap during the delay drops the removal it held. The verdict reads the liveview, so it reads the same in each.
+  const GATE_POSTURES = [
+    { flapAfter: false, flapBefore: false, pending: true, title: "through the removal delay" },
+    { flapAfter: false, flapBefore: true, pending: false, title: "with the controller not yet stable" },
+    { flapAfter: true, flapBefore: false, pending: false, title: "after a flap dropped the removal" }
+  ];
+
+  // Delete liveviews down to those a row names, in the posture it names.
+  async function deleteInPosture(built: ReturnType<typeof buildLiveviews>, posture: (typeof GATE_POSTURES)[number], remaining: ProtectNvrLiveviewConfig[]):
+  Promise<void> {
+
+    const flap = (): void => {
+
+      built.nvr.pushControllerStability(false);
+      built.nvr.pushControllerStability(true);
+    };
+
+    if(posture.flapBefore) {
+
+      flap();
+    }
+
+    built.store.pushLiveviews(remaining);
+
+    await settle();
+
+    if(posture.flapAfter) {
+
+      flap();
+    }
+  }
+
+  // One owner holds many switches, so the refusal reads each switch's own liveview: the one whose liveview is gone refuses and the one beside it answers. MQTT keeps
+  // answering for the accessory that stays, and the verdict is read on each call, so a liveview's return clears the refusal with nothing rebound.
+  for(const posture of GATE_POSTURES) {
+
+    test("a switch whose liveview is deleted refuses a read and a write " + posture.title + ", its MQTT get and set answer, and its return answers each", async () => {
+
+      const garden = makeLiveviewConfig({ id: "lv-garden", name: "Protect-Garden" });
+      const scene = makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" });
+      const built = buildLiveviews({ liveviews: [ garden, scene ] });
+
+      activeController = built.controller;
+
+      await settle();
+
+      const sceneSwitch = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"));
+      const on = sceneSwitch?.getService(Service.Switch)?.getCharacteristic(Characteristic.On);
+      const gardenOn = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Garden"))?.getService(Service.Switch)?.
+        getCharacteristic(Characteristic.On);
+
+      assert.ok(sceneSwitch && on && gardenOn, "each liveview's switch stands");
+
+      await assert.doesNotReject(triggerGet(on), "a switch its liveview calls for answers");
+
+      await deleteInPosture(built, posture, [garden]);
+
+      assert.equal(built.nvr.removals.isPending(sceneSwitch.UUID), posture.pending, "the removal gate holds what this posture leaves it");
+
+      await assert.rejects(triggerGet(on), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "a read refuses");
+      await assert.rejects(triggerSet(on, true), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "and so does a write");
+      await assert.doesNotReject(triggerGet(gardenOn), "and the switch beside it keeps answering a read");
+      await assert.doesNotReject(triggerSet(gardenOn, true), "and a write");
+
+      const payload = JSON.parse(await built.mqtt.invokeGet(CONTROLLER_MAC + "/liveviews/get") ?? "[]") as { name: string }[];
+
+      assert.ok(payload.some((entry) => entry.name === "Scene"), "the MQTT get answers for the switch");
+
+      await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "Scene", state: true }]));
+      await settle();
+
+      assert.ok(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT: Scene."), "and the MQTT set reaches it");
+
+      built.store.pushLiveviews([ garden, scene ]);
+
+      await settle();
+
+      assert.equal(built.nvr.removals.isPending(sceneSwitch.UUID), false, "the liveview's return leaves no removal pending");
+
+      await assert.doesNotReject(triggerGet(on), "and a read answers again");
+      await assert.doesNotReject(triggerSet(on, true), "and so does a write");
+    });
+  }
+
+  // The security system's half of the refusal is its own verdict, whose suite reads it against the store directly. These rows read it through the reconcile, with an
+  // ordinary liveview standing so the list reads non-empty, and through each posture the gate can hold while the accessory stays.
+  for(const posture of GATE_POSTURES) {
+
+    test("a security system whose calling liveview is deleted refuses " + posture.title + ", its MQTT get and set answering, and answers on its return", async () => {
+
+      const away = makeLiveviewConfig({ id: "lv-away", name: "Protect-Away" });
+      const ordinary = makeLiveviewConfig({ id: "lv-ordinary", name: "Front Door" });
+      const built = buildLiveviews({ liveviews: [ away, ordinary ] });
+
+      activeController = built.controller;
+
+      await settle();
+
+      const security = built.nvr.platform.accessories.find((accessory) => accessory.UUID === SECURITY_UUID);
+      const current = security?.getService(Service.SecuritySystem)?.getCharacteristic(Characteristic.SecuritySystemCurrentState);
+      const target = security?.getService(Service.SecuritySystem)?.getCharacteristic(Characteristic.SecuritySystemTargetState);
+
+      assert.ok(security && current && target, "the security system stands");
+
+      await assert.doesNotReject(triggerGet(target), "a security system its liveview calls for answers");
+
+      await deleteInPosture(built, posture, [ordinary]);
+
+      assert.equal(built.nvr.removals.isPending(SECURITY_UUID), posture.pending, "the removal gate holds what this posture leaves it");
+      assert.ok(built.nvr.platform.accessories.includes(security), "and the accessory stays");
+
+      await assert.rejects(triggerGet(target), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "a read refuses");
+      await assert.rejects(triggerSet(target, Characteristic.SecuritySystemTargetState.DISARM), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE),
+        "and so does a write");
+
+      assert.equal(await built.mqtt.invokeGet(CONTROLLER_MAC + "/securitysystem/get"), "Off", "the MQTT get answers");
+
+      await built.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "away");
+
+      assert.equal(current.value, Characteristic.SecuritySystemCurrentState.AWAY_ARM, "and the MQTT set applies its scene");
+
+      built.store.pushLiveviews([ away, ordinary ]);
+
+      await settle();
+
+      assert.equal(built.nvr.removals.isPending(SECURITY_UUID), false, "the liveview's return leaves no removal pending");
+
+      await assert.doesNotReject(triggerGet(target), "the liveview's return answers a read again");
+      await assert.doesNotReject(triggerSet(target, Characteristic.SecuritySystemTargetState.DISARM), "and a write");
+    });
+  }
+
   // The removal gate holds every removal until the controller has been settled for its stability window, so a liveview removed while the controller is unsettled
   // schedules nothing. The controller's stability sweep re-runs this reconcile once the window has passed, and that pass schedules the removal.
   test("a removal the gate refuses while the controller is unsettled is scheduled by the reconcile the stability sweep re-runs", async () => {
@@ -830,6 +978,41 @@ describe("the liveviews reconcile through the membership delta and the removal g
     built.nvr.platform.clock.advance(REMOVAL_GRACE_MS / 2);
 
     assert.equal(built.nvr.platform.accessories.includes(security), false, "and the security system leaves when that delay ends");
+  });
+
+  /* A liveview can return with the removal's timer firing ahead of the reconcile that would cancel it: the controller's update has reached the store, and the observe
+   * loop has not yet woken. The re-check at the fire is what keeps each accessory then, because it reads the store rather than the last reconcile's answer.
+   */
+  test("a liveview returning with the removal's timer firing ahead of the reconcile keeps its switch and the security system", async () => {
+
+    const liveviews = [ makeLiveviewConfig({ id: "lv-away", name: "Protect-Away" }), makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" }) ];
+    const built = buildLiveviews({ liveviews });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const security = built.nvr.platform.accessories.find((accessory) => accessory.UUID === SECURITY_UUID);
+    const sceneSwitch = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"));
+
+    assert.ok(security && sceneSwitch, "the security system and the Scene switch exist");
+
+    built.store.pushLiveviews([]);
+
+    await settle();
+
+    // The observe loop wakes on a later turn, so nothing here settles between the return and the fire, and no reconcile runs ahead of the timer.
+    built.store.pushLiveviews(liveviews);
+    built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
+
+    assert.ok(built.nvr.platform.accessories.includes(security), "the security system stayed, its re-check reading the returned liveview");
+    assert.ok(built.nvr.platform.accessories.includes(sceneSwitch), "the switch stayed, its re-check reading the returned liveview");
+
+    await settle();
+
+    assert.equal(logCount(built.logEntries, "info", "Plugin-specific liveviews have been detected. Enabling the security system accessory."), 1,
+      "the reconcile that follows finds the security system standing and builds no other");
+    assert.equal(logCount(built.logEntries, "info", "Configuring plugin-specific liveview switch: Scene."), 1, "and finds the switch standing and builds no other");
   });
 
   // A security system accessory Homebridge restores from its cache after its liveviews were deleted while Homebridge was down has no security system to remove it.

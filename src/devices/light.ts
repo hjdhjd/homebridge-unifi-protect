@@ -58,43 +58,50 @@ export class ProtectLight extends ProtectDevice<Light> {
     const { service } = this.acquireService({ serviceType: this.hap.Service.Lightbulb });
 
     // Turn the light on or off.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => {
 
       return this.isLightOn;
-    });
+    }));
 
-    service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
-
-      const lightState = value === true;
-
-      // Push the new power state to the controller, reporting any failure through the shared command-error helper.
-      await this.runDeviceCommand("turn the light " + (lightState ? "on" : "off"), () => this.device.update({ lightOnSettings: { isLedForceOn: lightState } }));
-    });
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering(async (value: CharacteristicValue) => this.setPower(value)));
 
     // Adjust the brightness of the light.
-    service.getCharacteristic(this.hap.Characteristic.Brightness).onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.Brightness).onGet(this.answering(() => {
 
       return this.ledBrightness;
-    });
+    }));
 
-    service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(async (value: CharacteristicValue) => {
-
-      const brightness = this.brightnessToLedLevel(value as number);
-
-      // Push the new brightness to the controller, reporting any failure through the shared command-error helper.
-      if(!(await this.runDeviceCommand("adjust the brightness to " + (value as number).toString() + "%",
-        () => this.device.update({ lightDeviceSettings: { ledLevel: brightness } })))) {
-
-        return;
-      }
-
-      // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
-      this.reflectAfterSet(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledLevelToBrightness(brightness)));
-    });
+    service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(this.answering(async (value: CharacteristicValue) => this.setBrightness(value)));
 
     // Initialize the light.
     service.updateCharacteristic(this.hap.Characteristic.On, this.isLightOn);
     service.updateCharacteristic(this.hap.Characteristic.Brightness, this.ledBrightness);
+  }
+
+  // Turn the light on or off, the one body HomeKit's write and the MQTT set share.
+  private async setPower(value: CharacteristicValue): Promise<void> {
+
+    const lightState = value === true;
+
+    // Push the new power state to the controller, reporting any failure through the shared command-error helper.
+    await this.runDeviceCommand("turn the light " + (lightState ? "on" : "off"), () => this.device.update({ lightOnSettings: { isLedForceOn: lightState } }));
+  }
+
+  // Adjust the brightness of the light, the one body HomeKit's write and the MQTT set share.
+  private async setBrightness(value: CharacteristicValue): Promise<void> {
+
+    const brightness = this.brightnessToLedLevel(value as number);
+
+    // Push the new brightness to the controller, reporting any failure through the shared command-error helper.
+    if(!(await this.runDeviceCommand("adjust the brightness to " + (value as number).toString() + "%",
+      () => this.device.update({ lightDeviceSettings: { ledLevel: brightness } })))) {
+
+      return;
+    }
+
+    // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
+    this.reflectAfterSet(() => this.accessory.getService(this.hap.Service.Lightbulb)?.updateCharacteristic(this.hap.Characteristic.Brightness,
+      this.ledLevelToBrightness(brightness)));
   }
 
   // Publish the light's on state, the value its MQTT get answers, when it changed. The controller's reported change is the one publisher, so a change made here or in
@@ -124,10 +131,11 @@ export class ProtectLight extends ProtectDevice<Light> {
       return this.ledBrightness.toString();
     });
 
-    // Control the light.
+    // Control the light. A set reaches the controller whatever HomeKit is being told, so each runs its body directly rather than through the refusing handler.
     this.subscribeSet(mqttTopics.light.topic, mqttTopics.light.label, (value: string) => {
 
-      this.accessory.getService(this.hap.Service.Lightbulb)?.setCharacteristic(this.hap.Characteristic.On, value === "true");
+      void this.driveSet({ characteristic: this.hap.Characteristic.On, service: this.accessory.getService(this.hap.Service.Lightbulb),
+        set: (lightState) => this.setPower(lightState), value: value === "true" });
     });
 
     this.subscribeSet(mqttTopics.lightBrightness.topic, mqttTopics.lightBrightness.label, (value: string) => {
@@ -140,7 +148,8 @@ export class ProtectLight extends ProtectDevice<Light> {
         return;
       }
 
-      this.accessory.getService(this.hap.Service.Lightbulb)?.setCharacteristic(this.hap.Characteristic.Brightness, brightness);
+      void this.driveSet({ characteristic: this.hap.Characteristic.Brightness, service: this.accessory.getService(this.hap.Service.Lightbulb),
+        set: (level) => this.setBrightness(level), value: brightness });
     });
 
     // State the light's held state as it is set up, since its setup publishes nothing else, and again at the start of every later broker session, through the methods

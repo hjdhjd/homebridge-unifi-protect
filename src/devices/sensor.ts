@@ -193,10 +193,13 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   private configureBatteryService(): void {
 
     // Acquire the service.
-    this.acquireService({ serviceType: this.hap.Service.Battery });
+    const { service } = this.acquireService({ serviceType: this.hap.Service.Battery });
 
     // Initialize the battery state.
     this.updateBatteryStatus();
+
+    this.answerHeld(service, this.hap.Characteristic.BatteryLevel);
+    this.answerHeld(service, this.hap.Characteristic.StatusLowBattery);
   }
 
   // Update accessory services and characteristics.
@@ -337,7 +340,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     }
 
     // Retrieve the current air quality when requested.
-    service.getCharacteristic(this.hap.Characteristic.AirQuality).onGet(() => airQualityLevel(this.airQuality.aqi));
+    service.getCharacteristic(this.hap.Characteristic.AirQuality).onGet(this.answering(() => airQualityLevel(this.airQuality.aqi)));
 
     // Update the sensor.
     service.updateCharacteristic(this.hap.Characteristic.AirQuality, airQualityLevel(airQuality.aqi));
@@ -401,7 +404,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
         this.lastAlarm[descriptor.field] = detected;
 
         // Retrieve the current contact sensor state when requested.
-        service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.alarmDetected(descriptor));
+        service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(this.answering(() => this.alarmDetected(descriptor)));
 
         // Seed the sensor and publish the initial state.
         service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, detected);
@@ -427,11 +430,11 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     }
 
     // Retrieve the current light level when requested.
-    service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel).onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel).onGet(this.answering(() => {
 
       // The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
       return this.ambientLight >= 0.0001 ? this.ambientLight : 0.0001;
-    });
+    }));
 
     // Update the sensor. The minimum value for ambient light in HomeKit is 0.0001. I have no idea why...but it is. Honor it.
     service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.ambientLight >= 0.0001 ? this.ambientLight : 0.0001);
@@ -462,7 +465,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     }
 
     // Retrieve the current carbon dioxide alert state when requested.
-    service.getCharacteristic(this.hap.Characteristic.CarbonDioxideDetected).onGet(() => co2AlertDetected(this.airQuality.co2, this.co2Settings));
+    service.getCharacteristic(this.hap.Characteristic.CarbonDioxideDetected).onGet(this.answering(() => co2AlertDetected(this.airQuality.co2, this.co2Settings)));
 
     // Update the sensor.
     service.updateCharacteristic(this.hap.Characteristic.CarbonDioxideDetected, co2AlertDetected(airQuality.co2, this.co2Settings));
@@ -498,7 +501,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     }
 
     // Retrieve the current contact sensor state when requested.
-    service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.contact);
+    service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(this.answering(() => this.contact));
 
     // Update the sensor.
     service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.contact);
@@ -592,7 +595,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       }
 
       // Retrieve the current sensor state when requested.
-      service.getCharacteristic(characteristic).onGet(() => this.leakDetected(sensor.isDetected));
+      service.getCharacteristic(characteristic).onGet(this.answering(() => this.leakDetected(sensor.isDetected)));
 
       // Update the sensor.
       service.updateCharacteristic(characteristic, this.leakDetected(sensor.isDetected));
@@ -657,8 +660,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       const characteristic = descriptor.characteristic(this.hap);
 
       // Retrieve the current alarm and fault states when requested.
-      service.getCharacteristic(characteristic).onGet(() => this.smokeAlarmState(descriptor));
-      service.getCharacteristic(this.hap.Characteristic.StatusFault).onGet(() => this.smokeFaultState(descriptor));
+      service.getCharacteristic(characteristic).onGet(this.answering(() => this.smokeAlarmState(descriptor)));
+      service.getCharacteristic(this.hap.Characteristic.StatusFault).onGet(this.answering(() => this.smokeFaultState(descriptor)));
 
       // The VALUE path writes only from a LIVE block. While the detector has not given us one - a dropout, or a unit that has yet to report - the characteristics keep
       // whatever they hold, nothing is narrated, and nothing is published, so a gap can never manufacture an all-clear over an alarm the detector really sent.
@@ -774,7 +777,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     }
 
     // Retrieve the current vape state when requested.
-    service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(() => this.vapeState);
+    service.getCharacteristic(this.hap.Characteristic.ContactSensorState).onGet(this.answering(() => this.vapeState));
 
     // The VALUE path writes only from a LIVE reading. While the metric is quiet - the sensor between readings, or a record that has vanished - the characteristic keeps
     // whatever it holds and nothing is narrated, so a dropout can never manufacture an all-clear the sensor never reported.
@@ -832,7 +835,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   private updateEnvironmentalCharacteristic(options: { characteristic: CharacteristicTarget; read: () => Nullable<number>; service: Service; topic: string }): void {
 
     // Retrieve the current reading when requested, honoring a hold.
-    options.service.getCharacteristic(options.characteristic).onGet(() => options.read() ?? options.service.getCharacteristic(options.characteristic).value);
+    options.service.getCharacteristic(options.characteristic).onGet(
+      this.answering(() => options.read() ?? options.service.getCharacteristic(options.characteristic).value));
 
     const reading = options.read();
 
@@ -868,13 +872,13 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
   private configureStateCharacteristics(service: Service): boolean {
 
     // Retrieve the current connection status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isReachable);
+    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(this.answering(() => this.isReachable));
 
     // Update the current connection status.
     service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
 
     // Retrieve the current tamper status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusTampered).onGet(() => this.tampered);
+    service.getCharacteristic(this.hap.Characteristic.StatusTampered).onGet(this.answering(() => this.tampered));
 
     // Update the tamper status.
     service.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.tampered);

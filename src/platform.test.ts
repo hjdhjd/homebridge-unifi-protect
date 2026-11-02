@@ -14,19 +14,22 @@
  * here emits the launch signal, so the launch handler the walk registers is never called. Most entries a row configures carry no credentials, so the walk builds
  * no controller for them, and a row whose entry carries credentials ends with Homebridge's shutdown, so the controller built for it lets go of what it subscribed to.
  *
- * Every option entry configured here is written in the RETIRED option grammar, deliberately and throughout: what these rows exist to prove is that such a
+ * Every option entry the translation rows configure is written in the RETIRED option grammar, deliberately and throughout: what those rows exist to prove is that such a
  * configuration reaches the engine translated. That is the exemption the zero-residue sweeps carry for this file, alongside the translation layer's own suite.
+ *
+ * The restore sweep's rows hand the platform an accessory the way Homebridge hands one back from its cache, and read and write it through HAP's own paths.
  */
 import type { API, Logging } from "homebridge";
-import { APIEvent, FeatureOptions } from "homebridge-plugin-utils";
+import { APIEvent, FeatureOptions, HAPStatus, Perms } from "homebridge-plugin-utils";
+import { Characteristic, Service, makeTestAccessory, makeTestApi } from "./testing.helpers.ts";
 import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { featureOptionCategories, featureOptions } from "./options.ts";
+import { hapStatus, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import type { ProtectNvr } from "./nvr/nvr.ts";
 import { ProtectPlatform } from "./platform.ts";
 import type { ProtectPlatformConfig } from "./types.ts";
 import assert from "node:assert/strict";
-import { makeTestApi } from "./testing.helpers.ts";
 
 // The controller and camera these rows resolve against.
 const CONTROLLER = "AABBCCDDEEFF";
@@ -232,5 +235,202 @@ describe("platform construction and the configured controllers", () => {
     const { lines } = buildPlatform([], [ null, "unifi.local", { address: "10.0.0.1" } ]);
 
     assert.deepEqual(lines, [NO_CREDENTIALS], "construction completes, and only the one entry is read");
+  });
+});
+
+describe("the restore sweep", () => {
+
+  // Nothing maintains a restored value until an owner takes the accessory over, so it refuses until then, and from the claim on it follows that owner. A characteristic
+  // an owner binds late, or only ever writes, stays on the sweep's handler after the claim, which is why the sweep follows the owner rather than refusing outright.
+  test("a restored accessory refuses outside its identity until an owner claims it, then follows the owner, and refuses again once released", async () => {
+
+    const { platform } = buildPlatform([]);
+    const accessory = makeTestAccessory("Restored");
+    const service = accessory.addService(new Service.Switch("Restored Switch"));
+    const on = service.getCharacteristic(Characteristic.On);
+
+    service.addCharacteristic(Characteristic.ConfiguredName);
+    on.updateValue(true);
+    platform.configureAccessory(accessory);
+
+    await assert.rejects(triggerGet(on), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "an unclaimed accessory refuses");
+
+    for(const identity of [ service.getCharacteristic(Characteristic.Name), service.getCharacteristic(Characteristic.ConfiguredName),
+      accessory.getService(Service.AccessoryInformation)?.getCharacteristic(Characteristic.Manufacturer) ]) {
+
+      assert.ok(identity, "the fixture carries the identity characteristic");
+
+      // eslint-disable-next-line no-await-in-loop -- Each read is its own assertion.
+      await assert.doesNotReject(triggerGet(identity), identity.displayName + " answers as identity");
+    }
+
+    const owner = { isAvailable: true };
+
+    platform.claimAccessory(accessory, owner);
+
+    assert.equal(await triggerGet(on), true, "a claimed accessory answers the value it holds");
+
+    owner.isAvailable = false;
+
+    await assert.rejects(triggerGet(on), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "and refuses when its owner does");
+
+    owner.isAvailable = true;
+    platform.releaseAccessory(accessory);
+
+    await assert.rejects(triggerGet(on), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "and a released accessory has no owner to follow");
+  });
+
+  // With no set handler HAP stores a write and reports success, so a hub's write to an accessory nothing stands behind would read as done. Each write here goes through
+  // HAP's own write path, which is where a refused write stores nothing.
+  test("a restored accessory refuses a write and stores nothing until an owner claims it, then takes the write while its owner answers", async () => {
+
+    const { platform } = buildPlatform([]);
+    const accessory = makeTestAccessory("Restored");
+    const on = accessory.addService(new Service.Switch("Restored Switch")).getCharacteristic(Characteristic.On);
+    const lock = accessory.addService(new Service.LockMechanism("Restored Lock")).getCharacteristic(Characteristic.LockTargetState);
+
+    on.updateValue(true);
+    lock.updateValue(Characteristic.LockTargetState.SECURED);
+    platform.configureAccessory(accessory);
+
+    await assert.rejects(triggerSet(on, false), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "an unclaimed accessory refuses a write");
+    await assert.rejects(triggerSet(lock, Characteristic.LockTargetState.UNSECURED), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "and so does a lock");
+
+    assert.equal(on.value, true, "the switch holds the value it restored");
+    assert.equal(lock.value, Characteristic.LockTargetState.SECURED, "and so does the lock");
+
+    const owner = { isAvailable: true };
+
+    platform.claimAccessory(accessory, owner);
+
+    await assert.doesNotReject(triggerSet(on, false), "a characteristic no owner bound takes the write once its accessory is claimed");
+
+    assert.equal(on.value, false, "and stores it");
+
+    owner.isAvailable = false;
+
+    await assert.rejects(triggerSet(on, true), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "and refuses when its owner does");
+
+    assert.equal(on.value, false, "storing nothing");
+
+    owner.isAvailable = true;
+    platform.releaseAccessory(accessory);
+
+    await assert.rejects(triggerSet(on, true), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "and a released accessory has no owner to follow");
+  });
+
+  // HAP holds one write handler per characteristic, so an owner's replaces the sweep's outright, and what the owner bound decides the write from then on.
+  test("an owner's own write handler replaces the sweep's, and the sweep is not consulted again", async () => {
+
+    const { platform } = buildPlatform([]);
+    const accessory = makeTestAccessory("Restored");
+    const on = accessory.addService(new Service.Switch("Restored Switch")).getCharacteristic(Characteristic.On);
+    const writes: unknown[] = [];
+
+    platform.configureAccessory(accessory);
+    on.onSet((value) => void writes.push(value));
+
+    await assert.doesNotReject(triggerSet(on, true), "the owner's handler answers, with no claim standing for the sweep to read");
+
+    assert.deepEqual(writes, [true], "and it ran");
+    assert.equal(on.value, true, "and HAP stored what it accepted");
+  });
+
+  // A name is the user's to edit whatever the plugin knows. HAP's own writes to a characteristic it holds, StatusActive on a camera's sensors among them, arrive through
+  // the entry point a write handler sits on, so a handler on one HomeKit cannot write would swallow them, which handleSetRequest reads here directly.
+  test("a name and a characteristic carrying no write permission take no write handler", async () => {
+
+    const { platform } = buildPlatform([]);
+    const accessory = makeTestAccessory("Restored");
+    const sensor = accessory.addService(new Service.MotionSensor("Restored Motion"));
+    const active = sensor.getCharacteristic(Characteristic.StatusActive);
+    const name = sensor.addCharacteristic(Characteristic.ConfiguredName);
+
+    active.updateValue(false);
+    name.updateValue("Before");
+    platform.configureAccessory(accessory);
+
+    assert.equal(active.props.perms.includes(Perms.PAIRED_WRITE), false, "the fixture's StatusActive carries no write permission");
+    assert.equal(name.props.perms.includes(Perms.PAIRED_WRITE), true, "and its name does");
+
+    await assert.rejects(triggerGet(active), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "StatusActive still refuses a read");
+    await assert.doesNotReject(active.handleSetRequest(true), "and HAP's own write to it lands");
+
+    assert.equal(active.value, true, "storing the value HAP wrote");
+
+    await assert.doesNotReject(triggerSet(name, "After"), "and an unclaimed accessory's name takes the user's edit");
+
+    assert.equal(name.value, "After", "storing it");
+  });
+
+  // HAP reuses a camera controller's restored services and serves their characteristics through getters of its own, which an onGet here would displace. StreamingStatus
+  // is the exception, because HAP only ever writes it, and it is what a restored camera with nothing else to refuse answers with.
+  test("a restored camera's controller services keep HAP's getters, and their StreamingStatus alone refuses", async () => {
+
+    const { platform } = buildPlatform([]);
+    const accessory = makeTestAccessory("Restored Camera");
+    const stream = accessory.addService(new Service.CameraRTPStreamManagement("Stream", "0"));
+    const setupEndpoints = stream.getCharacteristic(Characteristic.SetupEndpoints);
+    let legacyReads = 0;
+
+    setupEndpoints.on("get", (callback) => {
+
+      legacyReads++;
+      callback(null, "");
+    });
+
+    const controllerServices = [ stream, accessory.addService(Service.CameraRecordingManagement), accessory.addService(Service.CameraOperatingMode),
+      accessory.addService(Service.DataStreamTransportManagement), accessory.addService(Service.Microphone), accessory.addService(Service.Speaker) ];
+
+    platform.configureAccessory(accessory);
+
+    await assert.rejects(triggerGet(stream.getCharacteristic(Characteristic.StreamingStatus)), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE),
+      "StreamingStatus refuses until the camera is claimed");
+
+    const readable = controllerServices.flatMap(({ characteristics }) => characteristics)
+      .filter((characteristic) => (characteristic.UUID !== Characteristic.StreamingStatus.UUID) && characteristic.props.perms.includes("pr" as never));
+
+    assert.ok(readable.length, "the fixture carries characteristics HAP serves");
+
+    for(const characteristic of readable) {
+
+      // eslint-disable-next-line no-await-in-loop -- Each read is its own assertion.
+      await assert.doesNotReject(triggerGet(characteristic), characteristic.displayName + " stays HAP's while the camera is unclaimed");
+    }
+
+    assert.equal(legacyReads, 1, "HAP's own getter still answers its read, undisplaced");
+
+    let legacyWrites = 0;
+
+    setupEndpoints.on("set", (_value, callback) => {
+
+      legacyWrites++;
+      callback(null);
+    });
+
+    await assert.doesNotReject(triggerSet(setupEndpoints, ""), "HAP's own write listener takes the write while the camera is unclaimed");
+
+    assert.equal(legacyWrites, 1, "undisplaced");
+  });
+
+  // The global Device option decides whether a controller logs in, and has no say over the sweep: a restored accessory no owner will ever claim refuses, and stays
+  // registered, so turning the plugin back on finds it where the user left it.
+  test("a globally disabled plugin's restored accessories refuse and stay registered", async (t) => {
+
+    const { api, platform } = buildPlatform(["Disable.Device"], [{ address: "10.0.0.1", password: "password", username: "username" }]);
+    const [controller] = configuredControllers(platform);
+    const accessory = makeTestAccessory("Restored");
+    const on = accessory.addService(new Service.Switch("Restored Switch")).getCharacteristic(Characteristic.On);
+
+    t.after(() => void api.emit(APIEvent.SHUTDOWN));
+
+    platform.configureAccessory(accessory);
+
+    assert.ok(controller, "the entry carries an address and credentials, so a controller is constructed for it");
+
+    await controller.login();
+
+    await assert.rejects(triggerGet(on), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "the restored accessory refuses");
+    assert.ok(platform.accessories.includes(accessory), "and stays registered");
   });
 });

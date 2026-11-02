@@ -330,8 +330,8 @@ describe("real ProtectLight construction and observer behavior", () => {
 
       assert.ok(set, "the light registered a /light SET subscription");
 
-      // The body's getService(Lightbulb)?.setCharacteristic(On, value === "true") fires the On onSet, which writes through device.update({ lightOnSettings: {
-      // isLedForceOn } }). setCharacteristic is fire-and-forget, so settle past each onSet before asserting. The fixture holds the light on, so the row commands off
+      // The body runs the On set handler's body, which writes through device.update({ lightOnSettings: { isLedForceOn } }). The route never waits on it, so settle past
+      // each command before asserting. The fixture holds the light on, so the row commands off
       // first...a command path that still published the requested state would record a "false" no observer made. The "true" command that follows holds the write
       // of the force-on state itself. The topic follows the controller's reported change, and no change is pushed, so nothing publishes.
       await mqtt.invokeSet(lightConfig.mac + "/light/set", "false");
@@ -391,7 +391,7 @@ describe("real ProtectLight construction and observer behavior", () => {
 
       assert.ok(set, "the light registered a /light/brightness SET subscription");
 
-      // The body parses "75", passes the gate, and setCharacteristic(Brightness, 75) -> the Brightness onSet -> brightnessToLedLevel(75) = Math.round(75/20 + 1) = 5 ->
+      // The body parses "75", passes the gate, and runs the Brightness set handler's body -> brightnessToLedLevel(75) = Math.round(75/20 + 1) = 5 ->
       // device.update({ lightDeviceSettings: { ledLevel: 5 } }), then schedules the deferred reflect. The 75 -> 80 round-trip is the granularity contract, and the
       // fixture holds level 4, so the controller's confirmation genuinely moves the topic.
       await mqtt.invokeSet(lightConfig.mac + "/light/brightness/set", "75");

@@ -821,7 +821,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     // Configure the lock current and target state characteristics.
-    service.getCharacteristic(this.hap.Characteristic.LockTargetState).onSet(async (value: CharacteristicValue) => {
+    this.answerHeld(service, this.hap.Characteristic.LockCurrentState);
+    this.answerHeld(service, this.hap.Characteristic.LockTargetState);
+
+    service.getCharacteristic(this.hap.Characteristic.LockTargetState).onSet(this.answering(async (value: CharacteristicValue) => {
 
       // Protect only supports unlocking. If the user taps lock while we're in the momentary unlock window, revert the optimistic SECURED target back to UNSECURED. We
       // guard on the auto re-lock timer being pending so we don't stomp a SECURED state that our own timer just wrote...the registry deletes the keyed entry before
@@ -868,7 +871,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         service.updateCharacteristic(this.hap.Characteristic.LockTargetState, this.hap.Characteristic.LockTargetState.SECURED);
         service.updateCharacteristic(this.hap.Characteristic.LockCurrentState, this.hap.Characteristic.LockCurrentState.SECURED);
       }, 2000);
-    });
+    }));
 
     // Establish the SECURED resting state on creation (a fresh adoption or a live self-heal, where no lock existed) or on the construct path (a Homebridge restart
     // restoring a cached lock, whose runtime SECURED/UNSECURED state HAP does not serialize). A LIVE reconcile over an existing lock deliberately never re-stamps the
@@ -984,6 +987,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
         sensorsCreated++;
       }
+
+      // The sensor's state is only ever written, by the delivery path, and a sensor restored from the accessory cache carries no handler, so every pass binds one.
+      this.answerHeld(service, this.hap.Characteristic.ContactSensorState);
     };
 
     let enabledContactSensors = [];
@@ -1107,7 +1113,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Retrieve the current tamper status when requested. We bind on every pass that keeps the characteristic, not only the pass that attaches it: a characteristic
     // restored from the accessory cache carries no handler and answers kept on the first pass after a restart, and binding again replaces the handler rather than
     // stacking a second one.
-    service.getCharacteristic(this.hap.Characteristic.StatusTampered).onGet(() => this.isTampered);
+    service.getCharacteristic(this.hap.Characteristic.StatusTampered).onGet(this.answering(() => this.isTampered));
 
     return true;
   }
@@ -1129,14 +1135,14 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     // Configure the switch.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.accessory.context.doorbellMuted ?? false);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => this.accessory.context.doorbellMuted ?? false));
 
-    service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering((value: CharacteristicValue) => {
 
       this.platform.persistence.persist(this.accessory, { doorbellMuted: !!value });
 
       this.log.info("Doorbell chime %s.", value ? "disabled" : "enabled");
-    });
+    }));
 
     // Initialize the switch.
     service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.doorbellMuted ?? false);
@@ -1177,9 +1183,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     // Trigger the doorbell.
-    triggerService.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.isRinging);
+    triggerService.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => this.isRinging));
 
-    triggerService.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
+    triggerService.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering((value: CharacteristicValue) => {
 
       if(value) {
 
@@ -1195,7 +1201,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
           this.reflectAfterSet(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, true));
         }
       }
-    });
+    }));
 
     // Initialize the switch.
     triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
@@ -1236,8 +1242,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     if((statusLightTransition === "attached") || (statusLightTransition === "kept")) {
 
       // Turn the status light on or off.
-      service.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator).onGet(() => this.statusLed);
-      service.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator).onSet(async (value: CharacteristicValue) => this.setStatusLed(!!value));
+      service.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator).onGet(this.answering(() => this.statusLed));
+      service.getCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator).onSet(
+        this.answering(async (value: CharacteristicValue) => this.setStatusLed(!!value)));
 
       // Initialize the status light state.
       service.updateCharacteristic(this.hap.Characteristic.CameraOperatingModeIndicator, this.statusLed);
@@ -1248,8 +1255,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     if((nightVisionTransition === "attached") || (nightVisionTransition === "kept")) {
 
-      service.getCharacteristic(this.hap.Characteristic.NightVision).onGet(() => this.nightVision);
-      service.getCharacteristic(this.hap.Characteristic.NightVision).onSet(async (value: CharacteristicValue) => {
+      service.getCharacteristic(this.hap.Characteristic.NightVision).onGet(this.answering(() => this.nightVision));
+      service.getCharacteristic(this.hap.Characteristic.NightVision).onSet(this.answering(async (value: CharacteristicValue) => {
 
         const command = nightVisionToggleCommand(value === true);
 
@@ -1260,7 +1267,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
           return;
         }
-      });
+      }));
 
       // Initialize the night vision state.
       service.updateCharacteristic(this.hap.Characteristic.NightVision, this.nightVision);
@@ -1676,6 +1683,13 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.configureCameraDetails();
   }
 
+  // Drive this camera's flashlight, which a streaming session reaches through the host contract. Only a package camera has one, so the camera does nothing here and the
+  // package camera overrides this.
+  public driveFlashlight(_on: boolean): void {
+
+    // Deliberately empty: a camera carries no flashlight.
+  }
+
   /* Compose HomeKit Secure Video support onto this camera when it becomes eligible while the plugin runs - a reconcileCapabilities leaf, so a camera Protect starts
    * exposing a motion sensor for, as its controller reports it, gains HKSV without a restart. It runs first in the chokepoint, ahead of the tamper leaf, because the
    * tamper leaf and the controller each read the motion sensor it creates: the tamper leaf dresses that sensor with StatusTampered in the same pass, and the
@@ -1733,9 +1747,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     // Activate or deactivate HKSV recording.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !this.accessory.context.hksvRecordingDisabled);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => !this.accessory.context.hksvRecordingDisabled));
 
-    service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering((value: CharacteristicValue) => {
 
       if(this.accessory.context.hksvRecordingDisabled !== !value) {
 
@@ -1743,7 +1757,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       }
 
       this.platform.persistence.persist(this.accessory, { hksvRecordingDisabled: !value });
-    });
+    }));
 
     // Initialize the switch.
     service.updateCharacteristic(this.hap.Characteristic.On, !(this.accessory.context.hksvRecordingDisabled ?? false));
@@ -1774,9 +1788,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     // Adjust night vision capabilities.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.nightVision);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => this.nightVision));
 
-    service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering(async (value: CharacteristicValue) => {
 
       // A command targeting a camera whose controller record has vanished (an unadopt lingering in the removal grace) cannot be fulfilled, so we no-op gracefully rather
       // than throwing on the live-config read below.
@@ -1804,12 +1818,12 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
         return;
       }
-    });
+    }));
 
     // Adjust the sensitivity of night vision.
-    service.getCharacteristic(this.hap.Characteristic.Brightness).onGet(() => this.nightVisionBrightness);
+    service.getCharacteristic(this.hap.Characteristic.Brightness).onGet(this.answering(() => this.nightVisionBrightness));
 
-    service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(this.answering(async (value: CharacteristicValue) => {
 
       // A command targeting a camera whose controller record has vanished cannot be fulfilled, so we no-op gracefully rather than throwing on the live-config read below.
       if(!this.recordPresent) {
@@ -1829,7 +1843,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       // Make sure we properly reflect what brightness we're actually at, given the differences in setting granularity between Protect and HomeKit.
       this.reflectAfterSet(() => service.updateCharacteristic(this.hap.Characteristic.Brightness, reflectedLevel));
-    });
+    }));
 
     // Establish the dimmer at startup (a fresh adoption or create, or a restart's construct) only - never on a live reconcile re-run. The camera.ispSettings observer
     // already maintains the displayed value, and re-pushing the device's reading during an in-flight night-vision command would momentarily stomp the user's optimistic
@@ -1868,9 +1882,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       }
 
       // Activate or deactivate the appropriate recording mode on the Protect controller.
-      service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.recordingMode === ufpRecordingSetting);
+      service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => this.recordingMode === ufpRecordingSetting));
 
-      service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
+      service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering(async (value: CharacteristicValue) => {
 
         // A command targeting a camera whose controller record has vanished cannot be fulfilled, so we no-op gracefully rather than throwing on the live-config reads
         // below.
@@ -1912,7 +1926,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
         // Inform the user, and we're done.
         this.log.info("UniFi Protect recording mode set to %s.", ufpRecordingSetting);
-      });
+      }));
 
       // Initialize the recording switch state.
       service.updateCharacteristic(this.hap.Characteristic.On, this.recordingMode === ufpRecordingSetting);

@@ -8,7 +8,7 @@ import { AudioRecordingCodecType, AudioStreamingCodecType, AudioStreamingSampler
   FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites, StreamRequestTypes,
   VideoCodecType, formatBps, formatErrorMessage, formatUrlHost, guardedDispatch, isHbpuAbortReason, mqttTopic } from "homebridge-plugin-utils";
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
-  Service, SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
+  SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { Clock, HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
 import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_PROBESIZE_OVERRIDE_MAX,
@@ -41,7 +41,7 @@ interface OngoingSessionEntry {
   rtpDemuxer: Nullable<RtpDemuxer>;
   rtpPortReservations: PortReservation[];
   talkback?: TalkbackSession;
-  toggleLight?: Service;
+  toggleLight?: boolean;
 }
 
 interface SessionInfo {
@@ -71,10 +71,10 @@ interface SessionInfo {
   // RTP port reservations.
   rtpPortReservations: PortReservation[];
 
-  // The package-camera flashlight this session lit, if any, recorded so the single prepared-session disposal path (and a normal stop) can turn it back off. It is set at
+  // Whether this session lit the package-camera flashlight, recorded so the single prepared-session disposal path (and a normal stop) can turn it back off. It is set at
   // the toggle site in startStream, after the session survives channel selection but before the establishment wait - the one window a failed start could otherwise leave
   // it latched on with no ongoing entry to reach it.
-  toggleLight?: Service;
+  toggleLight?: boolean;
 
   // This should be saved if multiple suites are supported.
   videoCryptoSuite: SRTPCryptoSuites;
@@ -778,7 +778,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       videoCodec: this.protectCamera.ufp.videoCodec
     });
 
-    // If we are streaming the package camera, and it's dark outside, activate the flashlight on the camera. We record the lit service on the session itself so the single
+    // If we are streaming the package camera, and it's dark outside, activate the flashlight on the camera. We record that on the session itself so the single
     // prepared-session disposal path can turn it back off on any failed start, and stopStream can turn it off on a normal stop - the session field is the one record of
     // the toggle.
     if(isPackageCameraContext(this.protectCamera.accessory.context)) {
@@ -788,9 +788,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       // If we're already on, we assume the user's activated it and we'll leave it untouched. Otherwise, we'll toggle it on and off when we begin and end streaming.
       if(this.protectCamera.ufp.isDark && flashlightService && !flashlightService.getCharacteristic(this.hap.Characteristic.On).value) {
 
-        // We explicitly want to call the set handler for the flashlight.
-        flashlightService.setCharacteristic(this.hap.Characteristic.On, true);
-        sessionInfo.toggleLight = flashlightService;
+        // The camera runs the flashlight's own set body, past the refusal a HomeKit write meets.
+        this.protectCamera.driveFlashlight(true);
+        sessionInfo.toggleLight = true;
       }
     }
 
@@ -1352,8 +1352,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
     sessionInfo.abortController.abort(new HbpuAbortError("shutdown"));
 
-    // Turn the package-camera flashlight back off if this session lit it. We explicitly want to call the set handler for the flashlight.
-    sessionInfo.toggleLight?.setCharacteristic(this.hap.Characteristic.On, false);
+    // Turn the package-camera flashlight back off if this session lit it. The camera runs the flashlight's own set body, so a session that fails in an outage still does.
+    if(sessionInfo.toggleLight) {
+
+      this.protectCamera.driveFlashlight(false);
+    }
 
     // Release the port reservations. Disposal is a pure in-memory release that resolves on the same microtask (no I/O), so the fire-and-forget keeps this synchronous.
     for(const reservation of sessionInfo.rtpPortReservations) {
@@ -1384,9 +1387,12 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         // double error).
         void ongoingSession.talkback?.[Symbol.asyncDispose]();
 
-        // Turn off the flashlight on package cameras, if enabled. This HomeKit-state side effect cannot fold into the abort, so it stays explicit. We explicitly want
-        // to call the set handler for the flashlight.
-        ongoingSession.toggleLight?.setCharacteristic(this.hap.Characteristic.On, false);
+        // Turn off the flashlight on package cameras, if enabled. This HomeKit-state side effect cannot fold into the abort, so it stays explicit. The camera runs the
+        // flashlight's own set body, so a session that stops in an outage still does.
+        if(ongoingSession.toggleLight) {
+
+          this.protectCamera.driveFlashlight(false);
+        }
 
         // Inform the user.
         this.log.info("Stopped video streaming session.");

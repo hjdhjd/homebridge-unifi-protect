@@ -153,7 +153,7 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
     this.timers.setInterval("ambientLight", () => void updateAmbientLight(), 60 * 1000);
 
     // Retrieve the active state when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isReachable);
+    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(this.answering(() => this.isReachable));
 
     // Initialize the sensor's reading. We adopt only a genuine reading: a failed read (-1 - the camera unreachable, or the lux capability transiently withdrawn during a
     // controller reconnect) leaves the last-known value in place rather than stamping the HomeKit display to the floor, mirroring the 60-second poll's skip-on-(-1) guard
@@ -176,7 +176,7 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
     }
 
     // Retrieve the current light level when requested.
-    service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel).onGet(() => this.#ambientLight);
+    service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel).onGet(this.answering(() => this.#ambientLight));
 
     service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.#ambientLight);
     service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);

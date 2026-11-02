@@ -2,12 +2,12 @@
  *
  * camera-package.ts: Package camera device class for UniFi Protect.
  */
+import type { CharacteristicValue, Service } from "homebridge";
 import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../../types.ts";
 import { buildAdvertisedResolutions, buildChannelProfile, formatResolution, isPackageChannel } from "../../media/resolution.ts";
 import { describeDevice, describeDeviceModel } from "../device-descriptor.ts";
 import type { AdvertisedStreams } from "./camera.ts";
 import type { ChannelProfile } from "../../media/resolution.ts";
-import type { CharacteristicValue } from "homebridge";
 import type { Nullable } from "homebridge-plugin-utils";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectPersistedContextState } from "../../types.ts";
@@ -59,6 +59,13 @@ export class ProtectCameraPackage extends ProtectCamera {
     };
 
     this.observeState({ key: "camera.packageChannel", selector: packageChannelShape, title: "video streaming" }, () => void this.acquireStreaming().reconcile());
+  }
+
+  // The package camera reads its parent's record, which stays standing through the package camera's own detach, so a pending detach is what tells it the removal grace
+  // is running, where every other departing device's record says so itself.
+  public override get isAvailable(): boolean {
+
+    return super.isAvailable && !this.nvr.removals.isPending(this.accessory.UUID);
   }
 
   // The package camera's HomeKit name is the parent's plus the display suffix, single-sourced from the shared live parent projection and the parent's custom name,
@@ -218,109 +225,125 @@ export class ProtectCameraPackage extends ProtectCamera {
     }
 
     // Activate or deactivate the package camera flashlight.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.flashlightState);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => this.flashlightState));
 
-    service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
-
-      // A command targeting the package camera whose shared controller record has vanished cannot be fulfilled, so we no-op gracefully rather than throwing on the
-      // live-config read below.
-      if(!this.recordPresent) {
-
-        return;
-      }
-
-      // Stop heartbeating the flashlight to allow it to turn off. Bump the intent generation so any in-flight activation's deferred continuations see themselves
-      // superseded and bail; the off path defers nothing of its own, so it does not capture the generation it opened.
-      if(!value) {
-
-        this.timers.clear("flashlight");
-        this.flashlightState = false;
-        this.#flashlightGeneration++;
-
-        return;
-      }
-
-      // Open a new activation intent and capture its generation. Every deferred continuation below compares against this captured value, so a superseding off or a newer
-      // on that bumps the counter makes this activation's continuations no-op.
-      const generation = ++this.#flashlightGeneration;
-
-      // Utility function to activate the package camera's flashlight.
-      const activateFlashlight = async (): Promise<boolean> => {
-
-        // The flashlight is momentary, so this heartbeat re-issues the pulse on a timer. We assume the pulse lands and unset only if every attempt fails.
-        // turnOnFlashlight throws on a failed pulse (a non-2xx, or an unreachable controller), so a failure drives a re-attempt directly - reachability is the
-        // command's to report, not a second check here. We retry the pulse a bounded number of times on a fixed cadence, swallow a persistent failure to a
-        // reflected-off switch (the timer re-issues), and bind this.signal so a teardown aborts an in-flight backoff and pulse.
-        let lit = true;
-
-        try {
-
-          await retry((signal) => this.device.turnOnFlashlight({ signal }), { attempts: 3, backoff: () => 1000, clock: this.platform.clock, signal: this.signal });
-        } catch {
-
-          lit = false;
-        }
-
-        // A superseding off or newer on landed while the retry was in flight, so this activation is stale: latch nothing, push nothing, and leave the timer to whichever
-        // action superseded us.
-        if(generation !== this.#flashlightGeneration) {
-
-          return false;
-        }
-
-        this.flashlightState = lit;
-
-        // Update the flashlight switch.
-        service.updateCharacteristic(this.hap.Characteristic.On, this.flashlightState);
-
-        // Stop if we've been told to turn off.
-        if(!this.flashlightState) {
-
-          this.timers.clear("flashlight");
-        }
-
-        return this.flashlightState;
-      };
-
-      // Clear out any interval we have.
-      this.timers.clear("flashlight");
-
-      // If it's not dark, the flashlight will not engage - reset the switch to off and we're done.
-      if(!this.ufp.isDark) {
-
-        // The captured-generation re-check keeps a legitimate later activation (isDark flipped true before the reflect fires) from being stomped off by this stale reset.
-        this.reflectAfterSet(() => {
-
-          if(generation === this.#flashlightGeneration) {
-
-            service.updateCharacteristic(this.hap.Characteristic.On, false);
-          }
-        });
-
-        return;
-      }
-
-      // Activate the flashlight.
-      await activateFlashlight();
-
-      // A superseding off or newer on landed while the first activation was in flight, so this intent is stale: do not arm the heartbeat. Gate on the generation, not on
-      // activateFlashlight's return value - a failed FIRST activation of a still-current intent still arms the heartbeat by design (the retry's swallow-and-re-issue
-      // semantics), and only a superseded intent skips it.
-      if(generation !== this.#flashlightGeneration) {
-
-        return;
-      }
-
-      // Heartbeat the flashlight at regular intervals to keep it on. The controller exposes no off endpoint for this momentary command - the light
-      // self-extinguishes on its own roughly 25 seconds after the last activation - so a twenty-second cadence, matching Protect's own apps, keeps
-      // re-pulsing it with a five-second margin before that natural timeout.
-      this.timers.setInterval("flashlight", () => void activateFlashlight(), 20 * 1000);
-    });
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering(async (value: CharacteristicValue) => this.#setFlashlight(value)));
 
     // Initialize the flashlight to its resting off state. The flashlight is momentary, so it is always off when the package camera is set up.
     service.updateCharacteristic(this.hap.Characteristic.On, false);
 
     return true;
+  }
+
+  // The flashlight's service, where the feature option gives this package camera one.
+  get #flashlight(): Service | undefined {
+
+    return this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_PACKAGE_FLASHLIGHT);
+  }
+
+  // Turn the flashlight on or off, the one body HomeKit's write and a streaming session share.
+  async #setFlashlight(value: CharacteristicValue): Promise<void> {
+
+    // A command targeting the package camera whose shared controller record has vanished cannot be fulfilled, so we no-op gracefully rather than throwing on the
+    // live-config read below.
+    if(!this.recordPresent) {
+
+      return;
+    }
+
+    // Stop heartbeating the flashlight to allow it to turn off. Bump the intent generation so any in-flight activation's deferred continuations see themselves
+    // superseded and bail; the off path defers nothing of its own, so it does not capture the generation it opened.
+    if(!value) {
+
+      this.timers.clear("flashlight");
+      this.flashlightState = false;
+      this.#flashlightGeneration++;
+
+      return;
+    }
+
+    // Open a new activation intent and capture its generation. Every deferred continuation below compares against this captured value, so a superseding off or a newer
+    // on that bumps the counter makes this activation's continuations no-op.
+    const generation = ++this.#flashlightGeneration;
+
+    // Utility function to activate the package camera's flashlight.
+    const activateFlashlight = async (): Promise<boolean> => {
+
+      // The flashlight is momentary, so this heartbeat re-issues the pulse on a timer. We assume the pulse lands and unset only if every attempt fails.
+      // turnOnFlashlight throws on a failed pulse (a non-2xx, or an unreachable controller), so a failure drives a re-attempt directly - reachability is the
+      // command's to report, not a second check here. We retry the pulse a bounded number of times on a fixed cadence, swallow a persistent failure to a
+      // reflected-off switch (the timer re-issues), and bind this.signal so a teardown aborts an in-flight backoff and pulse.
+      let lit = true;
+
+      try {
+
+        await retry((signal) => this.device.turnOnFlashlight({ signal }), { attempts: 3, backoff: () => 1000, clock: this.platform.clock, signal: this.signal });
+      } catch {
+
+        lit = false;
+      }
+
+      // A superseding off or newer on landed while the retry was in flight, so this activation is stale: latch nothing, push nothing, and leave the timer to whichever
+      // action superseded us.
+      if(generation !== this.#flashlightGeneration) {
+
+        return false;
+      }
+
+      this.flashlightState = lit;
+
+      // Update the flashlight switch.
+      this.#flashlight?.updateCharacteristic(this.hap.Characteristic.On, this.flashlightState);
+
+      // Stop if we've been told to turn off.
+      if(!this.flashlightState) {
+
+        this.timers.clear("flashlight");
+      }
+
+      return this.flashlightState;
+    };
+
+    // Clear out any interval we have.
+    this.timers.clear("flashlight");
+
+    // If it's not dark, the flashlight will not engage - reset the switch to off and we're done.
+    if(!this.ufp.isDark) {
+
+      // The captured-generation re-check keeps a legitimate later activation (isDark flipped true before the reflect fires) from being stomped off by this stale reset.
+      this.reflectAfterSet(() => {
+
+        if(generation === this.#flashlightGeneration) {
+
+          this.#flashlight?.updateCharacteristic(this.hap.Characteristic.On, false);
+        }
+      });
+
+      return;
+    }
+
+    // Activate the flashlight.
+    await activateFlashlight();
+
+    // A superseding off or newer on landed while the first activation was in flight, so this intent is stale: do not arm the heartbeat. Gate on the generation, not on
+    // activateFlashlight's return value - a failed FIRST activation of a still-current intent still arms the heartbeat by design (the retry's swallow-and-re-issue
+    // semantics), and only a superseded intent skips it.
+    if(generation !== this.#flashlightGeneration) {
+
+      return;
+    }
+
+    // Heartbeat the flashlight at regular intervals to keep it on. The controller exposes no off endpoint for this momentary command - the light
+    // self-extinguishes on its own roughly 25 seconds after the last activation - so a twenty-second cadence, matching Protect's own apps, keeps
+    // re-pulsing it with a five-second margin before that natural timeout.
+    this.timers.setInterval("flashlight", () => void activateFlashlight(), 20 * 1000);
+  }
+
+  // Turn the flashlight on or off for a streaming session. A session ends whatever HomeKit is being told, and it has to darken the flashlight and clear the heartbeat
+  // when it does, so this runs the set body directly rather than through the refusing handler.
+  public override driveFlashlight(on: boolean): void {
+
+    void this.driveSet({ characteristic: this.hap.Characteristic.On, service: this.#flashlight, set: (value) => this.#setFlashlight(value), value: on });
   }
 
   // The package camera's public identity API: the unique device identifier derived from a parent doorbell's MAC address. The derivation itself lives in the shared types

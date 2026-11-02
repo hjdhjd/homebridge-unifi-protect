@@ -134,6 +134,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     }
 
     this.isConfigured = true;
+    this.platform.claimAccessory(this.accessory, this);
   }
 
   // Update accessory services and characteristics. Private: every caller is this class - configure()'s initial pass, which binds the handlers, and this owner's own
@@ -178,7 +179,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     if(!initialized) {
 
       // Retrieve the current temperature when requested.
-      service.getCharacteristic(this.hap.Characteristic.CurrentTemperature).onGet(() => this.nvr.ufp.systemInfo.cpu.temperature);
+      service.getCharacteristic(this.hap.Characteristic.CurrentTemperature).onGet(this.answering(() => this.nvr.ufp.systemInfo.cpu.temperature));
     }
 
     // Update the sensor.

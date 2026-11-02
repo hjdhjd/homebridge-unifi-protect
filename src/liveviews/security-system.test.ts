@@ -27,8 +27,9 @@
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import type { TestLogEntry, TestMqttClient } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
-import { loggedAt, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
+import { hapStatus, loggedAt, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import { makeNvrConfig, makeTestNvr, restoreAccessories } from "../nvr/testing.helpers.ts";
+import { HAPStatus } from "homebridge-plugin-utils";
 import type { ProtectDevices } from "../types.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectNvrLiveviewConfig } from "unifi-protect";
@@ -139,7 +140,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
   test("construction materializes the SecuritySystem service, initializes current/target from the saved state, and writes the controller-branded info", async () => {
 
-    const built = buildSecuritySystem();
+    const built = buildSecuritySystem({ liveviews: [makeLiveviewConfig({ id: "lv-off", name: "Protect-Off" })] });
 
     activeController = built.controller;
 
@@ -194,7 +195,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
   test("with the alarm feature enabled the alarm Switch exists and logs; without it the Switch is absent (the vacuity-gated pair)", async () => {
 
-    const enabled = buildSecuritySystem({ userOptions: ["Enable.SecuritySystem.Alarm"] });
+    const enabled = buildSecuritySystem({ liveviews: [makeLiveviewConfig({ id: "lv-off", name: "Protect-Off" })], userOptions: ["Enable.SecuritySystem.Alarm"] });
 
     activeController = enabled.controller;
 
@@ -395,6 +396,106 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.ok(loggedAt(built.logEntries, "error", "Unable to process MQTT security system setting: garbage."), "a bad MQTT value logs the error");
   });
 
+  // The security system has no record to say it is leaving, so the liveviews that call for it are what turn its verdict, whatever the removal gate holds. The removal is
+  // pending through the delay, a controller not yet stable schedules none, and a flap drops the one the gate held, so the verdict reads the same with or without one.
+  // MQTT keeps answering for the accessory that stays, and the verdict is read on each call, so a liveview that returns clears the refusal with nothing rebound.
+  for(const row of [
+    { flapAfter: false, flapBefore: false, pending: true, title: "through the removal delay" },
+    { flapAfter: false, flapBefore: true, pending: false, title: "with the controller not yet stable" },
+    { flapAfter: true, flapBefore: false, pending: false, title: "after a flap dropped the removal" }
+  ]) {
+
+    test("with its calling liveview deleted a read and a write refuse " + row.title + ", its MQTT get and set answer, and its return answers each", async () => {
+
+      const away = makeLiveviewConfig({ cameras: ["camera-away"], id: "lv-away", name: "Protect-Away" });
+      const ordinary = makeLiveviewConfig({ id: "lv-ordinary", name: "Front Door" });
+      const built = buildSecuritySystem({ liveviews: [ away, ordinary ] });
+      const flap = (): void => {
+
+        built.nvr.pushControllerStability(false);
+        built.nvr.pushControllerStability(true);
+      };
+
+      activeController = built.controller;
+
+      await settle();
+
+      const current = built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState);
+      const target = targetStateOf(built.accessory);
+
+      assert.ok(current, "the SecuritySystem service exists");
+      assert.equal(built.owner.isAvailable, true, "with a liveview calling for it, the security system answers");
+
+      if(row.flapBefore) {
+
+        flap();
+      }
+
+      built.store.pushLiveviews([ordinary]);
+      built.nvr.removals.schedule({ accessory: built.accessory, remove: () => undefined, stillGone: () => true });
+
+      if(row.flapAfter) {
+
+        assert.equal(built.nvr.removals.isPending(built.accessory.UUID), true, "the gate held the removal ahead of the flap");
+
+        flap();
+      }
+
+      assert.equal(built.nvr.removals.isPending(built.accessory.UUID), row.pending, "the removal gate holds what this posture leaves it");
+      assert.equal(built.owner.isAvailable, false, "and the deleted liveview turns the verdict");
+
+      await assert.rejects(triggerGet(current), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "a read refuses");
+      await assert.rejects(triggerSet(target, TargetState.AWAY_ARM), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "and so does a write");
+
+      assert.equal(await built.mqtt.invokeGet(CONTROLLER_MAC + "/securitysystem/get"), "Off", "the MQTT get answers");
+
+      await built.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "away");
+
+      assert.equal(current.value, CurrentState.AWAY_ARM, "and the MQTT set applies its scene");
+      assert.equal(await built.mqtt.invokeGet(CONTROLLER_MAC + "/securitysystem/get"), "Away", "which the get then reads");
+
+      built.store.pushLiveviews([ away, ordinary ]);
+
+      assert.equal(built.owner.isAvailable, true, "the returning liveview clears the verdict");
+
+      await assert.doesNotReject(triggerGet(current), "and a read answers again");
+      await assert.doesNotReject(triggerSet(target, TargetState.DISARM), "and so does a write");
+    });
+  }
+
+  // A Disarm sweeps motion detection off every camera whenever any liveview stands, so with an ordinary liveview standing the refusal is all that stops a tap on a
+  // security system that is leaving from turning motion detection off, with nothing left in HomeKit to turn it back on. The same tap once the liveview returns does
+  // sweep, so this reads the refusal rather than a tap with nothing to do.
+  test("a Disarm with the calling liveview deleted and an ordinary one standing refuses, and leaves each camera's motion detection as it was", async () => {
+
+    const away = makeLiveviewConfig({ cameras: ["camera-away"], id: "lv-away", name: "Protect-Away" });
+    const ordinary = makeLiveviewConfig({ id: "lv-ordinary", name: "Front Door" });
+    const built = buildSecuritySystem({ liveviews: [ away, ordinary ] });
+
+    activeController = built.controller;
+
+    const member = seedMember(built.nvr, { detectMotion: true, id: "camera-away", mac: "74ACB9000102", name: "Away Camera" });
+    const other = seedMember(built.nvr, { detectMotion: true, id: "camera-other", mac: "74ACB9000103", name: "Other Camera" });
+    const target = targetStateOf(built.accessory);
+
+    await settle();
+
+    built.store.pushLiveviews([ordinary]);
+
+    await assert.rejects(triggerSet(target, TargetState.DISARM), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "the Disarm refuses");
+
+    assert.equal(member.accessory.context.detectMotion, true, "the member camera keeps its motion detection");
+    assert.equal(other.accessory.context.detectMotion, true, "and so does the camera beside it");
+    assert.equal(member.motionSwitch.getCharacteristic(Characteristic.On).value, true, "and the member's motion switch stays on");
+
+    built.store.pushLiveviews([ away, ordinary ]);
+
+    await triggerSet(target, TargetState.DISARM);
+
+    assert.equal(member.accessory.context.detectMotion, false, "with the liveview back the same Disarm sweeps the member camera");
+    assert.equal(other.accessory.context.detectMotion, false, "and the camera beside it");
+  });
+
   test("the securitysystem MQTT SET refuses AlarmOn and AlarmOff with SecuritySystem.Alarm off, and drives the alarm with it on", async () => {
 
     // The alarm state belongs to the SecuritySystem.Alarm feature. With it off an alarm value is refused and logged as an unknown value is, driving no state and
@@ -537,6 +638,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.equal(sensor.accessory.context.detectMotion, true, "the sensor's detectMotion survived the disarm too - its motion delivery is never latched off");
   });
 
+  // A HomeKit write refuses with no liveviews standing, since none calls for the security system, so the MQTT set is the path that reaches the early return.
   test("setSecurityState early-returns with no liveviews configured (no state change, no publish)", async () => {
 
     const built = buildSecuritySystem({ liveviews: [] });
@@ -547,8 +649,11 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     const publishedBefore = built.mqtt.published.length;
 
+    await assert.rejects(triggerSet(targetStateOf(built.accessory), TargetState.AWAY_ARM), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE),
+      "a HomeKit write refuses with no liveviews standing");
+
     // With no liveviews the setSecurityState early-returns before any state write or publish.
-    await triggerSet(targetStateOf(built.accessory), TargetState.AWAY_ARM);
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "away");
 
     assert.equal(built.accessory.getService(Service.SecuritySystem)?.getCharacteristic(CurrentState).value, CurrentState.DISARMED,
       "with no liveviews CurrentState stays Off - the early return fired");
@@ -599,7 +704,8 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
 
     accessory.context.securityState = CurrentState.STAY_ARM;
 
-    const built = buildSecuritySystem({ accessory, userOptions: ["Enable.SecuritySystem.Alarm"] });
+    const built = buildSecuritySystem({ accessory, liveviews: [makeLiveviewConfig({ id: "lv-off", name: "Protect-Off" })],
+      userOptions: ["Enable.SecuritySystem.Alarm"] });
 
     activeController = built.controller;
 

@@ -263,7 +263,9 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       this.messageSwitches.set(switchIndex, { duration: duration, service: service, state: false, text: entry.text, type: entry.type });
 
       // Configure the message switch.
-      service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
+      this.answerHeld(service, this.hap.Characteristic.On);
+
+      service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering(async (value: CharacteristicValue) => {
 
         // Lookup the message switch.
         const messageSwitch = this.messageSwitches.get(switchIndex);
@@ -277,7 +279,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
         // Set the message and sync our states.
         await this.setMessage((value === true) ? { duration: messageSwitch.duration, text: messageSwitch.text, type: messageSwitch.type } :
           { resetAt: this.platform.clock.now() });
-      });
+      }));
     }
 
     // Synchronize the message switch state with the controller's current LCD message, arming the expiry timer if the current message is still active. On a restart after
@@ -476,13 +478,13 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
       }
 
       // Get the current status of the physical chime mode on the doorbell.
-      service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
+      service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => {
 
         return this.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType);
-      });
+      }));
 
       // Activate the appropriate physical chime mode on the doorbell.
-      service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
+      service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering(async (value: CharacteristicValue) => {
 
         // We only want to do something if we're being activated. Turning off the switch would really be an undefined state given that there are three different settings
         // one can choose from. Instead, we do nothing and leave it to the user to choose what state they really want to set.
@@ -516,7 +518,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
         // Inform the user, and we're done.
         this.log.info("Physical chime type set to %s.", chimeSetting);
-      });
+      }));
 
       // Initialize the physical chime switch state.
       service.updateCharacteristic(this.hap.Characteristic.On, this.chimeDuration === this.getPhysicalChimeDuration(physicalChimeType));
@@ -545,24 +547,15 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     }
 
     // Turn the chime on or off.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.chimeVolume > 0);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => this.chimeVolume > 0));
 
-    service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
-
-      // We really only want to act when the volume is zero. Otherwise, it's handled by the brightness event.
-      if(value) {
-
-        return;
-      }
-
-      await this.setChimeVolume(0);
-    });
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering(async (value: CharacteristicValue) => this.setChimeVolumeOn(value)));
 
     // Return the volume level of the chime.
-    service.getCharacteristic(this.hap.Characteristic.Brightness).onGet(() => this.chimeVolume);
+    service.getCharacteristic(this.hap.Characteristic.Brightness).onGet(this.answering(() => this.chimeVolume));
 
     // Adjust the volume of the chime by adjusting brightness of the light.
-    service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(async (value: CharacteristicValue) => this.setChimeVolume(value as number));
+    service.getCharacteristic(this.hap.Characteristic.Brightness).onSet(this.answering(async (value: CharacteristicValue) => this.setChimeVolume(value as number)));
 
     // Initialize the chime.
     service.updateCharacteristic(this.hap.Characteristic.On, this.chimeVolume > 0);
@@ -589,6 +582,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
 
     // Initialize the authentication contact sensor.
     service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
+    this.answerHeld(service, this.hap.Characteristic.ContactSensorState);
 
     this.log.info("Enabling Protect authentication contact sensor.");
 
@@ -652,11 +646,11 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
         return;
       }
 
-      // We explicitly want to trigger our set event handler, which will complete this action.
-      this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)
-        ?.setCharacteristic(this.hap.Characteristic.Brightness, volume);
-      this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME)
-        ?.setCharacteristic(this.hap.Characteristic.On, volume > 0);
+      // The dimmer's own set bodies complete this action, and they run directly so a set reaches the chime whatever HomeKit is being told. Each begins in this turn.
+      const service = this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME);
+
+      void this.driveSet({ characteristic: this.hap.Characteristic.Brightness, service, set: (level) => this.setChimeVolume(level as number), value: volume });
+      void this.driveSet({ characteristic: this.hap.Characteristic.On, service, set: (on) => this.setChimeVolumeOn(on), value: volume > 0 });
     });
   }
 
@@ -956,6 +950,18 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
   private get chimeVolume(): number {
 
     return chimeVolumeFor(this.nvr.client.state.selectors.chime.all(this.nvr.client.state.snapshot()), this.#device.id);
+  }
+
+  // Turn the chime volume dimmer on or off, the one body HomeKit's write and the MQTT set share. We really only want to act when the volume is zero. Otherwise, it's
+  // handled by the brightness event.
+  private async setChimeVolumeOn(value: CharacteristicValue): Promise<void> {
+
+    if(value) {
+
+      return;
+    }
+
+    await this.setChimeVolume(0);
   }
 
   private async setChimeVolume(value: number): Promise<void> {

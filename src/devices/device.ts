@@ -10,6 +10,7 @@ import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionM
 import { acquireService, getServiceName, mqttGetTopic, mqttSetTopic, ownedName, presenceChanged, resolveNameOverride, sanitizeName, setAccessoryName, setServiceName,
   updateServices, validService, watchServiceName } from "homebridge-plugin-utils";
 import { describeDevice, deviceDisplayNaming } from "./device-descriptor.ts";
+import { isDeviceAdopted, isDeviceOnline } from "unifi-protect";
 import { legacyFamilyForOption, resolveLegacySelection } from "../options-legacy.ts";
 import type { DeviceDisplayNaming } from "./device-descriptor.ts";
 import type { LegacyFamily } from "../options-legacy.ts";
@@ -20,7 +21,6 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { channels } from "../diagnostics.ts";
-import { isDeviceOnline } from "unifi-protect";
 import { mqttTopics } from "../mqtt.ts";
 import { smartDetectLabel } from "../options.ts";
 
@@ -92,6 +92,9 @@ export interface ProtectDeviceContext {
 
   // The per-device resolved feature-hint bag.
   readonly hints: ProtectHints;
+
+  // Whether the plugin can vouch for this device's values, the verdict No Response reads.
+  readonly isAvailable: boolean;
 
   // The composite reachability/online gate.
   readonly isReachable: boolean;
@@ -173,13 +176,15 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
   /* Set this device up for HomeKit, the template every family shares: the hints first, because every service acquisition reads them to decide whether the plugin owns
    * the part's name, then the family's own configuration, then its observers. A family supplies configureDevice and extends spawnObservers; it never overrides this
-   * order.
+   * order. The device claims its accessory last, so a restored accessory goes on refusing until the setup standing behind it has finished, and one whose setup threw
+   * never stops.
    */
   public override configure(): void {
 
     this.configureHints();
     this.configureDevice();
     this.spawnObservers();
+    this.platform.claimAccessory(this.accessory, this);
   }
 
   // Configure the family's HomeKit services, characteristics, and MQTT interface on this device's accessory, the family's half of the configure() template above.
@@ -544,7 +549,8 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       service.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
       service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
 
-      service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => this.isReachable);
+      this.answerHeld(service, this.hap.Characteristic.MotionDetected);
+      service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(this.answering(() => this.isReachable));
 
       // Configure our MQTT support.
       this.subscribeGet(mqttTopics.motion.topic, mqttTopics.motion.label,
@@ -587,9 +593,9 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     }
 
     // Activate or deactivate motion detection.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => !!this.accessory.context.detectMotion);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => !!this.accessory.context.detectMotion));
 
-    service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering((value: CharacteristicValue) => {
 
       if(this.accessory.context.detectMotion !== value) {
 
@@ -597,7 +603,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       }
 
       this.platform.persistence.persist(this.accessory, { detectMotion: !!value });
-    });
+    }));
 
     // Initialize the switch state.
     if(!("detectMotion" in this.accessory.context)) {
@@ -628,9 +634,10 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     const switchService = this.accessory.getServiceById(this.hap.Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
     // Activate or deactivate motion detection.
-    triggerService.getCharacteristic(this.hap.Characteristic.On).onGet(() => !!motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value);
+    triggerService.getCharacteristic(this.hap.Characteristic.On).onGet(
+      this.answering(() => !!motionService?.getCharacteristic(this.hap.Characteristic.MotionDetected).value));
 
-    triggerService.getCharacteristic(this.hap.Characteristic.On).onSet((isOn: CharacteristicValue) => {
+    triggerService.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering((isOn: CharacteristicValue) => {
 
       if(isOn) {
 
@@ -658,7 +665,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
         // Re-arm the trigger to track the still-active motion sensor.
         this.reflectAfterSet(() => triggerService.updateCharacteristic(this.hap.Characteristic.On, true));
       }
-    });
+    }));
 
     // Initialize the switch.
     triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
@@ -695,10 +702,11 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       service.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
       service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
 
-      service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(() => {
+      this.answerHeld(service, this.hap.Characteristic.OccupancyDetected);
+      service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(this.answering(() => {
 
         return this.isReachable;
-      });
+      }));
 
       // Resolve which smart detection types determine occupancy through the family's one derivation. It answers a fresh list that is assigned whole, so a live
       // re-creation of the service starts from the current answer rather than adding to the previous one.
@@ -740,9 +748,9 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     }
 
     // Enable or disable the status indicator light.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.statusLed);
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => this.statusLed));
 
-    service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering(async (value: CharacteristicValue) => {
 
       if(this.statusLed !== value) {
 
@@ -752,7 +760,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       // Push the new state to the controller. setStatusLed routes through the shared command-error helper, which is the single place a failure (including an
       // authorization failure) is reported, so there is nothing to branch on here.
       await this.setStatusLed(!!value);
-    });
+    }));
 
     // Initialize the switch state.
     service.updateCharacteristic(this.hap.Characteristic.On, this.statusLed);
@@ -863,13 +871,27 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   }
 
   // Two-scope reachability: controller health gates every device at once (a controller outage freezes device.isOnline at a stale value, so it cannot be trusted alone),
-  // device.isOnline gates each device. This is the plugin's single availability helper - there is no parallel mechanism. StatusActive characteristics across the
-  // accessory read this; operation-initiation gates read this; HKSV composes its readiness gate (buffer >= 10s) at its call site, never inside here. The library
-  // deliberately does NOT ship this composition (a deliberate design decision: isOnline is last-known device state) - the plugin is the consumer that composes
-  // per-operation reachability.
+  // device.isOnline gates each device. This answers whether an operation is worth starting right now, the question the media paths ask, and isAvailable below answers
+  // whether the plugin can vouch for the values HomeKit reads. StatusActive characteristics across the accessory read this; operation-initiation gates read this; HKSV
+  // composes its readiness gate (buffer >= 10s) at its call site, never inside here. The library deliberately does NOT ship this composition (a deliberate design
+  // decision: isOnline is last-known device state) - the plugin is the consumer that composes per-operation reachability.
   public get isReachable(): boolean {
 
     return this.nvr.client.connection.isHealthy && this.isOnline;
+  }
+
+  // Whether the plugin can vouch for this device's values, the verdict every handler's refusal and every MQTT availability statement read: the controller's verdict, and
+  // this device's own record.
+  public override get isAvailable(): boolean {
+
+    return super.isAvailable && this.recordAvailable;
+  }
+
+  // The device half of availability: whether this device's record says it is here, adopted by this controller and connected to it. An absent record, a device lingering
+  // in the removal grace, reads false. A family whose record reports no connection fact worth reading overrides this.
+  protected get recordAvailable(): boolean {
+
+    return this.fromRecord(isDeviceAdopted, false) && this.isOnline;
   }
 
   // The device half of reachability: whether this device's own controller record reports it connected, with no regard to the controller's health. Read non-throwing

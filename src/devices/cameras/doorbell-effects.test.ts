@@ -581,8 +581,8 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
         assert.ok(served, "the held chime projection is present");
 
-        // The body parses "70", passes the gate (not NaN, 0..100), and setCharacteristic(Brightness, 70) -> the Brightness onSet -> setChimeVolume(70).
-        // setCharacteristic is fire-and-forget, so settle past the onSet before asserting. The On onSet (value > 0 truthy) early-returns, so exactly one served-chime
+        // The body parses "70", passes the gate (not NaN, 0..100), and runs the Brightness set handler's body -> setChimeVolume(70). The route never waits on it, so
+        // settle past the command before asserting. The On set body (value > 0 truthy) early-returns, so exactly one served-chime
         // write lands. This nets only the MQTT body's parse / gate / route - setChimeVolume's fan-out and auth are the
         // setChimeVolume cross-device write describe's concern.
         await built.mqtt.invokeSet(mac + "/chime/set", "70");

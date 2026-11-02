@@ -130,6 +130,13 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
     this.accessory.configureController(this.#stream.controller);
     this.platform.persistence.persist(this.accessory);
 
+    // HAP serves the controller's characteristics itself, and StreamingStatus is the one of them it only ever writes, so a refusing read answering what HAP wrote there
+    // is what lets every camera show No Response, a camera whose motion detection stands up no other service among them.
+    for(const service of this.accessory.services.filter(({ UUID }) => UUID === this.hap.Service.CameraRTPStreamManagement.UUID)) {
+
+      this.answerHeld(service, this.hap.Characteristic.StreamingStatus);
+    }
+
     // Tell the host its controller is registered, so it can configure the services the registration gave the accessory. The call is synchronous, like the rest of this
     // stretch.
     this.host.onControllerRegistered();

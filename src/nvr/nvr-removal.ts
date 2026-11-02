@@ -122,6 +122,19 @@ export class RemovalStabilityGate {
   }
 
   /**
+   * Whether an accessory is waiting out its removal grace. The package camera reads this, because the record it shares with its parent stays standing through its own
+   * detach, where every other departing device's record says so itself.
+   *
+   * @param uuid - The accessory UUID to ask about.
+   *
+   * @returns True while the accessory holds a pending removal.
+   */
+  public isPending(uuid: string): boolean {
+
+    return this.#timers.has(uuid);
+  }
+
+  /**
    * Drive the good-state clock from a pushed controller fact. Entering good-state stamps the clock and arms the one-shot sweep; leaving it drops the clock and every
    * pending removal. A push that agrees with the current state is a no-op, so the root can push on every fact change without ceremony.
    *

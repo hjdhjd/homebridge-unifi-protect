@@ -252,6 +252,7 @@ export class ProtectNvr {
       devices: this.configuredDevices,
       log: this.log,
       persistence: this.platform.persistence,
+      releaseAccessory: (accessory: ProtectAccessory): void => this.platform.releaseAccessory(accessory),
       state: (): StateStore => this.client.state
     });
 
@@ -490,6 +491,17 @@ export class ProtectNvr {
   public get overrideAddress(): Nullable<string> {
 
     return this.#overrideAddress;
+  }
+
+  /**
+   * Whether the plugin can vouch for what this controller feeds, the verdict every accessory's No Response starts from: unavailable once unifi-protect has concluded
+   * the connection lost, or while the controller is rebooting, each until recovery. It reads those facts and never isHealthy, which is false at the library's first
+   * fault, while it re-bootstraps a controller it has already proven reachable and while its request breaker is open: none of those mean the values have gone stale, and
+   * refusing on them would mark every accessory No Response for a blip the library is already handling. Only the owners a connected controller builds read this.
+   */
+  public get isAvailable(): boolean {
+
+    return !this.client.connection.isLost && !this.client.connection.isRebooting;
   }
 
   /**

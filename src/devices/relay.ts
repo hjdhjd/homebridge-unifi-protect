@@ -2,11 +2,11 @@
  *
  * relay.ts: Relay device class for UniFi Protect.
  */
+import type { ProtectRelayConfig, Relay } from "unifi-protect";
 import type { CharacteristicValue } from "homebridge";
 import { PROTECT_RELAY_COMMAND_TIMEOUT } from "../settings.ts";
 import { ProtectDevice } from "./device.ts";
 import { ProtectReservedNames } from "../types.ts";
-import type { Relay } from "unifi-protect";
 import { mqttTopics } from "../mqtt.ts";
 import { resolveMqttTopic } from "homebridge-plugin-utils";
 
@@ -42,6 +42,13 @@ export class ProtectRelay extends ProtectDevice<Relay> {
   private outputTopic(id: number): string {
 
     return resolveMqttTopic(mqttTopics.relayOutput.topic, { output: (id + 1).toString() });
+  }
+
+  // The label one output's switch and command lines carry, read as the relay is configured and held for the life of this device object, so a rename on the controller
+  // leaves the switch and its failure lines naming what the switch was set up as.
+  private outputLabel({ id, name }: ProtectRelayConfig["outputs"][number]): string {
+
+    return name ?? ("Output " + (id + 1).toString());
   }
 
   // Initialize and configure the relay accessory for HomeKit.
@@ -81,7 +88,7 @@ export class ProtectRelay extends ProtectDevice<Relay> {
     for(const output of this.ufp.outputs) {
 
       const id = output.id;
-      const label = output.name ?? ("Output " + (id + 1).toString());
+      const label = this.outputLabel(output);
       const subtype = this.outputSubtype(id);
 
       // Validate whether we should have this output's switch enabled, gating on the selection resolved above. This prunes exactly this output's subtyped switch when it
@@ -95,13 +102,13 @@ export class ProtectRelay extends ProtectDevice<Relay> {
       }
 
       // Read the live controller output state when requested (controller is authority; the observe loop keeps the tile current between reads).
-      service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.outputState(id));
+      service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => this.outputState(id)));
 
       // Drive the output toward the requested state through the set-to-toggle guard.
-      service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
+      service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering(async (value: CharacteristicValue) => {
 
         await this.setOutput(id, label, value === true);
-      });
+      }));
 
       // Initialize the switch from controller truth.
       service.updateCharacteristic(this.hap.Characteristic.On, this.outputState(id));
@@ -125,7 +132,7 @@ export class ProtectRelay extends ProtectDevice<Relay> {
     }
 
     // Record intent BEFORE dispatch and arm a bounded safety timer that drops the intent if the controller never confirms, so a lost broadcast cannot wedge the tap
-    // decision. No optimistic tile write is needed: HAP already holds the requested value on the characteristic through this non-throwing onSet, and the observe loop
+    // decision. No optimistic tile write is needed: the requested value lands on the characteristic once this resolves, whichever path called it, and the observe loop
     // reconciles to controller truth on the confirming broadcast.
     this.#pendingDesired.set(id, desired);
     this.timers.setTimeout(this.pendingTimerKey(id), () => this.#pendingDesired.delete(id), PROTECT_RELAY_COMMAND_TIMEOUT);
@@ -166,13 +173,15 @@ export class ProtectRelay extends ProtectDevice<Relay> {
     return this.accessory.getServiceById(this.hap.Service.Switch, this.outputSubtype(id)) !== undefined;
   }
 
-  // Configure MQTT capabilities of this relay. Each output whose Switch stands exposes a get (the live output state) and a set (which drives the output switch's On
-  // characteristic, re-entering the single set-to-toggle path). An output the user left out of Relay.Outputs has no switch and no MQTT topic, so it registers neither.
+  // Configure MQTT capabilities of this relay. Each output whose Switch stands exposes a get (the live output state) and a set (which runs the single set-to-toggle path
+  // directly, under the label the output's switch carries, whatever HomeKit is being told). An output the user left out of Relay.Outputs has no switch and no MQTT topic,
+  // so it registers neither.
   private configureMqtt(): void {
 
     for(const output of this.ufp.outputs) {
 
       const id = output.id;
+      const label = this.outputLabel(output);
 
       if(!this.hasOutputSwitch(id)) {
 
@@ -183,7 +192,8 @@ export class ProtectRelay extends ProtectDevice<Relay> {
 
       this.subscribeSet(this.outputTopic(id), mqttTopics.relayOutput.label, (value: string) => {
 
-        this.accessory.getServiceById(this.hap.Service.Switch, this.outputSubtype(id))?.setCharacteristic(this.hap.Characteristic.On, value === "true");
+        void this.driveSet({ characteristic: this.hap.Characteristic.On, service: this.accessory.getServiceById(this.hap.Service.Switch, this.outputSubtype(id)),
+          set: (desired) => this.setOutput(id, label, desired === true), value: value === "true" });
       });
     }
 

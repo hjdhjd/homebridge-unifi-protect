@@ -25,7 +25,7 @@ import type { Service } from "homebridge";
  * its feature-option scope, its identity, its reachability, and its wake channel. The media layer's contract carries the whole device-context slice because it crosses
  * a subsystem boundary and its consumers hold no ProtectBase ancestry of their own; a capability's need is narrower, so its contract is narrower.
  */
-export interface ProtectCapabilityHost extends Pick<ProtectDeviceContext, "accessory" | "accessoryName" | "hasFeature" | "isReachable"> {
+export interface ProtectCapabilityHost extends Pick<ProtectDeviceContext, "accessory" | "accessoryName" | "hasFeature" | "isAvailable" | "isReachable"> {
 
   // Acquires a part on the host's accessory through the host's service lifecycle, which supplies the accessory and composes the part's name.
   acquireService<T extends Service>(options: ProtectServiceOptions<AcquireServiceOptions<T>>): AcquireServiceResult<T>;
@@ -194,6 +194,13 @@ export abstract class ProtectDeviceCapability<H extends ProtectCapabilityHost = 
   protected get isReachable(): boolean {
 
     return this.host.isReachable;
+  }
+
+  // Whether the plugin can vouch for the host, delegated to the host: a capability's services live on the host's accessory, and HomeKit marks a whole accessory at once,
+  // so a capability refuses exactly when its host does.
+  public override get isAvailable(): boolean {
+
+    return this.host.isAvailable;
   }
 
   // Whether the backing controller record is present, delegated to the host - a capability extends the spine rather than ProtectDevice, so it has no record of its own.

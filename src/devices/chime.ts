@@ -98,12 +98,12 @@ export class ProtectChime extends ProtectDevice<Chime> {
     const { service } = this.acquireService({ ...naming, serviceType: this.hap.Service.Switch, subtype });
 
     // Reflect and drive the play state for this sound source (buzzer or ringtone speaker).
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => {
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => {
 
       return this.timers.has(subtype);
-    });
+    }));
 
-    service.getCharacteristic(this.hap.Characteristic.On).onSet(async (value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering(async (value: CharacteristicValue) => {
 
       // We only act on an activating set. A falsy set is meaningless here: you cannot undo a play command to the chime, so we just revert the switch to its real state
       // and return.
@@ -138,7 +138,7 @@ export class ProtectChime extends ProtectDevice<Chime> {
 
       // Inform the user.
       this.log.info("Playing %s.", sound);
-    });
+    }));
 
     // Initialize the switch.
     service.updateCharacteristic(this.hap.Characteristic.On, false);

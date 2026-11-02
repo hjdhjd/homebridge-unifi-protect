@@ -7,8 +7,18 @@ import type { CharacteristicValue } from "homebridge";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectBase } from "../devices/device-base.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
+import type { ProtectNvrLiveviewConfig } from "unifi-protect";
 import { ProtectReservedNames } from "../types.ts";
 import { mqttTopics } from "../mqtt.ts";
+
+// The liveviews the security system is built from. Any one of them calls for it, so they all collapse onto its one identity.
+const SECURITY_SYSTEM_LIVEVIEW = /^Protect-(Away|Home|Night|Off)$/i;
+
+// Whether a liveview list calls for the security system, the one answer the liveviews owner reconciles its accessory against and the security system's verdict reads.
+export function isSecuritySystemCalledFor(liveviews: readonly ProtectNvrLiveviewConfig[]): boolean {
+
+  return liveviews.some(x => SECURITY_SYSTEM_LIVEVIEW.test(x.name));
+}
 
 /* The security system accessory synthesized from the controller's Protect-* liveviews. It is the one controller-scoped owner whose lifetime is shorter than the
  * controller connection: its accessory comes and goes with those liveviews, so the inherited composed lifetime is exactly what its MQTT registrations need. Deleting the
@@ -29,10 +39,18 @@ export class ProtectSecuritySystem extends ProtectBase {
     this.isAlarmTriggered = false;
   }
 
+  // The security system has no record of its own to say it is leaving, so the liveviews that call for it are its record: with none left HomeKit shows No Response until
+  // one returns or the accessory is removed, whatever the removal gate holds. Each read asks afresh, so a liveview that returns clears the refusal with nothing rebound.
+  public override get isAvailable(): boolean {
+
+    return super.isAvailable && isSecuritySystemCalledFor(this.nvr.client.liveviews);
+  }
+
   // Set the security system up for HomeKit.
   public override configure(): void {
 
     this.configureDevice();
+    this.platform.claimAccessory(this.accessory, this);
   }
 
   // Configure a security system accessory for HomeKit.
@@ -223,17 +241,18 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     // Handlers to get our current state, and initialize on startup.
     service.updateCharacteristic(SecuritySystemCurrentState, this.accessory.context.securityState ?? SecuritySystemCurrentState.DISARMED)
-      .getCharacteristic(SecuritySystemCurrentState).onGet(() => {
+      .getCharacteristic(SecuritySystemCurrentState).onGet(this.answering(() => {
 
         return this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED :
           (this.accessory.context.securityState ?? SecuritySystemCurrentState.DISARMED);
-      });
+      }));
 
     // Handlers for triggering a change in the security system state.
-    this.accessory.getService(this.hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemTargetState).onSet((value: CharacteristicValue) => {
+    this.answerHeld(service, SecuritySystemTargetState);
+    this.accessory.getService(this.hap.Service.SecuritySystem)?.getCharacteristic(SecuritySystemTargetState).onSet(this.answering((value: CharacteristicValue) => {
 
       this.setSecurityState(value);
-    });
+    }));
 
     // Show the saved scene as the target state, or Off when none is saved. This is a status update, which runs no set handler, so nothing is applied to the cameras.
     // Each camera persists its own motion detection setting and is the source of truth for it, so applying the scene here would override any choice the user made
@@ -265,12 +284,12 @@ export class ProtectSecuritySystem extends ProtectBase {
     this.log.info("Enabling the security alarm switch on the security system accessory.");
 
     // Activate or deactivate the security alarm.
-    service.getCharacteristic(this.hap.Characteristic.On).onGet(() => this.isAlarmTriggered);
-    service.getCharacteristic(this.hap.Characteristic.On).onSet((value: CharacteristicValue) => {
+    service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => this.isAlarmTriggered));
+    service.getCharacteristic(this.hap.Characteristic.On).onSet(this.answering((value: CharacteristicValue) => {
 
       this.setSecurityAlarm(!!value);
       this.log.info("Security system alarm %s.", value ? "triggered" : "reset");
-    });
+    }));
 
     // Initialize the value.
     service.updateCharacteristic(this.hap.Characteristic.On, this.isAlarmTriggered);

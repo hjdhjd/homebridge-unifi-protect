@@ -42,6 +42,10 @@ export interface LivestreamHostOptions {
 // camera satisfies it by inheritance. Every member is read-only at the call sites, so properties are readonly and getters satisfy them directly.
 export interface ProtectCameraHost extends ProtectDeviceContext {
 
+  // Turns the package camera's flashlight on or off for a streaming session, past the refusal a HomeKit write meets, so a session ending in an outage still darkens the
+  // flashlight and clears its heartbeat. Any other camera has no flashlight and does nothing.
+  driveFlashlight(on: boolean): void;
+
   // Builds the FFmpeg audio-filter chain at an output sample rate in hertz, the rate the live view or the HKSV recording encodes its audio at.
   getAudioFilters(outputSampleRate: number): string[];
 

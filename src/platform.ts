@@ -3,13 +3,14 @@
  * platform.ts: homebridge-unifi-protect platform class.
  */
 import type { API, DynamicPlatformPlugin, Logging } from "homebridge";
-import { APIEvent, AccessoryPersistence, FeatureOptions, FfmpegCodecs, RtpPortAllocator, addressListingForm, debugGatedLog, livestreamProcessFactory,
-  recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
+import { APIEvent, AccessoryPersistence, FeatureOptions, FfmpegCodecs, Perms, RtpPortAllocator, addressListingForm, debugGatedLog, livestreamProcessFactory,
+  notResponding, recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
 import type { Clock, HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.ts";
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
 import type { LegacyFeatureOptions } from "./options-legacy.ts";
+import type { ProtectBase } from "./devices/device-base.ts";
 import { ProtectNvr } from "./nvr/nvr.ts";
 import type { ProtectOptions } from "./options.ts";
 import type { StreamingDelegateFactory } from "./media/stream-delegate.ts";
@@ -24,12 +25,18 @@ function isObject(entry: unknown): entry is object {
   return (typeof entry === "object") && (entry !== null);
 }
 
+// What an accessory's claim holds: the owner whose verdict answers for it.
+type ProtectAccessoryOwner = Pick<ProtectBase, "isAvailable">;
+
 // The Homebridge dynamic platform plugin for UniFi Protect. Owns FFmpeg capability detection, the RTP port allocator, and the per-controller ProtectNvr
 // instances the plugin manages.
 export class ProtectPlatform implements DynamicPlatformPlugin {
 
   public accessories: ProtectAccessory[];
   public readonly api: API;
+  // The owner standing behind each accessory, keyed by accessory UUID, held from the end of the owner's configure until the accessory is removed. A restored accessory
+  // with no entry has nothing maintaining its values.
+  readonly #claims = new Map<string, ProtectAccessoryOwner>();
   public readonly clock: Clock;
   private _codecSupport: Nullable<FfmpegCodecs> = null;
   public readonly config: ProtectOptions;
@@ -196,11 +203,68 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     return this._codecSupport;
   }
 
-  // This gets called when homebridge restores cached accessories at startup. We intentionally avoid doing anything significant here, and save it for device discovery.
+  // This gets called when homebridge restores cached accessories at startup. Device discovery does the significant work, and all this does beyond tracking the accessory
+  // is tell HomeKit the truth until then: whatever the feature options read, so a plugin disabled globally leaves its restored accessories refusing and registered.
   public configureAccessory(accessory: ProtectAccessory): void {
 
     // Add this to the accessory array so we can track it.
     this.accessories.push(accessory);
+
+    this.answerUnclaimed(accessory);
+  }
+
+  /* Record the owner that has taken over an accessory, whose verdict answers for it from here on. Each owner claims at the end of its configure, so an accessory goes on
+   * refusing until the setup behind it has finished. A later owner built on the same accessory replaces the earlier one.
+   */
+  public claimAccessory(accessory: ProtectAccessory, owner: ProtectAccessoryOwner): void {
+
+    this.#claims.set(accessory.UUID, owner);
+  }
+
+  // Let go of a removed accessory's owner, so its claim cannot answer for an accessory of the same identity added later in this run.
+  public releaseAccessory(accessory: ProtectAccessory): void {
+
+    this.#claims.delete(accessory.UUID);
+  }
+
+  /* Answer for a restored accessory until an owner takes it over. A value restored from the cache is one nobody can vouch for yet and a write has nothing behind it to
+   * reach, so every characteristic refuses a read and every one HomeKit can write refuses the write until its accessory is claimed. From then on each follows its owner's
+   * verdict, answering the value it holds and taking the value written. Following the owner is what makes this right rather than merely cautious: a characteristic an
+   * owner binds late, or only ever writes, stays on these handlers after the claim, and a handler that only refused would leave it refusing forever. Where an owner binds
+   * a handler of its own, that one replaces this and nothing here is consulted again.
+   *
+   * What stays out: the information service's values are static identity, and so are the names HomeKit reads and the user edits, which stay answerable and writable
+   * whatever else is true. HAP serves the characteristics of the services a camera controller owns through handlers of its own, which a handler here would displace,
+   * leaving a restored controller unable to answer them once registered; the exception is StreamingStatus, which HAP only ever writes, and which is how a restored camera
+   * with nothing else to refuse shows No Response before its controller is registered. A characteristic HomeKit cannot write takes no write handler, because HAP's own
+   * writes to one, StatusActive on a camera's sensors among them, arrive through the same entry point and must land whatever the accessory is answering.
+   */
+  private answerUnclaimed(accessory: ProtectAccessory): void {
+
+    const { Characteristic: { ConfiguredName, Name, StreamingStatus }, HapStatusError, Service } = this.api.hap;
+    const answering = notResponding({ errorClass: HapStatusError, unavailable: () => !this.#claims.get(accessory.UUID)?.isAvailable });
+    const controllerServices = [ Service.CameraRecordingManagement, Service.CameraRTPStreamManagement, Service.CameraOperatingMode, Service.DataStreamTransportManagement,
+      Service.Microphone, Service.Speaker ].map(({ UUID }) => UUID);
+
+    for(const service of accessory.services.filter(({ UUID }) => UUID !== Service.AccessoryInformation.UUID)) {
+
+      const ownedByController = controllerServices.includes(service.UUID);
+
+      for(const characteristic of service.characteristics) {
+
+        if([ ConfiguredName.UUID, Name.UUID ].includes(characteristic.UUID) || (ownedByController && (characteristic.UUID !== StreamingStatus.UUID))) {
+
+          continue;
+        }
+
+        characteristic.onGet(answering(() => characteristic.value));
+
+        if(characteristic.props.perms.includes(Perms.PAIRED_WRITE)) {
+
+          characteristic.onSet(answering(() => undefined));
+        }
+      }
+    }
   }
 
   // Launch our configured controllers once all accessories have been loaded. Once we do, they will sustain themselves.

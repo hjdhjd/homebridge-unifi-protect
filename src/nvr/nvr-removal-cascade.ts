@@ -52,6 +52,8 @@ export interface DeviceRemovalCascadeOptions {
   log: HomebridgePluginLogging;
   // The platform's accessory persistence, which takes an accessory off the bridge and drops any save still pending for it.
   persistence: AccessoryPersistence;
+  // Let go of whichever owner holds a removed accessory's claim, so nothing answers for an accessory that has left.
+  releaseAccessory: (accessory: ProtectAccessory) => void;
   // The controller's state store, pulled at use time because the controller establishes it only once it has connected.
   state: () => StoreReadSurface;
 }
@@ -73,6 +75,8 @@ export class DeviceRemovalCascade {
 
   readonly #persistence: AccessoryPersistence;
 
+  readonly #releaseAccessory: (accessory: ProtectAccessory) => void;
+
   readonly #state: () => StoreReadSurface;
 
   public constructor(options: DeviceRemovalCascadeOptions) {
@@ -83,6 +87,7 @@ export class DeviceRemovalCascade {
     this.#devices = options.devices;
     this.#log = options.log;
     this.#persistence = options.persistence;
+    this.#releaseAccessory = options.releaseAccessory;
     this.#state = options.state;
   }
 
@@ -199,7 +204,8 @@ export class DeviceRemovalCascade {
    * cascade above and the package camera's graced detach among them. The unregister goes through the platform's accessory persistence, which drops any save still
    * pending for the accessory, so no later save returns it to the cache, and hands Homebridge only an accessory its bridge holds: hap-nodejs throws on unregistering a
    * never-bridged (standalone) accessory, whose HomeKit-side removal is the user's in the Home app. The presence guard makes a stale double-fire a harmless no-op - an
-   * indexOf miss would otherwise splice(-1) and silently delete the LAST accessory in the platform array. Logs nothing: the caller owns the user-facing narration.
+   * indexOf miss would otherwise splice(-1) and silently delete the LAST accessory in the platform array. Being the one way out, it is also where the accessory's claim
+   * is released, so no removal path has to remember to. Logs nothing: the caller owns the user-facing narration.
    *
    * @param accessory - The accessory to remove.
    */
@@ -214,5 +220,6 @@ export class DeviceRemovalCascade {
 
     this.#persistence.unregister([accessory]);
     this.#accessories.splice(index, 1);
+    this.#releaseAccessory(accessory);
   }
 }

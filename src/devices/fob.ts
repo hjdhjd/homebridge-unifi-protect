@@ -11,6 +11,7 @@ import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectReservedNames } from "../types.ts";
 import { describeDeviceModel } from "./device-descriptor.ts";
+import { isDeviceAdopted } from "unifi-protect";
 
 // Projects one UniFi Protect LoRa fob's fixed button set and battery state onto a HomeKit accessory.
 export class ProtectFob extends ProtectDevice<Fob> {
@@ -26,6 +27,13 @@ export class ProtectFob extends ProtectDevice<Fob> {
     super(nvr, accessory, device);
 
     this.#buttons = resolveFobButtons(device.config) ?? [];
+  }
+
+  // A fob's half of availability is its adoption alone. An idle fob reads disconnected to save its battery and is still there, so the controller's connection report
+  // says nothing about it, and a fob refuses only when the controller is lost or rebooting, or the fob is unadopted or gone.
+  protected override get recordAvailable(): boolean {
+
+    return this.fromRecord(isDeviceAdopted, false);
   }
 
   // The stable HomeKit service subtype for one button's stateless-programmable-switch service, keyed by the LOWERCASE wire id - the same identity the buttons selection
@@ -103,6 +111,7 @@ export class ProtectFob extends ProtectDevice<Fob> {
     if(serviceLabel) {
 
       serviceLabel.updateCharacteristic(this.hap.Characteristic.ServiceLabelNamespace, this.hap.Characteristic.ServiceLabelNamespace.ARABIC_NUMERALS);
+      this.answerHeld(serviceLabel, this.hap.Characteristic.ServiceLabelNamespace);
     }
 
     // Iterate the full fixed table, gating each button's switch on the selection. Leaving a button out prunes exactly its subtyped switch and leaves the siblings and the
@@ -141,6 +150,7 @@ export class ProtectFob extends ProtectDevice<Fob> {
       if(serviceLabel && ((transition === "attached") || (transition === "kept"))) {
 
         service.updateCharacteristic(this.hap.Characteristic.ServiceLabelIndex, button.index);
+        this.answerHeld(service, this.hap.Characteristic.ServiceLabelIndex);
         serviceLabel.addLinkedService(service);
       }
     }
@@ -235,10 +245,13 @@ export class ProtectFob extends ProtectDevice<Fob> {
   private configureBatteryService(): void {
 
     // Acquire the service.
-    this.acquireService({ serviceType: this.hap.Service.Battery });
+    const { service } = this.acquireService({ serviceType: this.hap.Service.Battery });
 
     // Initialize the battery state.
     this.updateBatteryStatus();
+
+    this.answerHeld(service, this.hap.Characteristic.BatteryLevel);
+    this.answerHeld(service, this.hap.Characteristic.StatusLowBattery);
   }
 
   // Update the battery status in HomeKit. The fob's battery lives under wirelessConnectionState.batteryStatus (the LoRa link telemetry), NOT the top-level batteryStatus

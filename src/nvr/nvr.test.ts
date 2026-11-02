@@ -2041,3 +2041,59 @@ describe("the device-removal cascade", () => {
     }
   });
 });
+
+describe("the controller root's availability verdict", () => {
+
+  // The root reads the library's conclusions about the connection, never its health, and its shared removal tail is what lets go of an accessory's claim. Each is the
+  // real root over the double's platform, its connection levers moved directly.
+  test("the verdict reads the connection's loss and reboot facts, never its health, and the removal tail releases a claim", async () => {
+
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: TEST_CLOCK_EPOCH, version: "6.1.79" };
+    const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
+    const { controller, nvr: double } = makeTestNvr({ store });
+    const client = makeConnectedClient({ nvrConfig, store });
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
+    const connection = client.connection as unknown as TestConnection;
+
+    try {
+
+      await root.login();
+      await settle();
+
+      assert.equal(root.isAvailable, true, "a connected controller is available");
+
+      connection.isHealthy = false;
+
+      assert.equal(root.isAvailable, true, "a degraded connection that has concluded nothing leaves it available");
+
+      connection.isLost = true;
+
+      assert.equal(root.isAvailable, false, "a concluded loss does not");
+
+      connection.isLost = false;
+      connection.isRebooting = true;
+
+      assert.equal(root.isAvailable, false, "and neither does a reboot");
+
+      connection.isRebooting = false;
+      connection.isHealthy = true;
+
+      const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
+
+      accessory.context = { mac: "74ACB9000001", nvr: nvrConfig.mac };
+      restoreAccessories(double, [accessory]);
+      double.platform.claimAccessory(accessory, root);
+
+      root.removeAccessoryFromHomeKit(accessory);
+
+      assert.equal(double.platform.claims.has(accessory.UUID), false, "the shared removal tail released the claim");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
+  });
+});

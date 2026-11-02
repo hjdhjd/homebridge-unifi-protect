@@ -22,9 +22,10 @@ import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAcce
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import { TestCameraProjection, makeCameraConfig } from "../testing.helpers.ts";
 import type { TestClock, TestMqttClient } from "homebridge-plugin-utils/testing";
-import { advanceThroughSchedule, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
+import { advanceThroughSchedule, hapStatus, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import { afterEach, describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
+import { HAPStatus } from "homebridge-plugin-utils";
 import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../../settings.ts";
 import { ProtectCamera } from "./camera.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
@@ -359,8 +360,8 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
     // so the package camera materializes immediately and its flashlight Lightbulb is configured. The HELD projection is the SAME instance the package camera shares
     // (doorbell.ts passes the doorbell's own #device to createPackageCamera), so a test sets flashlightRejection and reads flashlightCalls on it directly. isDark is
     // threaded at construction (makeCameraConfig.isDark) so the dark-guard resolves deterministically.
-    async function buildFlashlightFamily(options: { isDark: boolean }): Promise<{ cameraId: string; clock: TestClock; projection: TestCameraProjection;
-      store: TestStateStore; }> {
+    async function buildFlashlightFamily(options: { isDark: boolean }): Promise<{ cameraId: string; clock: TestClock; nvr: TestProtectNvr;
+      projection: TestCameraProjection; store: TestStateStore; }> {
 
       const cameraConfig = makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, isDark: options.isDark,
         name: "Front Door" });
@@ -374,7 +375,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
 
       await settle();
 
-      return { cameraId: cameraConfig.id, clock, projection, store };
+      return { cameraId: cameraConfig.id, clock, nvr, projection, store };
     }
 
     // Resolve the package camera's flashlight On characteristic, hard-asserting the package camera is live and the gated Lightbulb exists FIRST (Doorbell.PackageCamera.
@@ -432,6 +433,50 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       await settle();
 
       assert.equal(projection.flashlightCalls.length, 2, "the 20-second heartbeat re-pulses the flashlight");
+    });
+
+    // A streaming session lights the flashlight and darkens it as it ends, and a session can end in an outage. The set handler refuses HomeKit then, so the session goes
+    // through this method, which is what keeps the flashlight's heartbeat from running on with nothing left to clear it. No suite drives a session's start or stop, so a
+    // text gate holds the stream to this method, and this row holds the method to what it does.
+    test("the flashlight method darkens the switch and clears the heartbeat while the package camera reads unavailable, and a camera's does nothing", async () => {
+
+      const { clock, nvr, projection } = await buildFlashlightFamily({ isDark: true });
+      const onChar = flashlightOn();
+
+      assert.ok(doorbell?.packageCamera, "the package camera is live");
+
+      doorbell.packageCamera.driveFlashlight(true);
+
+      await settle();
+
+      assert.equal(onChar.value, true, "the method lights the flashlight");
+      assert.equal(projection.flashlightCalls.length, 1, "through its pulse");
+
+      nvr.client.connection.isLost = true;
+
+      assert.equal(doorbell.packageCamera.isAvailable, false, "the package camera reads unavailable");
+
+      await assert.rejects(triggerSet(onChar, false), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+
+      assert.equal(onChar.value, true, "a HomeKit write cannot darken it while the camera refuses");
+
+      doorbell.packageCamera.driveFlashlight(false);
+
+      await settle();
+
+      assert.equal(onChar.value, false, "the method darkens the switch");
+
+      clock.advance(20000);
+
+      await settle();
+
+      assert.equal(projection.flashlightCalls.length, 1, "and the heartbeat is gone, so no pulse follows");
+
+      doorbell.driveFlashlight(true);
+
+      await settle();
+
+      assert.equal(projection.flashlightCalls.length, 1, "a camera carries no flashlight, so its own method issues nothing");
     });
 
     test("the Off set clears the heartbeat and reflects off without issuing a command", async () => {
