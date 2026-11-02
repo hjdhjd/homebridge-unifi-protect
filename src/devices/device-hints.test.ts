@@ -20,11 +20,9 @@
  * - so Enable.Motion.Duration.20 sets the value to 20 and Enable.Motion.Duration.1 sets it to 1 (then the clamp raises it to 2). Each duration / clamp test asserts the
  * EXACT resulting device.hints value, so a no-op override (the value staying at its default) fails loudly rather than passing vacuously.
  *
- * The syncName deviation log routes through scope: the test vehicle steers Device.SyncName via the GLOBAL userOption "Enable.Device.SyncName", which resolves to scope
- * "global" - so logFeature (device.ts) routes to nvr.logFeature, which emits the PLURAL "Syncing Protect device names to HomeKit." message (not the singular device
- * line). The syncName test asserts that plural line AND device.hints.syncName === true (the robust core, independent of the log path). The singular "Not syncing this
- * Protect device name to HomeKit." else-branch (device.ts) fires only when Device.SyncName is DEVICE-scoped; this vehicle uses global userOptions, so that branch is
- * acknowledged-conditional, not driven here.
+ * The name-sync line comes from the level that set the option, through the real engine's logFeature: the plugin's logger for a global entry, the controller's for a
+ * controller entry and the device's for a device entry, once at each level. The rows read every line off the one recorder the double hands every logger, so the
+ * prefix each logger writes is what tells them apart, and makeTestNvr's controllerPrefix gives the controller's logger one to write.
  *
  * The isolation model is per-test-fresh: each test calls buildHintsDevice with its own userOptions, and an afterEach unwinds the device's per-accessory abort.
  * configureHints is synchronous and observer-free (no observeState, no services, no commands, no MQTT), so there is no observer-wake subscription and no settle() here -
@@ -33,13 +31,13 @@
 import { TestBaseDevice, TestSensorProjection, makeSensorConfig } from "./testing.helpers.ts";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
+import { formatLogEntry, loggedAt } from "homebridge-plugin-utils/testing";
 import type { ProtectHints } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { Sensor } from "unifi-protect";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
-import { loggedAt } from "homebridge-plugin-utils/testing";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 // Every harness controller this suite opens, drained in afterEach so the controller lifetime signal bounds each test's constructions rather than the file's. The builder
@@ -49,6 +47,10 @@ const controllers: AbortController[] = [];
 // The identifiers the carrier and its controller resolve feature options at, named here so a scoped fixture below addresses the very device the read runs against.
 const CONTROLLER_MAC = "74ACB9FFFFFF";
 const SENSOR_MAC = "74ACB9000401";
+const SECOND_SENSOR_MAC = "74ACB9000402";
+
+// The log prefix the carrier's own logger writes.
+const DEVICE_PREFIX = "Test Sensor [Test Sensor Model]";
 
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the
 // all-quiet sensor carrier, then run the production base configureHints through the configureHintsFor window. The casts are confined to the point of construction exactly
@@ -118,7 +120,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       // No hint deviated from its default, so none of the deviation logs fire.
       assert.equal(loggedAt(built.logEntries, "info", "Motion event duration set to"), false, "no motion-duration deviation log at the defaults");
       assert.equal(loggedAt(built.logEntries, "info", "Occupancy event duration set to"), false, "no occupancy-duration deviation log at the defaults");
-      assert.equal(loggedAt(built.logEntries, "info", "Syncing Protect device name"), false, "no syncName deviation log at the defaults (singular nor plural)");
+      assert.equal(loggedAt(built.logEntries, "info", "Protect name sync"), false, "no name-sync line at the defaults");
       assert.equal(loggedAt(built.logEntries, "info", "Custom HomeKit name set to"), false, "no custom-name log at the defaults");
     });
   });
@@ -178,7 +180,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       assert.equal(hints.syncName, false, "syncName stays at its default");
     });
 
-    test("Enable.Device.SyncName drives syncName true and emits the global-scope plural log while the other hints stay at their defaults", () => {
+    test("Enable.Device.SyncName drives syncName true while the other hints stay at their defaults", () => {
 
       const built = buildHintsDevice({ userOptions: ["Enable.Device.SyncName"] });
 
@@ -189,16 +191,56 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       // The robust core, asserted independently of the log path: the global userOption drives syncName true.
       assert.equal(hints.syncName, true, "Enable.Device.SyncName drives syncName true");
 
-      // The global userOption resolves to scope "global", so logFeature routes to nvr.logFeature, which emits the PLURAL message (not the singular device line).
-      assert.ok(loggedAt(built.logEntries, "info", "Syncing Protect device names to HomeKit."), "the global-scope syncName routes to the plural nvr message");
-      assert.equal(loggedAt(built.logEntries, "info", "Syncing Protect device name to HomeKit."), false,
-        "the singular device line does NOT fire (the userOption is global-scoped, not device-scoped)");
-
       assert.equal(hints.enabled, true, "enabled stays at its default (true)");
       assert.equal(hints.logMotion, false, "logMotion stays at its default");
       assert.equal(hints.motionDuration, 10, "motionDuration stays at its default");
       assert.equal(hints.occupancyDuration, 300, "occupancyDuration stays at its default");
       assert.equal(hints.standalone, false, "standalone stays at its default");
+    });
+  });
+
+  describe("the name-sync line (Device.SyncName)", () => {
+
+    // Stand devices on one controller double, whose logger carries a prefix over the one recorder, and read the name-sync lines each logger wrote.
+    const nameSyncLines = (userOptions: string[], macs: string[] = [SENSOR_MAC]): string[] => {
+
+      const store = new TestStateStore(makeProtectState({ sensors: macs.map((mac) => makeSensorConfig({ id: "sensor-" + mac, mac })) }));
+      const { controller, logEntries, nvr } = makeTestNvr({ controllerPrefix: "Test Controller", mqtt: true, store, userOptions });
+
+      controllers.push(controller);
+
+      for(const mac of macs) {
+
+        new TestBaseDevice(nvr as unknown as ProtectNvr, makeTestAccessory("Test Sensor", mac),
+          new TestSensorProjection("sensor-" + mac, store) as unknown as Sensor).configureHintsFor();
+      }
+
+      return logEntries.filter(({ level }) => level === "info").map(formatLogEntry).filter((line) => line.includes("name sync"));
+    };
+
+    test("the defaults write no line", () => {
+
+      assert.deepEqual(nameSyncLines([]), [], "no level differs from the catalog default");
+    });
+
+    test("a global entry writes the plugin's line, once across devices, and no other", () => {
+
+      assert.deepEqual(nameSyncLines(["Enable.Device.SyncName"], [ SENSOR_MAC, SECOND_SENSOR_MAC ]), ["Protect name sync enabled."]);
+    });
+
+    test("a controller entry writes the controller's line, once across devices", () => {
+
+      assert.deepEqual(nameSyncLines(["Enable.Device.SyncName." + CONTROLLER_MAC], [ SENSOR_MAC, SECOND_SENSOR_MAC ]), ["Test Controller: Protect name sync enabled."]);
+    });
+
+    test("a device entry writes that device's line", () => {
+
+      assert.deepEqual(nameSyncLines(["Enable.Device.SyncName." + SENSOR_MAC]), [DEVICE_PREFIX + ": Protect name sync enabled."]);
+    });
+
+    test("a device entry disabling beneath a global enable writes the device's disabled line", () => {
+
+      assert.deepEqual(nameSyncLines([ "Enable.Device.SyncName", "Disable.Device.SyncName." + SENSOR_MAC ]), [DEVICE_PREFIX + ": Protect name sync disabled."]);
     });
   });
 

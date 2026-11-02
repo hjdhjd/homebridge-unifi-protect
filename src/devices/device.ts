@@ -411,14 +411,9 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       this.hints.occupancyDuration = 60;
     }
 
-    // Inform the user if we've opted for something other than the defaults.
-    if(this.hints.syncName) {
-
-      this.logFeature("Device.SyncName", "Syncing Protect device name to HomeKit.", "Syncing Protect device names to HomeKit.");
-    } else if(this.isDeviceFeature("Device.SyncName")) {
-
-      this.log.info("Not syncing this Protect device name to HomeKit.");
-    }
+    // Inform the user if we've opted for something other than the defaults, once, at the level that set it.
+    this.platform.featureOptions.logFeature({ controller: { id: this.nvr.ufp.mac, log: this.nvr.log }, device: { id: this.device.config.mac, log: this.log },
+      label: "Protect name sync", log: this.platform.pluginLog, option: "Device.SyncName" });
 
     // The line names the name the plugin applies, the custom name as HomeKit's naming rules clean it, with a package camera's display suffix where it applies. A value
     // HomeKit can carry nothing of is refused by HBPU's rule, and a refusal the user would otherwise never see is said once, here, with the value as the user set it.
@@ -859,25 +854,6 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   public hasFeature(option: string): boolean {
 
     return this.platform.featureOptions.test(option, this.device.config.mac, this.nvr.ufp.mac);
-  }
-
-  // Utility for returning the scope of a feature option.
-  public isDeviceFeature(option: string): boolean {
-
-    return this.platform.featureOptions.scope(option) === "device";
-  }
-
-  // Utility for logging feature option availability.
-  public logFeature(option: string, message: string, nvrMessage = message): void {
-
-    if(this.isDeviceFeature(option)) {
-
-      this.log.info(message);
-
-      return;
-    }
-
-    this.nvr.logFeature(option, nvrMessage);
   }
 
   // Utility function to check whether a proposed identifier collides with any reserved subtype name the plugin uses, spanning switches, sensors, lightbulbs, and locks.

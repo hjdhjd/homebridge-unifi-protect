@@ -17,7 +17,7 @@
  * real accessories. The cross-cutting core - the Homebridge runtime, the state store, and the streaming-delegate stub - lives in the root harness this file imports
  * from.
  */
-import { APIEvent, AccessoryPersistence, FeatureOptions, MQTT_AVAILABILITY_OFFLINE, mqttTopic, onAbort } from "homebridge-plugin-utils";
+import { APIEvent, AccessoryPersistence, FeatureOptions, MQTT_AVAILABILITY_OFFLINE, mqttTopic, onAbort, prefixedLog } from "homebridge-plugin-utils";
 import type { Camera, Chime, ProtectCameraConfig, ProtectClient, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig,
   ProtectRingtoneConfig } from "unifi-protect";
 import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
@@ -199,9 +199,6 @@ export class TestProtectNvr {
   // device-class doubles are cast elsewhere. Both fanouts read only a narrow slice of the device (protectId for the security path, accessory / accessoryName for the
   // liveviews path), so the seeded double carries just that slice.
   public readonly configuredDevices = new Map<string, ProtectDevices>();
-
-  // The once-per-option feature log gate, mirroring ProtectNvr.logFeature's featureLog record.
-  readonly #featureLog: Record<string, boolean> = {};
 
   public constructor(init: { client: TestProtectNvr["client"]; config: ProtectNvrOptions; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
     log: TestProtectNvr["log"]; mqtt: Nullable<TestMqttClient>; platform: TestProtectPlatform; signal: AbortSignal; }) {
@@ -421,20 +418,6 @@ export class TestProtectNvr {
     this.platform.clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
   }
 
-  // Mirror ProtectNvr.logFeature: log a controller- or globally-scoped feature message once per option.
-  public logFeature(option: string, message: string): void {
-
-    option = option.toLowerCase();
-
-    if(this.#featureLog[option] || ![ "global", "controller" ].includes(this.platform.featureOptions.scope(option, undefined, this.ufp.mac))) {
-
-      return;
-    }
-
-    this.#featureLog[option] = true;
-    this.log.info(message);
-  }
-
   // The composition-root construction methods, mirroring production: each constructs the REAL device-family class, faithful to ProtectNvr (the harness already constructs
   // real device objects). The double sits ABOVE the device layer exactly as the real NVR does - it value-imports the device classes - so routing construction through it
   // forms no module-initialization cycle, the property the live attach relies on.
@@ -543,7 +526,9 @@ export function makeNvrConfig(options: { doorbellSettings?: ProtectNvrConfig["do
  *                  doorbell's cross-device setChimeVolume write hits, and a test's updateRejection lever is set on, ONE projection - a per-access rebuild would silently
  *                  break the rejection drive; clock: an optional controllable TestClock installed as the platform double's clock and returned so a test advances
  *                  the virtual time every timer armed on that clock reads (omitted, a fresh TestClock seeded at TEST_CLOCK_EPOCH is created); controllerName:
- *                  the controller label (defaults to "Test Controller"); dispatch: an optional event-dispatch factory threaded into the NVR double's events interface
+ *                  the controller label (defaults to "Test Controller"); controllerPrefix: a prefix the controller's logger writes over the one recorder, as the
+ *                  production root's logger carries the controller's name, for a row that tells the controller's lines from the plugin's (omitted, the controller's
+ *                  logger is the plugin's); dispatch: an optional event-dispatch factory threaded into the NVR double's events interface
  *                  (omitted, the default builds the real ProtectEventDispatch unchanged; a test injects a recording subclass to assert the device observers' firehose
  *                  routing without arming the real reset timer); doorbellSettings: the raw doorbell settings record forwarded to the store's default NVR config fallback
  *                  (omitted, the fallback carries no doorbell settings); livestreamProcessFactory: an optional test livestream-process factory installed on the platform
@@ -563,7 +548,8 @@ export function makeNvrConfig(options: { doorbellSettings?: ProtectNvrConfig["do
  *          AbortController behind nvr.signal (abort it in suite teardown); factory: the stub streaming-delegate factory; logEntries: every line the construction path
  *          logged; mqtt: the recording MQTT double when requested, else null; nvr: the NVR double.
  */
-export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: TestClock; controllerName?: string; dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
+export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: TestClock; controllerName?: string; controllerPrefix?: string;
+  dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
   doorbellSettings?: ProtectNvrConfig["doorbellSettings"];
   livestreamProcessFactory?: LivestreamProcessFactory;
   mqtt?: boolean; overrideAddress?: string;
@@ -668,7 +654,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
     config: { address: "nvr.test", mqttTopic: "test/protect", password: "test-password", username: "test-user",
       ...(options.overrideAddress !== undefined ? { overrideAddress: options.overrideAddress } : {}) },
     dispatch: options.dispatch,
-    log: log,
+    log: (options.controllerPrefix === undefined) ? log : prefixedLog(log, () => options.controllerPrefix ?? ""),
     mqtt: mqtt,
     platform: {
 

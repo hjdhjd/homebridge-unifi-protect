@@ -103,7 +103,6 @@ export class ProtectNvr {
   // monitor they observe - and one home for all of them is what leaves that rule impossible to half-apply.
   private connectionSubscriptions: Disposable[];
   public readonly events: ProtectEventDispatch;
-  private featureLog: Record<string, boolean>;
   private hap: HAP;
   public readonly health: DiagnosticsHealthBridge;
   // The platform clock's timestamp of the last controller reboot we observed via the library's jitter-thresholded `controllerRebooted` event, or null until one is
@@ -173,7 +172,6 @@ export class ProtectNvr {
     this.configuredDevices = new Map();
     this.#connectClient = connect;
     this.connectionSubscriptions = [];
-    this.featureLog = {};
     this.hap = this.api.hap;
     this.lastRebootObservedAt = null;
     this.liveviews = null;
@@ -1473,31 +1471,9 @@ export class ProtectNvr {
     return this.platform.featureOptions.value(option, undefined, this.ufp.mac);
   }
 
-  // Utility for checking the scope of feature options on the NVR.
-  public isNvrFeature(option: string, device?: ProtectDeviceConfig | ProtectNvrConfig): boolean {
-
-    return [ "global", "controller" ].includes(this.platform.featureOptions.scope(option, device?.mac, this.ufp.mac));
-  }
-
   // Utility for checking feature options on the NVR.
   public hasFeature(option: string, device?: ProtectDeviceConfig | ProtectNvrConfig): boolean {
 
     return this.platform.featureOptions.test(option, device?.mac, this.ufp.mac);
-  }
-
-  // Utility for logging feature option availability on the NVR.
-  public logFeature(option: string, message: string): void {
-
-    option = option.toLowerCase();
-
-    // Only log something if we haven't already informed the user about it previously and it's scoped to the NVR or globally.
-    if(this.featureLog[option] || !this.isNvrFeature(option)) {
-
-      return;
-    }
-
-    this.featureLog[option] = true;
-
-    this.log.info(message);
   }
 }
