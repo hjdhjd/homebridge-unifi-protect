@@ -127,7 +127,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
   describe("the motion sensor switch (Motion.Switch)", () => {
 
-    test("with the feature, the switch exists, reads detectMotion, toggles it, and logs the enabling line", async () => {
+    test("with the feature, the switch exists, reads detectMotion, toggles it, and logs the feature's line", async () => {
 
       const built = buildMotionDevice({ userOptions: ["Enable.Motion.Switch"] });
 
@@ -138,7 +138,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       const motionSwitch = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR);
 
       assert.ok(motionSwitch, "the Motion.Switch feature materializes the SWITCH_MOTION_SENSOR switch");
-      assert.ok(loggedAt(built.logEntries, "info", "Enabling motion sensor switch."), "the enabling line logged");
+      assert.ok(loggedAt(built.logEntries, "info", "Motion sensor switches enabled."), "the feature's line logged");
 
       const onChar = motionSwitch.getCharacteristic(Characteristic.On);
 
@@ -231,7 +231,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
   describe("the manual motion trigger (Motion.Trigger)", () => {
 
-    test("with the feature, the trigger exists, inits off, logs the enabling line, and a trigger-on fires the firehose once", async () => {
+    test("with the feature, the trigger exists, inits off, logs the feature's line, and a trigger-on fires the firehose once", async () => {
 
       const built = buildMotionDevice({ userOptions: ["Enable.Motion.Trigger"] });
 
@@ -240,7 +240,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       const trigger = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_MOTION_TRIGGER);
 
       assert.ok(trigger, "the Motion.Trigger feature materializes the SWITCH_MOTION_TRIGGER switch");
-      assert.ok(loggedAt(built.logEntries, "info", "Enabling motion sensor automation trigger."), "the enabling line logged");
+      assert.ok(loggedAt(built.logEntries, "info", "Motion sensor automation triggers enabled."), "the feature's line logged");
 
       const onChar = trigger.getCharacteristic(Characteristic.On);
 

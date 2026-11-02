@@ -1041,18 +1041,18 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
     }
   });
 
-  test("the Enabling night vision dimmer log fires exactly once on creation and stays silent on a live reconcile (establishment-gated, counted)", async () => {
+  test("the night vision dimmer's line fires exactly once on creation and stays silent on a live reconcile (counted)", async () => {
 
     const cameraConfig = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags: { hasIcrSensitivity: true, hasInfrared: true } });
     const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig] }));
     const { logEntries, nvr } = buildTestNvr({ store, userOptions: ["Enable.Device.NightVision.Dimmer"] });
     const accessory = makeTestAccessory("Test Camera", cameraConfig.mac);
 
-    // Count the captured "Enabling night vision dimmer." INFO entries. A COUNT through logCount, not the boolean loggedAt: the construct-time entry persists in the
+    // Count the captured "Night vision dimmers enabled." INFO entries. A COUNT through logCount, not the boolean loggedAt: the construct-time entry persists in the
     // buffer, so a boolean could not tell a once-logged dimmer from a twice-logged one.
     const enablingLogCount = (): number => {
 
-      return logCount(logEntries, "info", "Enabling night vision dimmer.");
+      return logCount(logEntries, "info", "Night vision dimmers enabled.");
     };
 
     const camera = construct(nvr, accessory, new TestCameraProjection(cameraConfig.id, store));
@@ -1062,16 +1062,16 @@ describe("the camera capability reconcile - the night vision dimmer", () => {
     try {
 
       assert.ok(nightVisionDimmer(accessory), "the infrared hardware plus the Enable toggle created the night vision dimmer at construction");
-      assert.equal(enablingLogCount(), 1, "the establishment block logged Enabling night vision dimmer exactly once at creation");
+      assert.equal(enablingLogCount(), 1, "the feature's line logged exactly once at creation");
 
       // Trigger a LIVE observe reconcile through the featureFlags observer with an unrelated capability change, since a re-push of the same infrared flags would dedup
-      // under the value selector and wake nothing; the dimmer is already present and source is observe, so the establishment block (and its log) is skipped.
+      // under the value selector and wake nothing; the dimmer is already present, and HBPU writes a level's line once.
       store.pushCameraFeatureFlags(cameraConfig.id, { hasLuxCheck: true });
 
       await settle();
 
-      // Still exactly one. Moving the log back to the unconditional tail leaves the observe re-run logging again -> count 2 -> RED.
-      assert.equal(enablingLogCount(), 1, "the live reconcile did not re-log Enabling night vision dimmer - the count stays one");
+      // Still exactly one.
+      assert.equal(enablingLogCount(), 1, "the live reconcile did not log the line again - the count stays one");
     } finally {
 
       camera.cleanup();

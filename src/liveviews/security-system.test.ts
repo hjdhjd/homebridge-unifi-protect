@@ -205,7 +205,7 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     const alarm = enabled.accessory.getService(Service.Switch);
 
     assert.ok(alarm, "the SecuritySystem.Alarm feature on materializes the alarm Switch");
-    assert.ok(loggedAt(enabled.logEntries, "info", "Enabling the security alarm switch on the security system accessory."), "the alarm-enabled info line logged");
+    assert.ok(loggedAt(enabled.logEntries, "info", "Security system alarm switch enabled."), "the alarm-enabled info line logged");
 
     // The On onGet starts false (no alarm), and the onSet routes to setSecurityAlarm.
     assert.equal(await triggerGet(alarm.getCharacteristic(Characteristic.On)), false, "the alarm On onGet reads the un-triggered alarm state");

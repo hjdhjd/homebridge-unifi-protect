@@ -61,6 +61,9 @@ export class ProtectNvrSystemInfo extends ProtectBase {
       return;
     }
 
+    this.platform.featureOptions.logFeature({ controller: { id: this.nvr.ufp.mac, log: this.nvr.log }, label: "System information sensors", log: this.platform.pluginLog,
+      option: "NVR.SystemInfo" });
+
     const uuid = this.hap.uuid.generate(this.nvr.ufp.mac + ".NVRSystemInfo");
 
     // See if we already have this accessory defined.
@@ -122,16 +125,7 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     this.setInfo(this.accessory, this.nvr.ufp);
 
     // Configure accessory services.
-    const enabledSensors = this.updateDevice({ initialized: false });
-
-    // Inform the user what we're enabling on startup.
-    if(enabledSensors.length) {
-
-      this.log.info("Enabled system information sensor%s: %s.", enabledSensors.length > 1 ? "s" : "", enabledSensors.join(", "));
-    } else {
-
-      this.log.info("No system information sensors enabled.");
-    }
+    this.updateDevice({ initialized: false });
 
     this.isConfigured = true;
     this.platform.claimAccessory(this.accessory, this);
@@ -139,17 +133,10 @@ export class ProtectNvrSystemInfo extends ProtectBase {
 
   // Update accessory services and characteristics. Private: every caller is this class - configure()'s initial pass, which binds the handlers, and this owner's own
   // systemInfo observer, a later pass that refreshes the characteristic on each change.
-  private updateDevice({ initialized }: Required<Pick<ProtectConfigurePass, "initialized">>): string[] {
-
-    const enabledSensors: string[] = [];
+  private updateDevice({ initialized }: Required<Pick<ProtectConfigurePass, "initialized">>): void {
 
     // Configure the temperature sensor.
-    if(this.configureTemperatureSensor({ initialized })) {
-
-      enabledSensors.push("cpu temperature");
-    }
-
-    return enabledSensors;
+    this.configureTemperatureSensor({ initialized });
   }
 
   // Configure the temperature sensor for HomeKit.

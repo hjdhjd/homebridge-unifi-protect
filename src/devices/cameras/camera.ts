@@ -38,8 +38,8 @@ import { mqttTopics } from "../../mqtt.ts";
 import { resolveLegacySelection } from "../../options-legacy.ts";
 
 // The source tag threaded through the capability-reconcile and doorbell-capability methods: "construct" marks establishment (a fresh adoption or a Homebridge
-// restart), "observe" a live reconcile. The establishment-only side effects - the Access lock's SECURED resting stamp, the night vision dimmer's value push and its
-// "Enabling" log - branch on it; the members with no resting state ignore it.
+// restart), "observe" a live reconcile. The establishment-only side effects - the Access lock's SECURED resting stamp and the night vision dimmer's value push - branch
+// on it; the members with no resting state ignore it.
 type ReconcileSource = "construct" | "observe";
 
 /* The streaming surface a camera derives for HomeKit: the advertised channel-profile list its selectors choose from, the HomeKit resolution list its CameraController is
@@ -1125,6 +1125,12 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Validate whether we should have this service enabled, adding the switch to the camera if needed. The mute switch exists only beside a Doorbell service, so the
     // verdict removes it from a camera that carries none, and a camera without the switch holds no muted state.
     const hasDoorbell = !!this.accessory.getService(this.hap.Service.Doorbell);
+
+    if(hasDoorbell) {
+
+      this.announceFeature({ kindLabel: "Doorbell mute switches", label: "Doorbell mute switch", option: "Doorbell.Mute" });
+    }
+
     const { service } = this.validService({ serviceType: this.hap.Service.Switch, subtype: ProtectReservedNames.SWITCH_DOORBELL_MUTE, suffix: " Doorbell Mute",
       validate: this.hasFeature("Doorbell.Mute") && hasDoorbell });
 
@@ -1148,8 +1154,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Initialize the switch.
     service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.doorbellMuted ?? false);
 
-    this.log.info("Enabling doorbell mute switch.");
-
     return true;
   }
 
@@ -1159,6 +1163,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // See if we have a doorbell service configured, and whether the user has enabled the trigger.
     const doorbellService = this.accessory.getService(this.hap.Service.Doorbell);
     const enabled = this.hasFeature("Doorbell.Trigger");
+
+    this.announceFeature({ kindLabel: "Doorbell automation triggers", label: "Doorbell automation trigger", option: "Doorbell.Trigger" });
 
     // A plain camera with the trigger enabled carries no Doorbell service of its own, so we stand one up for automation purposes. We do so ahead of the trigger's gate
     // below because that gate creates the trigger switch on an enabling verdict, and a camera gaining both on one pass carries the Doorbell service first.
@@ -1206,8 +1212,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // Initialize the switch.
     triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
-
-    this.log.info("Enabling doorbell automation trigger.");
 
     return true;
   }
@@ -1667,10 +1671,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     // Inform the user if they've selected the legacy snapshot API.
-    if(!this.hints.highResSnapshots) {
-
-      this.log.info("Disabling the use of higher quality snapshots.");
-    }
+    this.announceFeature({ label: "Higher quality snapshots", option: "Video.HighResSnapshots" });
   }
 
   /* The camera family's registration HOST HOOK, called by the composed streaming capability directly after it registers this camera's CameraController. Registering a
@@ -1734,6 +1735,12 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // Configure a switch to manually enable or disable HKSV recording for a camera.
   private configureHksvRecordingSwitch(): boolean {
 
+    // The switch stands only on a camera that can back HomeKit Secure Video, so another camera says nothing about it.
+    if(this.isHksvCapable) {
+
+      this.announceFeature({ kindLabel: "HKSV recording switches", label: "HKSV recording switch", option: "Video.HKSV.Recording.Switch" });
+    }
+
     // Validate whether we should have this service enabled. The switch exists only for a camera that can back HomeKit Secure Video, since it governs a recording arm
     // no other camera's controller carries.
     const { service } = this.validService({ serviceType: this.hap.Service.Switch, subtype: ProtectReservedNames.SWITCH_HKSV_RECORDING, suffix: " HKSV Recording",
@@ -1763,8 +1770,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Initialize the switch.
     service.updateCharacteristic(this.hap.Characteristic.On, !(this.accessory.context.hksvRecordingDisabled ?? false));
 
-    this.log.info("Enabling HKSV recording switch.");
-
     return true;
   }
 
@@ -1775,6 +1780,11 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // The camera's adjustable night vision hardware: an infrared cut filter plus the ICR sensitivity control. Both must be present for the dimmer to mean anything.
     const hasNightVisionHardware = this.ufp.featureFlags.hasInfrared && this.ufp.featureFlags.hasIcrSensitivity;
+
+    if(hasNightVisionHardware) {
+
+      this.announceFeature({ kindLabel: "Night vision dimmers", label: "Night vision dimmer", option: "Device.NightVision.Dimmer" });
+    }
 
     // Gate the dimmer on the camera's adjustable night vision hardware (conservative) and the user's Device.NightVision.Dimmer toggle (absolute) via capabilityGate. The
     // transition the gate answers says whether this pass created the dimmer, which is the establishment-push decision input only - it does NOT gate the wiring below
@@ -1848,13 +1858,11 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // Establish the dimmer at startup (a fresh adoption or create, or a restart's construct) only - never on a live reconcile re-run. The camera.ispSettings observer
     // already maintains the displayed value, and re-pushing the device's reading during an in-flight night-vision command would momentarily stomp the user's optimistic
-    // setting; the once-per-boot "Enabling" log (a default-off feature the user turned on) rides the same gate so it prints at every startup but never on a reconnect.
+    // setting.
     if((transition === "attached") || (source === "construct")) {
 
       service.updateCharacteristic(this.hap.Characteristic.On, this.nightVision);
       service.updateCharacteristic(this.hap.Characteristic.Brightness, this.nightVisionBrightness);
-
-      this.log.info("Enabling night vision dimmer.");
     }
 
     return true;
@@ -1863,7 +1871,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // Configure a series of switches to manually enable or disable recording on the UniFi Protect controller for a camera.
   private configureNvrRecordingSwitch(): boolean {
 
-    const switchesEnabled = [];
+    this.announceFeature({ label: "UniFi Protect recording switches", option: "Nvr.Recording.Switch" });
 
     // The Protect controller supports three modes for recording on a camera: always, detections, and never. We create switches for each of the modes.
     for(const ufpRecordingSwitchType of
@@ -1931,12 +1939,6 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
       // Initialize the recording switch state.
       service.updateCharacteristic(this.hap.Characteristic.On, this.recordingMode === ufpRecordingSetting);
-      switchesEnabled.push(ufpRecordingSetting);
-    }
-
-    if(switchesEnabled.length) {
-
-      this.log.info("Enabling UniFi Protect recording switches: %s.", switchesEnabled.join(", "));
     }
 
     return true;

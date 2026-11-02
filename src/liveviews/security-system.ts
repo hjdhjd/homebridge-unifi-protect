@@ -265,6 +265,9 @@ export class ProtectSecuritySystem extends ProtectBase {
 
     this.isAlarmTriggered = false;
 
+    this.platform.featureOptions.logFeature({ controller: { id: this.nvr.ufp.mac, log: this.nvr.log }, label: "Security system alarm switch",
+      log: this.platform.pluginLog, option: "SecuritySystem.Alarm" });
+
     // Have we enabled the security system alarm? A switch the gate attached or removed changes what Homebridge's accessory cache holds, so the accessory is marked for
     // the next save.
     const { service, transition } = validService({ accessory: this.accessory, name: this.accessory.displayName + " Security Alarm",
@@ -279,9 +282,6 @@ export class ProtectSecuritySystem extends ProtectBase {
 
       return false;
     }
-
-    // Notify the user that we're enabled.
-    this.log.info("Enabling the security alarm switch on the security system accessory.");
 
     // Activate or deactivate the security alarm.
     service.getCharacteristic(this.hap.Characteristic.On).onGet(this.answering(() => this.isAlarmTriggered));

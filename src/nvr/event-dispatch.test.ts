@@ -153,7 +153,7 @@ const makeDispatch = (options: DispatchOptions = {}): { dispatch: RecordingDispa
     hasFeature,
     log,
     mqtt: { publishGuarded },
-    platform: { api: { hap }, clock: new TestClock(), config: {} },
+    platform: { api: { hap }, clock: new TestClock(), config: {}, featureOptions: { logFeature: noop } },
     ufp: { mac: "AA:BB:CC:DD:EE:FF" }
   };
 

@@ -3,7 +3,7 @@
  * device.ts: ProtectDevice - the per-accessory device base (its shared spine, ProtectBase, lives in device-base.ts).
  */
 import type { API, CharacteristicValue, Service } from "homebridge";
-import type { AcquireServiceOptions, AcquireServiceResult, HomebridgePluginLogging, MqttAvailabilityPayload, Nullable, ValidServiceOptions,
+import type { AcquireServiceOptions, AcquireServiceResult, HomebridgePluginLogging, LogFeatureArgs, MqttAvailabilityPayload, Nullable, ValidServiceOptions,
   ValidServiceResult } from "homebridge-plugin-utils";
 import type { DeviceCollectionKey, ProtectDeviceConfig, ProtectState } from "unifi-protect";
 import { MQTT_AVAILABILITY_OFFLINE, MQTT_AVAILABILITY_ONLINE, acquireService, getServiceName, mqttGetTopic, mqttSetTopic, mqttTopic, ownedName, presenceChanged,
@@ -411,9 +411,8 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       this.hints.occupancyDuration = 60;
     }
 
-    // Inform the user if we've opted for something other than the defaults, once, at the level that set it.
-    this.platform.featureOptions.logFeature({ controller: { id: this.nvr.ufp.mac, log: this.nvr.log }, device: { id: this.device.config.mac, log: this.log },
-      label: "Protect name sync", log: this.platform.pluginLog, option: "Device.SyncName" });
+    // Inform the user if we've opted for something other than the defaults.
+    this.announceFeature({ label: "Protect name sync", option: "Device.SyncName" });
 
     // The line names the name the plugin applies, the custom name as HomeKit's naming rules clean it, with a package camera's display suffix where it applies. A value
     // HomeKit can carry nothing of is refused by HBPU's rule, and a refusal the user would otherwise never see is said once, here, with the value as the user set it.
@@ -594,6 +593,12 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   // Configure a switch to easily activate or deactivate motion sensor detection for HomeKit.
   private configureMotionSwitch({ enabled = true }: Pick<ProtectConfigurePass, "enabled"> = {}): boolean {
 
+    // The switch stands exactly where the motion sensor does, so a device with no motion sensor says nothing about it.
+    if(enabled) {
+
+      this.announceFeature({ kindLabel: "Motion sensor switches", label: "Motion sensor switch", option: "Motion.Switch" });
+    }
+
     // Validate whether we should have this service enabled.
     const { service } = this.validService({ serviceType: this.hap.Service.Switch, subtype: ProtectReservedNames.SWITCH_MOTION_SENSOR, suffix: " Motion Events",
       validate: enabled && this.hasFeature("Motion.Switch") });
@@ -628,13 +633,17 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
     service.updateCharacteristic(this.hap.Characteristic.On, this.accessory.context.detectMotion ?? true);
 
-    this.log.info("Enabling motion sensor switch.");
-
     return true;
   }
 
   // Configure a switch to manually trigger a motion sensor event for HomeKit.
   private configureMotionTrigger({ enabled = true }: Pick<ProtectConfigurePass, "enabled"> = {}): boolean {
+
+    // The trigger stands exactly where the motion sensor does, so a device with no motion sensor says nothing about it.
+    if(enabled) {
+
+      this.announceFeature({ kindLabel: "Motion sensor automation triggers", label: "Motion sensor automation trigger", option: "Motion.Trigger" });
+    }
 
     // Validate whether we should have this service enabled.
     const { service: triggerService } = this.validService({ serviceType: this.hap.Service.Switch, subtype: ProtectReservedNames.SWITCH_MOTION_TRIGGER,
@@ -684,8 +693,6 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
     // Initialize the switch.
     triggerService.updateCharacteristic(this.hap.Characteristic.On, false);
-
-    this.log.info("Enabling motion sensor automation trigger.");
 
     return true;
   }
@@ -749,6 +756,12 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   // Configure a switch to turn on or off the status indicator light for HomeKit.
   protected configureStatusLedSwitch({ enabled = true }: Pick<ProtectConfigurePass, "enabled"> = {}): boolean {
 
+    // A device a caller says has no status light stands no switch, so it says nothing about one.
+    if(enabled) {
+
+      this.announceFeature({ kindLabel: "Status indicator light switches", label: "Status indicator light switch", option: "Device.StatusLed.Switch" });
+    }
+
     // Validate whether we should have this service enabled.
     const { service } = this.validService({ serviceType: this.hap.Service.Switch, subtype: ProtectReservedNames.SWITCH_STATUS_LED, suffix: " Status Indicator",
       validate: enabled && this.hasFeature("Device.StatusLed.Switch") });
@@ -775,8 +788,6 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
     // Initialize the switch state.
     service.updateCharacteristic(this.hap.Characteristic.On, this.statusLed);
-
-    this.log.info("Enabling status indicator light switch.");
 
     return true;
   }
@@ -854,6 +865,15 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   public hasFeature(option: string): boolean {
 
     return this.platform.featureOptions.test(option, this.device.config.mac, this.nvr.ufp.mac);
+  }
+
+  // State a plain on or off feature option once, where it was set: on the plugin's log for a global entry, the controller's for a controller entry and this device's for
+  // a device entry. The device's id is its record's MAC, the same one hasFeature reads, so a package camera answers to its parent doorbell's entries. Public because a
+  // capability's features are its host's.
+  public announceFeature(feature: Pick<LogFeatureArgs, "kindLabel" | "label" | "option">): void {
+
+    this.platform.featureOptions.logFeature({ ...feature, controller: { id: this.nvr.ufp.mac, log: this.nvr.log }, device: { id: this.device.config.mac, log: this.log },
+      log: this.platform.pluginLog });
   }
 
   // Utility function to check whether a proposed identifier collides with any reserved subtype name the plugin uses, spanning switches, sensors, lightbulbs, and locks.

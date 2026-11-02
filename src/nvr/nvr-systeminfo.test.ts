@@ -5,7 +5,7 @@
  * ProtectNvrSystemInfo is the lightest of the controller owners (alongside liveviews and the security system), and it shares NOTHING with its siblings
  * except the ProtectBase shape, so it is the right place to establish the controller-owner test pattern in isolation. This suite constructs a REAL
  * ProtectNvrSystemInfo(nvr) through the makeTestNvr double and nets its full public surface behavior-first: construction (the self-created accessory, the
- * unconditional-on-feature TemperatureSensor CPU-temp service, the initial CurrentTemperature read-through, the singular enabled-sensors log), the NVR.SystemInfo
+ * unconditional-on-feature TemperatureSensor CPU-temp service, the initial CurrentTemperature read-through, the feature's line), the NVR.SystemInfo
  * feature gate (the with-feature service plus the without-feature removal and silent no-op paths), the single nvr.systemInfo observer's refresh reaction, the
  * systeminfo MQTT GET, and the controller-scoped mqttId / signal lifetime.
  *
@@ -93,7 +93,7 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
     activeController = undefined;
   });
 
-  test("the feature-enabled construction self-creates the accessory, materializes the CPU-temp service, and logs the singular enabled line", async () => {
+  test("the feature-enabled construction self-creates the accessory, materializes the CPU-temp service, and logs the enabled line", async () => {
 
     const built = buildSystemInfo({ temperature: 36 }, { userOptions: ["Enable.Nvr.SystemInfo"] });
 
@@ -125,8 +125,7 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
     assert.equal(info?.getCharacteristic(Characteristic.Model).value, "UniFi Dream Machine SE", "setInfo wired the Model from the controller marketName");
     assert.equal(info.getCharacteristic(Characteristic.SerialNumber).value, "74ACB9FFFFFF", "setInfo wired the SerialNumber from the controller mac");
 
-    // The singular enabled-sensors log (one sensor, so the %s plural marker is empty).
-    assert.ok(loggedAt(built.logEntries, "info", "Enabled system information sensor: cpu temperature."), "the one enabled sensor logs the singular enabled-sensor line");
+    assert.ok(loggedAt(built.logEntries, "info", "System information sensors enabled."), "the feature's line logged");
   });
 
   test("a controller with an empty name adds the system information accessory under its market name", async () => {

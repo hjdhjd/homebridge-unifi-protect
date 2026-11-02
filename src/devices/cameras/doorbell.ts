@@ -537,6 +537,8 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
   // Configure the dimmer for HomeKit to control the volume.
   private configureProtectChimeLightbulb(): boolean {
 
+    this.host.announceFeature({ kindLabel: "Protect chime volume controls", label: "Protect chime volume control", option: "Doorbell.Volume.Dimmer" });
+
     // Validate whether we should have this service enabled.
     const { service } = this.validService({ serviceType: this.hap.Service.Lightbulb, subtype: ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME, suffix: " Chime Volume",
       validate: this.hasFeature("Doorbell.Volume.Dimmer") });
@@ -561,19 +563,24 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     service.updateCharacteristic(this.hap.Characteristic.On, this.chimeVolume > 0);
     service.updateCharacteristic(this.hap.Characteristic.Brightness, this.chimeVolume);
 
-    this.log.info("Enabling Protect chime volume control.");
-
     return true;
   }
 
   // Configure the contact sensor to indicate authentication success.
   private configureAuthSensor(): boolean {
 
+    // The authentication contact sensor is disabled by default unless the user enables it. We only make it available if we have at least one of the fingerprint sensor or
+    // the NFC sensor available, so a doorbell with neither says nothing about it.
+    const hasAuthHardware = this.ufp.enableNfc || this.ufp.featureFlags.hasFingerprintSensor;
+
+    if(hasAuthHardware) {
+
+      this.host.announceFeature({ kindLabel: "Protect authentication contact sensors", label: "Protect authentication contact sensor", option: "Doorbell.AuthSensor" });
+    }
+
     // Validate whether we should have this service enabled.
-    // The authentication contact sensor is disabled by default unless the user enables it. We only make it available if we have at least one of the
-    // fingerprint sensor or the NFC sensor available.
     const { service } = this.validService({ serviceType: this.hap.Service.ContactSensor, subtype: ProtectReservedNames.CONTACT_AUTHSENSOR, suffix: " Authenticated",
-      validate: this.hasFeature("Doorbell.AuthSensor") && (this.ufp.enableNfc || this.ufp.featureFlags.hasFingerprintSensor) });
+      validate: this.hasFeature("Doorbell.AuthSensor") && hasAuthHardware });
 
     if(!service) {
 
@@ -583,8 +590,6 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
     // Initialize the authentication contact sensor.
     service.updateCharacteristic(this.hap.Characteristic.ContactSensorState, this.hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
     this.answerHeld(service, this.hap.Characteristic.ContactSensorState);
-
-    this.log.info("Enabling Protect authentication contact sensor.");
 
     return true;
   }

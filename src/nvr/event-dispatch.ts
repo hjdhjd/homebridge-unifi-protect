@@ -841,13 +841,14 @@ export class ProtectEventDispatch {
   // the NVR's terminal shutdown signal; the loop ends quietly on abort.
   public async publishTelemetry(signal: AbortSignal): Promise<void> {
 
+    // Telemetry is off by default, so opting in is a user deviation worth surfacing once when the publisher starts.
+    this.nvr.platform.featureOptions.logFeature({ controller: { id: this.nvr.ufp.mac, log: this.log }, label: "Protect controller telemetry",
+      log: this.nvr.platform.pluginLog, option: "Nvr.Publish.Telemetry" });
+
     if(!this.nvr.hasFeature("Nvr.Publish.Telemetry")) {
 
       return;
     }
-
-    // Telemetry is off by default, so opting in is a user deviation worth surfacing once when the publisher starts.
-    this.log.info("Protect controller telemetry enabled.");
 
     for await (const packet of this.nvr.client.rawPackets({ signal })) {
 

@@ -100,7 +100,7 @@ describe("base ProtectDevice status-indicator switch capability (device-statusle
 
   describe("construction and reflection", () => {
 
-    test("with the feature and ledEnabled true, the switch exists, inits On true, onGet reads true, and the enabling line logs", async () => {
+    test("with the feature and ledEnabled true, the switch exists, inits On true, onGet reads true, and the feature's line logs", async () => {
 
       const built = buildStatusLedDevice({ ledEnabled: true }, { userOptions: ["Enable.Device.StatusLed.Switch"] });
 
@@ -111,7 +111,7 @@ describe("base ProtectDevice status-indicator switch capability (device-statusle
       const statusLedSwitch = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED);
 
       assert.ok(statusLedSwitch, "the Device.StatusLed.Switch feature materializes the SWITCH_STATUS_LED switch");
-      assert.ok(loggedAt(built.logEntries, "info", "Enabling status indicator light switch."), "the enabling line logged");
+      assert.ok(loggedAt(built.logEntries, "info", "Status indicator light switches enabled."), "the feature's line logged");
 
       const onChar = statusLedSwitch.getCharacteristic(Characteristic.On);
 
