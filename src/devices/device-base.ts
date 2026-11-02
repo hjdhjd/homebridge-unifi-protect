@@ -257,10 +257,11 @@ export abstract class ProtectBase {
 
   // Publish a value this owner holds under its scope, sent only when it differs from the last value that topic delivered in this broker session. The client's change
   // gate remembers what each topic last carried and forgets it when a session starts, so an unchanged reading costs no broker traffic while a fresh session is told
-  // the value again. Events and confirmations stay on publish, because a repeat of one of those is a new occurrence rather than the same state stated twice.
-  protected publishState(topic: string, value: string): void {
+  // the value again. Events and confirmations stay on publish, because a repeat of one of those is a new occurrence rather than the same state stated twice. A topic that
+  // stands as a statement rather than a reading asks for retain, so a subscriber attaching later reads the last one without waiting for the next.
+  protected publishState(topic: string, value: string, { retain = false }: { retain?: boolean } = {}): void {
 
-    this.nvr.mqtt?.publishGuarded(mqttTopic(this.mqttId, topic), value, { ifChanged: true });
+    this.nvr.mqtt?.publishGuarded(mqttTopic(this.mqttId, topic), value, { ifChanged: true, retain });
   }
 
   // Configure an MQTT get subscription under this owner's scope. The registration is bound to the owner-lifetime signal, so an owner's teardown (cleanup, removal,

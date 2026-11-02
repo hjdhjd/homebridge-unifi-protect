@@ -9,7 +9,7 @@
  * Importing the topic catalog runs the builder's own validation, so a declaration carrying two entries with the same wire topic, an entry with no message text at
  * all, or a malformed placeholder fails this whole file at load rather than reaching a broker.
  */
-import { FeatureOptions, mqttConnectionSettings, resolveMqttTopic } from "homebridge-plugin-utils";
+import { FeatureOptions, mqttAvailabilityEntry, mqttConnectionSettings, resolveMqttTopic } from "homebridge-plugin-utils";
 import { describe, test } from "node:test";
 import { featureOptionCategories, featureOptions } from "./options.ts";
 import { PROTECT_MQTT_TOPIC } from "./settings.ts";
@@ -122,6 +122,7 @@ describe("the MQTT topic catalog", () => {
       alarm: "alarm",
       ambientlight: "ambientlight",
       authenticate: "authenticate",
+      availability: "availability",
       button: "button",
       carbonmonoxide: "carbonmonoxide",
       chime: "chime",
@@ -152,6 +153,16 @@ describe("the MQTT topic catalog", () => {
       tone: "tone",
       vape: "vape"
     });
+  });
+
+  // The label, the message text and the tail are HBPU's, so every plugin in the family states a device's reachability in the same words on the same tail, and the catalog
+  // adds only the device kinds that carry it.
+  test("carries HBPU's availability entry for every device kind and the controller", () => {
+
+    const { devices, ...entry } = mqttTopics.availability;
+
+    assert.deepEqual(entry, mqttAvailabilityEntry);
+    assert.deepEqual(devices, [ "camera", "chime", "controller", "doorbell", "fob", "light", "relay", "sensor", "viewer" ]);
   });
 
   test("credits the ambient-light get to the sensor alone and narrows no other verb", () => {

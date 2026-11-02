@@ -68,6 +68,17 @@ export class ProtectCameraPackage extends ProtectCamera {
     return super.isAvailable && !this.nvr.removals.isPending(this.accessory.UUID);
   }
 
+  // The package camera's MQTT topics sit under its parent's MAC, and the parent speaks for that availability topic, so a package camera keeps no statement of its own.
+  protected override configureAvailability(): void {
+
+    // Deliberately empty: the parent camera registers for the shared topic.
+  }
+
+  public override publishAvailability(): void {
+
+    // Deliberately empty: the parent camera states the shared topic.
+  }
+
   // The package camera's HomeKit name is the parent's plus the display suffix, single-sourced from the shared live parent projection and the parent's custom name,
   // which the package's hints resolve from the parent MAC's scope, through the base homeKitName accessor, which adds the suffix to the name it derives from the record
   // or the custom name. Every name write and every restore reads that derivation, so the suffix applies uniformly wherever the plugin owns the name, and a vanished

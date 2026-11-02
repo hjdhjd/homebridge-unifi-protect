@@ -2,7 +2,7 @@
  *
  * mqtt.ts: The MQTT topic catalog for UniFi Protect.
  */
-import { mqttTopicCatalog } from "homebridge-plugin-utils";
+import { mqttAvailabilityEntry, mqttTopicCatalog } from "homebridge-plugin-utils";
 
 /* The plugin's whole MQTT topic surface, declared once and read from here by everything that spells a topic. Every publish, get, and set site takes its tail and
  * the name its log lines carry from this catalog, the documentation renderer projects the same declaration into the two marked regions of docs/MQTT.md at the docs
@@ -18,6 +18,10 @@ import { mqttTopicCatalog } from "homebridge-plugin-utils";
  * runtime, so its vocabulary fixes both the spelling of every device kind and the order each cell lists them in. A published topic and its get and set children are
  * one entry under one device list, and when only some of the listed kinds perform a verb, its narrowing names those kinds, so the document credits each verb to the
  * kinds that perform it.
+ *
+ * The availability entry is HBPU's own, spread here so every plugin in the family states a device's reachability on the same tail, in the same words and with the same
+ * message text. The catalog adds only what HBPU cannot know: the device kinds that carry it, the controller among them, whose liveview, security system and system
+ * information topics sit under its MAC.
  */
 export const mqttTopics = mqttTopicCatalog({
 
@@ -33,6 +37,7 @@ export const mqttTopics = mqttTopicCatalog({
   authenticate: { devices: ["doorbell"], label: "authentication",
     publish: "`{type: \"fingerprint\"}` or `{type: \"nfc\", id: cardId}`. Publishes upon a successful authentication using fingerprint or NFC. `id` is included " +
       "only for NFC and contains the card ID as detected by the doorbell.", topic: "authenticate" },
+  availability: { ...mqttAvailabilityEntry, devices: [ "camera", "chime", "controller", "doorbell", "fob", "light", "relay", "sensor", "viewer" ] },
   button: { devices: ["fob"], label: "fob button",
     publish: "`{\"button\": \"arm\", \"pressType\": \"single\"}` when a UniFi Protect fob button is pressed. `button` is the button that was pressed and " +
       "`pressType` is the gesture. Published for every press of a button selected in HomeKit; a button you've hidden publishes nothing.", topic: "button" },

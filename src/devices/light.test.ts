@@ -142,7 +142,7 @@ describe("real ProtectLight construction and observer behavior", () => {
 
   test("six observers register, construction wakes none, and the default-on motion surface exists", () => {
 
-    assert.equal(store.observerCount, 6, "the two base observers plus the light's four are registered against the store double");
+    assert.equal(store.observerCount, 7, "the base observers, the MQTT availability observer and the light's four are registered against the store double");
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
     assert.ok(accessory.getService(Service.MotionSensor), "configureMotionSensor is default-on, so the light carries a MotionSensor service the motion tests depend on");
   });

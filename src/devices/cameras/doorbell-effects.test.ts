@@ -166,7 +166,8 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
       // The doorbell census: the camera's plain set (thirteen, including the always-armed isDoorbell observer, the bare-motion lastMotion observer, the
       // capability-reconcile featureFlags observer, the Access-lock supportUnlock observer, and the HomeKit Secure Video eligibility observer) plus the base pair plus
       // the capability's four = nineteen. A drift here means an extra or missing observer slipped in.
-      assert.equal(built.nvr.client.state.observerCount, 19, "the doorbell wires nineteen observers (the camera thirteen, the base pair, and the capability four)");
+      assert.equal(built.nvr.client.state.observerCount, 20,
+        "the doorbell wires its nineteen observers (the camera thirteen, the base pair, and the capability four), and with MQTT its availability observer");
 
       // HARD-assert all three physical-chime switches exist FIRST: the gate is hasChime && hasFeature("Doorbell.PhysicalChime") (doorbell.ts). An absent service
       // would let the value assertions pass vacuously.

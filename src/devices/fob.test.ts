@@ -145,8 +145,8 @@ describe("real ProtectFob construction and behavior", () => {
 
   test("five observers register, construction wakes none, and all six button switches are created and distinctly named", () => {
 
-    assert.equal(store.observerCount, 5,
-      "the two base observers plus the fob's two battery observers and its button-label observer are registered against the store double");
+    assert.equal(store.observerCount, 6,
+      "the base observers, the MQTT availability observer, the fob's battery observers and its button-label observer are registered against the store double");
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
 
     for(const button of FOB_BUTTONS) {
@@ -351,7 +351,7 @@ describe("real ProtectFob construction and behavior", () => {
 
     const baseline = built.store.observerCount;
 
-    assert.equal(baseline, 5, "the fob registers five observers");
+    assert.equal(baseline, 6, "the fob registers its observers, the MQTT availability observer among them");
 
     // A battery change wakes the battery observers and re-pushes both characteristics.
     built.store.pushFobBattery(built.fobConfig.id, { isLow: true, percentage: 15 });
@@ -383,7 +383,7 @@ describe("real ProtectFob construction and behavior", () => {
 
     // The button-label observer is gated on a non-empty button table, so an unrecognized fob registers only the base class's universal observers plus the fob's battery
     // observers.
-    assert.equal(built.store.observerCount, 4, "an unrecognized fob registers no button-label observer - it has no buttons to rename");
+    assert.equal(built.store.observerCount, 5, "an unrecognized fob registers no button-label observer - it has no buttons to rename");
 
     // ...but the adoption is never silent: one actionable warning names the unrecognized model.
     const warned = built.logEntries.some((entry) => (entry.level === "warn") && formatLogEntry(entry).includes("not a recognized model"));

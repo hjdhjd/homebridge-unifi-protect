@@ -135,7 +135,7 @@ describe("real ProtectRelay construction and behavior", () => {
 
   test("five observers register, construction wakes none, and both output switches are created and distinctly named", () => {
 
-    assert.equal(store.observerCount, 5, "the two base observers plus the relay's three (one per output, plus ledSettings) are registered against the store double");
+    assert.equal(store.observerCount, 6, "the base observers, the MQTT availability observer and the relay's three (one per output, plus ledSettings) are there");
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
 
     const output0 = accessory.getServiceById(Service.Switch, outputSubtype(0));

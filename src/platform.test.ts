@@ -275,7 +275,11 @@ describe("the restore sweep", () => {
     await assert.rejects(triggerGet(on), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "and refuses when its owner does");
 
     owner.isAvailable = true;
+    assert.equal(platform.isAccessoryClaimed(accessory), true, "the claim reads as held");
+
     platform.releaseAccessory(accessory);
+
+    assert.equal(platform.isAccessoryClaimed(accessory), false, "and the release lets it go");
 
     await assert.rejects(triggerGet(on), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE), "and a released accessory has no owner to follow");
   });

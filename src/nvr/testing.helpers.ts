@@ -17,7 +17,7 @@
  * real accessories. The cross-cutting core - the Homebridge runtime, the state store, and the streaming-delegate stub - lives in the root harness this file imports
  * from.
  */
-import { APIEvent, AccessoryPersistence, FeatureOptions } from "homebridge-plugin-utils";
+import { APIEvent, AccessoryPersistence, FeatureOptions, MQTT_AVAILABILITY_OFFLINE, mqttTopic, onAbort } from "homebridge-plugin-utils";
 import type { Camera, Chime, ProtectCameraConfig, ProtectClient, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig,
   ProtectRingtoneConfig } from "unifi-protect";
 import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
@@ -49,6 +49,7 @@ import { TestCameraProjection } from "../devices/testing.helpers.ts";
 import type { TestChimeProjection } from "../devices/testing.helpers.ts";
 import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
 import { countActiveHksvRecordings } from "./nvr-endpoints.ts";
+import { mqttTopics } from "../mqtt.ts";
 
 // The platform double's honest structural type. The members mirror what ProtectBase and the camera-family construction paths read off nvr.platform: HBPU's
 // Homebridge API double, which carries the real HAP namespace, Homebridge's own platform-accessory class, the accessory calls the doorbell's configurePackageCamera
@@ -70,6 +71,7 @@ export interface TestProtectPlatform {
   readonly codecSupport: { hostSystem: string };
   readonly config: ProtectOptions;
   readonly featureOptions: FeatureOptions;
+  readonly isAccessoryClaimed: (accessory: ProtectAccessory) => boolean;
   readonly legacyOptions: LegacyFeatureOptions;
   readonly livestreamProcessFactory: LivestreamProcessFactory;
   readonly log: {
@@ -258,6 +260,10 @@ export class TestProtectNvr {
         forgetCamera: (): void => {
 
           // No-op: the double runs no livestream narration and holds no episode latch, so there is no episode to reclaim.
+        },
+        publishRemoval: (mac: string): void => {
+
+          this.mqtt?.publishGuarded(mqttTopic(mac, mqttTopics.availability.topic), MQTT_AVAILABILITY_OFFLINE, { ifChanged: true, retain: true });
         },
         retireDevice: (device: ProtectDevice): void => this.events.retireDevice(device)
       },
@@ -673,6 +679,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       codecSupport: { hostSystem: "macOS" },
       config: platformConfig,
       featureOptions: platformFeatureOptions,
+      isAccessoryClaimed: (accessory: ProtectAccessory): boolean => claims.has(accessory.UUID),
       legacyOptions: legacyOptions,
       livestreamProcessFactory: livestreamProcessFactory,
       log: log,
@@ -743,9 +750,17 @@ export function makeTestAccessoryFamily(options: { mac?: string; name?: string; 
   return { packageAccessory, parentAccessory };
 }
 
+// One state transition of the connection monitor, in the states the root's recovery edge reads.
+export interface TestConnectionTransition {
+
+  readonly from: string;
+  readonly to: string;
+}
+
 /* The connection monitor a client double hands a real controller root: healthy by default, its health and its loss and reboot verdicts each a lever a row moves, with
  * each subscription kept under its event until the disposable handed back for it is disposed, so a row reads how many of the root's subscriptions are still attached and
- * delivers an event exactly as a live monitor would. The monitor makes no state transition of its own, so the transitions a connected root observes are none.
+ * delivers an event exactly as a live monitor would. The monitor makes no state transition of its own, so the transitions a connected root observes are the ones a row
+ * delivers through its lever, moving whichever verdict the transition stands for first.
  */
 export class TestConnection {
 
@@ -753,6 +768,8 @@ export class TestConnection {
   public isLost = false;
   public isRebooting = false;
   readonly #listeners = new Map<string, Set<() => void>>();
+  readonly #transitions: TestConnectionTransition[] = [];
+  #wake: Nullable<() => void> = null;
 
   public get listenerCount(): number {
 
@@ -767,10 +784,36 @@ export class TestConnection {
     }
   }
 
-  // The state transitions the root's connection loop reads.
-  public async *observe(): AsyncGenerator<never> {
+  // Deliver a state transition to the root's connection loop.
+  public transition(transition: TestConnectionTransition): void {
 
-    // None: this monitor holds healthy, so the loop finds no transition and ends.
+    this.#transitions.push(transition);
+    this.#wake?.();
+  }
+
+  // The state transitions the root's connection loop reads, each one a row delivers, until the loop's signal aborts.
+  public async *observe({ signal }: { signal: AbortSignal }): AsyncGenerator<TestConnectionTransition> {
+
+    using _release = onAbort(signal, () => this.#wake?.());
+
+    while(!signal.aborted) {
+
+      const next = this.#transitions.shift();
+
+      if(next) {
+
+        yield next;
+
+        continue;
+      }
+
+      const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+
+      this.#wake = resolve;
+
+      // eslint-disable-next-line no-await-in-loop -- The loop waits for one delivery at a time, as a live monitor's stream does.
+      await promise;
+    }
   }
 
   public on(event: string, listener: () => void): Disposable {

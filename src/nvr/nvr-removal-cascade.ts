@@ -9,7 +9,8 @@
  *
  *   1. Facts in, actions out. The cascade holds no controller reference. The controller's MAC and its state store arrive as suppliers it pulls at use time, because
  *      neither exists until the controller connects, and the acts another companion owns - cancelling a pending delayed removal, reclaiming a camera's livestream
- *      episodes, retiring a device from the event dispatcher - are reached through the narrow {@link DeviceRemovalCascadeActions} surface handed at construction.
+ *      episodes, stating a device's departure on the broker, retiring a device from the event dispatcher - are reached through the narrow
+ *      {@link DeviceRemovalCascadeActions} surface handed at construction.
  *
  *   2. Removal, not its timing. The cascade holds no timers: every removal runs to completion when it is called. Whether and when a removal happens is the removal
  *      gate's decision, and the gate calls here once it has made it.
@@ -32,6 +33,9 @@ export interface DeviceRemovalCascadeActions {
 
   // Reclaim the livestream-episode entries a removed camera leaves open, so an episode that never recovered does not outlive the camera.
   forgetCamera: (cameraId: string) => void;
+
+  // State the retained offline a removed device leaves on the broker, by its MAC, so a subscriber attaching later does not read the online its last live statement left.
+  publishRemoval: (mac: string) => void;
 
   // Settle and reclaim the event dispatcher's timers and enrichment marks for a removed device.
   retireDevice: (device: ProtectDevice) => void;
@@ -185,6 +189,13 @@ export class DeviceRemovalCascade {
     if(protectDevice) {
 
       this.#actions.retireDevice(protectDevice);
+    }
+
+    // Leave the device's retained offline behind it, its registrations having ended above so nothing states over it. An accessory carrying no MAC of its own - a package
+    // camera, whose topic is its parent's - speaks for no topic, so its removal says nothing.
+    if(accessory.context.mac) {
+
+      this.#actions.publishRemoval(accessory.context.mac);
     }
 
     // Finally, remove it from our list of configured devices and HomeKit.

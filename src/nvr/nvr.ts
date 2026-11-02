@@ -3,12 +3,12 @@
  * nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP } from "homebridge";
-import { APIEvent, createMqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, membershipDelta, mqttConnectionSettings, prefixedLog,
-  retry, superviseLoop } from "homebridge-plugin-utils";
+import { APIEvent, MQTT_AVAILABILITY_OFFLINE, MQTT_AVAILABILITY_ONLINE, createMqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter,
+  membershipDelta, mqttConnectionSettings, mqttTopic, prefixedLog, retry, superviseLoop } from "homebridge-plugin-utils";
 import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
   ProtectDeviceConfig, ProtectLogging, ProtectNvrConfig, StateStore } from "unifi-protect";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, maskAddressCredentials, channels as protectChannels } from "unifi-protect";
-import type { HomebridgePluginLogging, MqttClient, Nullable } from "homebridge-plugin-utils";
+import type { HomebridgePluginLogging, MqttAvailabilityPayload, MqttClient, Nullable } from "homebridge-plugin-utils";
 import { OVERRIDE_ADDRESS_ZONE_WARNING, canTransition, createConnectRetryPolicy, createLivestreamEpisodeLatch, deviceInventory, isDisruptionExpected,
   resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
@@ -42,6 +42,7 @@ import { channels } from "../diagnostics.ts";
 import { configured } from "../devices/device-base.ts";
 import { isolateAccessoryChange } from "./nvr-accessory-change.ts";
 import { livestreamRecoveryDecision } from "../media/livestream-recovery-policy.ts";
+import { mqttTopics } from "../mqtt.ts";
 import { servePlaylist } from "./nvr-playlist.ts";
 
 /**
@@ -125,6 +126,8 @@ export class ProtectNvr {
   // accessories runs. Handed the controller's MAC and its state store as suppliers it pulls at use time; the acts the removal gate, the livestream-episode ledger and
   // the event dispatcher own run back here through its actions.
   readonly #removalCascade: DeviceRemovalCascade;
+  // The MAC of every device this run removed from HomeKit, which each later broker session states offline again, a removal that fell in a broker outage included.
+  readonly #removedMacs = new Set<string>();
   // The removal-stability decision: whether destructive removal is currently allowed, and the graced scheduling of the removals it permits. Fed the controller's
   // good-state through #pushRemovalStability; every act it decides on runs through the actions it was constructed with, a removal through the device-removal cascade
   // and the sweep back here.
@@ -246,6 +249,11 @@ export class ProtectNvr {
 
         cancelPendingRemoval: (uuid: string): void => this.removals.cancelFor(uuid),
         forgetCamera: (cameraId: string): void => this.livestreamEpisodes.forgetCamera(cameraId),
+        publishRemoval: (mac: string): void => {
+
+          this.#removedMacs.add(mac);
+          this.#publishAvailability(mac, MQTT_AVAILABILITY_OFFLINE);
+        },
         retireDevice: (device: ProtectDevice): void => this.events.retireDevice(device)
       },
       controllerMac: (): string => this.ufp.mac,
@@ -308,27 +316,40 @@ export class ProtectNvr {
     this.wireLivestreamNarration();
 
     // Cleanly shut down on Homebridge exit.
-    this.api.on(APIEvent.SHUTDOWN, () => {
+    this.api.on(APIEvent.SHUTDOWN, () => void this.#shutdown());
+  }
 
-      // Tear down the scheduled reboot's timers. The reboot cycle and the no-op confirmation are both induced-lifecycle work that must not survive teardown - one
-      // would command a controller we are disposing, the other would narrate a reboot nobody is waiting on any more.
-      this.reboot.reset();
+  /* The shutdown sequence, in the order HBPU's graceful MQTT end asks for. Homebridge emits its shutdown without awaiting a listener and exits a few seconds later, so
+   * this runs inside that window. A controller with no MQTT client has no words to wait on, so it runs straight through in the shutdown event's own turn.
+   */
+  async #shutdown(): Promise<void> {
 
-      // Tear down the device-removal timers unconditionally. The stability-sweep one-shot and every pending delayed removal are deferred destructive actions that must
-      // not fire against a disposed client; clearing them here - alongside the reboot timers - makes teardown the removal SSOT rather than leaving it contingent on the
-      // transition("shuttingDown") below also pushing good-state. Both clears land on the same state, so the belt-and-suspenders overlap is harmless. A third backstop
-      // rides each companion's own lifetime binding: the transition's abort below disposes both timer registries, which drains anything still armed - and by then these
-      // resets have already emptied them, while the terminal shuttingDown phase means no push can ever ask a disposed registry to arm again.
-      this.removals.reset();
+    // Tear down the scheduled reboot's timers. The reboot cycle and the no-op confirmation are both induced-lifecycle work that must not survive teardown - one
+    // would command a controller we are disposing, the other would narrate a reboot nobody is waiting on any more.
+    this.reboot.reset();
 
-      // Mark the lifecycle phase before tearing down. This is the single chokepoint that aborts the terminal shutdown signal, so every observe loop unwinds as one
-      // cascade. Components that surface "unexpected teardown" warnings (e.g., the recording delegate) consult `nvr.phase` to suppress noise during induced
-      // disruptions; without this transition the disconnect below would fan out as if cameras were failing unexpectedly.
-      this.transition("shuttingDown");
+    // Tear down the device-removal timers unconditionally. The stability-sweep one-shot and every pending delayed removal are deferred destructive actions that must
+    // not fire against a disposed client; clearing them here - alongside the reboot timers - makes teardown the removal SSOT rather than leaving it contingent on the
+    // transition("shuttingDown") below also pushing good-state. Both clears land on the same state, so the belt-and-suspenders overlap is harmless. A third backstop
+    // is each companion's own lifetime binding: the transition's abort below disposes both timer registries, which drains anything still armed - and by then these
+    // resets have already emptied them, while the terminal shuttingDown phase means no push can ever ask a disposed registry to arm again.
+    this.removals.reset();
 
-      // Disconnect from the controller. This tears down active HomeKit streams, HKSV timeshift buffers, and the unifi-protect client connection.
-      void this.disconnect();
-    });
+    // End the MQTT client gracefully, which states every registered final word, each device's retained offline and this controller's, while the broker session still
+    // holds. It comes ahead of the transition below, because aborting the signal the client and those words live on leaves the words unsaid. The rest of the plugin is
+    // not quieted for this bounded grace: anything that publishes meanwhile is refused at debug, and a removal clock that re-arms is cancelled by the transition.
+    if(this.mqtt) {
+
+      await this.mqtt.end();
+    }
+
+    // Mark the lifecycle phase before tearing down. This is the single chokepoint that aborts the terminal shutdown signal, so every observe loop unwinds as one
+    // cascade. Components that surface "unexpected teardown" warnings (e.g., the recording delegate) consult `nvr.phase` to suppress noise during induced
+    // disruptions; without this transition the disconnect below would fan out as if cameras were failing unexpectedly.
+    this.transition("shuttingDown");
+
+    // Disconnect from the controller. This tears down active HomeKit streams, HKSV timeshift buffers, and the unifi-protect client connection.
+    await this.disconnect();
   }
 
   /**
@@ -867,6 +888,8 @@ export class ProtectNvr {
 
     this.mqtt ??= mqttSettings && createMqttClient({ ...mqttSettings, log: this.log }, { signal: this.signal });
 
+    this.#configureAvailability();
+
     // Initialize our liveviews.
     this.liveviews = configured(new ProtectLiveviews(this));
 
@@ -911,6 +934,62 @@ export class ProtectNvr {
     // every raw frame to MQTT and is a no-op unless the user opted in. Both are bound to the terminal shutdown signal and unwind with the rest of the observe tree.
     this.spawnLoop("live events", () => this.events.run(this.signal));
     this.spawnLoop("controller telemetry", () => this.events.publishTelemetry(this.signal));
+  }
+
+  /* Register this controller's own availability statement with the client, the one registration ahead of every owner's, so its connect restatement opens each session's.
+   * The controller's MAC is the scope its liveview, security system and system information topics sit under, so this statement speaks for all of them. The final word is
+   * what the graceful end states while its session holds, published under the very signal the end hands it, the one signal it admits, and with no change gate, because
+   * the broker has to hold offline whatever this controller last stated.
+   */
+  #configureAvailability(): void {
+
+    const mqtt = this.mqtt;
+
+    mqtt?.onConnect(() => this.#restateAvailability(), { signal: this.signal });
+    mqtt?.onEnd(async (signal: AbortSignal): Promise<void> => mqtt.publish(mqttTopic(this.ufp.mac, mqttTopics.availability.topic), MQTT_AVAILABILITY_OFFLINE,
+      { retain: true, signal }), { signal: this.signal });
+  }
+
+  // State an availability on a MAC's topic, retained so a subscriber attaching later reads it, and change-gated so a path that leaves it standing publishes nothing.
+  #publishAvailability(mac: string, availability: MqttAvailabilityPayload): void {
+
+    this.mqtt?.publishGuarded(mqttTopic(mac, mqttTopics.availability.topic), availability, { ifChanged: true, retain: true });
+  }
+
+  // State this controller's availability from its verdict, the root's half of what every accessory it feeds reads.
+  #publishControllerAvailability(): void {
+
+    this.#publishAvailability(this.ufp.mac, this.isAvailable ? MQTT_AVAILABILITY_ONLINE : MQTT_AVAILABILITY_OFFLINE);
+  }
+
+  /* What a new broker session is told about availability from here: this controller's statement, then a retained offline for each device of this controller nothing
+   * serves - each restored accessory no owner has claimed, and each device this run removed. A statement issued with no session is refused and never repeated, and login
+   * adopts its devices in the same run that builds the client, ahead of any session, so this is what reaches a subscriber for a device that is gone. A live device is
+   * subtracted, because it states its own on the same session and this must never contradict a device that is answering, one re-adopted after its removal among them.
+   */
+  #restateAvailability(): void {
+
+    this.#publishControllerAvailability();
+
+    const unserved = new Set(this.#removedMacs);
+
+    for(const accessory of this.platform.accessories) {
+
+      if(accessory.context.mac && (accessory.context.nvr === this.ufp.mac) && !this.platform.isAccessoryClaimed(accessory)) {
+
+        unserved.add(accessory.context.mac);
+      }
+    }
+
+    for(const device of this.configuredDevices.values()) {
+
+      unserved.delete(device.mac);
+    }
+
+    for(const mac of unserved) {
+
+      this.#publishAvailability(mac, MQTT_AVAILABILITY_OFFLINE);
+    }
   }
 
   // Configure NVR-specific settings.
@@ -996,6 +1075,13 @@ export class ProtectNvr {
 
         isolateAccessoryChange({ act: "add", change: () => this.addHomeKitDevice(config), log: this.log, name: describeDevice(config) });
       }
+    }
+
+    // A device leaving the adopted set is no longer available, whether or not it is removed, and the observer that follows its own record skips a vanished one, so its
+    // statement is made here, ahead of the stability gate below.
+    for(const id of toRemove) {
+
+      this.getDeviceById(id)?.publishAvailability();
     }
 
     // Mark for removal any configured device that has left the adopted set - but ONLY when the controller is stable (good for >= the window). During or right after a
@@ -1112,12 +1198,12 @@ export class ProtectNvr {
     this.liveviews?.configureLiveviews();
   }
 
-  // Spawn the connection-state observe loop - the single consumer of connection.observe(), carrying two controller-wide duties on each transition. First it concludes an
-  // induced reboot on the connection's recovery edge (so the resume rides this existing iterator rather than a second subscription); then it pushes recomputed
-  // reachability to every accessory. Controller health is one fact with one reader: rather than N accessories each subscribing to the connection monitor (which would be
-  // 2N iterators and N readers of a single fact), this loop walks the configured accessories and pushes each its recomputed reachability. Pull where the fact is
-  // per-device (the per-device leaf observers); push where the fact is controller-wide (here). The endpoints iterator walks package cameras, so their reachability is
-  // pushed first-class rather than fanned out by the parent doorbell.
+  // Spawn the connection-state observe loop - the single consumer of connection.observe(), carrying the controller-wide duties of each transition. First it concludes an
+  // induced reboot on the connection's recovery edge (so the resume goes through this existing iterator rather than a second subscription); then it re-evaluates the
+  // removal stability clock, states this controller's availability, and tells every device the connection moved. The connection is one fact with one reader: rather than
+  // N devices each subscribing to the connection monitor (which would be 2N iterators and N readers of a single fact), this loop walks the configured devices and calls
+  // each one's noteConnectionChanged. Pull where the fact is per-device (the per-device leaf observers); push where the fact is controller-wide (here). The endpoints
+  // iterator walks package cameras, so each is told first-class rather than fanned out by the parent doorbell.
   private startConnectionObserver(): void {
 
     this.spawnLoop("the controller connection", async () => {
@@ -1137,6 +1223,8 @@ export class ProtectNvr {
         // without re-evaluating here on every connection-state transition a grace timer could fire mid-outage. connection.observe() yields on every state change
         // (degraded / lost / reconnecting / healthy), so reading connection.isHealthy here is what closes the gate the moment a socket-dropping outage begins.
         this.#pushRemovalStability();
+
+        this.#publishControllerAvailability();
 
         for(const device of deviceEndpoints(this.configuredDevices)) {
 

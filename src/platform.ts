@@ -221,6 +221,12 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.#claims.set(accessory.UUID, owner);
   }
 
+  // Whether an owner has taken an accessory over, which a controller reads to tell an accessory it serves from one restored with nothing behind it.
+  public isAccessoryClaimed(accessory: ProtectAccessory): boolean {
+
+    return this.#claims.has(accessory.UUID);
+  }
+
   // Let go of a removed accessory's owner, so its claim cannot answer for an accessory of the same identity added later in this run.
   public releaseAccessory(accessory: ProtectAccessory): void {
 

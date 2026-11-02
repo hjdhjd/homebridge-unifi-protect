@@ -19,9 +19,10 @@
  * real connect in the double's place, and the platform's shutdown registration is run at the end of each row so no process-global diagnostics subscription outlives
  * it. The device-removal cascade runs
  * through the real root the same way: it is a companion the root constructs (nvr-removal-cascade.ts), and the controller double constructs the same one, so the
- * cascade these rows record is the code every removal in either runs.
+ * cascade these rows record is the code every removal in either runs. The controller's own MQTT availability statements run through the real root over HBPU's MQTT
+ * double.
  */
-import { ACCESSORY_SAVE_WINDOW_MS, retry } from "homebridge-plugin-utils";
+import { ACCESSORY_SAVE_WINDOW_MS, APIEvent, retry } from "homebridge-plugin-utils";
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../camera.fixtures.ts";
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthError, ProtectAuthorizationError,
@@ -29,7 +30,8 @@ import { PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_REFUSAL_SCHEDULE_
 import type { ProtectCameraConfig, ProtectClient, ProtectNvrConfig } from "unifi-protect";
 import { TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr,
   restoreAccessories } from "./testing.helpers.ts";
-import { TestClock, assertNoUnhandledRejections, formatLogEntry, linesAt, logCount, loggedAt, settle, settleUntil } from "homebridge-plugin-utils/testing";
+import { TestClock, TestMqttClient, assertNoUnhandledRejections, capturingLog, formatLogEntry, linesAt, logCount, loggedAt, settle,
+  settleUntil } from "homebridge-plugin-utils/testing";
 import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, countActiveRecordingViews, createConnectRetryPolicy,
@@ -1548,6 +1550,393 @@ describe("the controller root's orphan package camera removal", () => {
   });
 });
 
+// The handles a row drives its removal through and reads its outcome from.
+interface LoggedInRoot {
+
+  api: TestHomebridgeApi;
+  connection: TestConnection;
+  double: TestProtectNvr;
+  logEntries: readonly TestLogEntry[];
+  root: ProtectNvr;
+  stop: () => Promise<void>;
+  store: TestStateStore;
+}
+
+// A camera record the root adopts at login: the record makeCameraConfig builds, with the category and the adoption by this controller the membership reconcile reads
+// before it constructs a camera.
+function adopted(config: ProtectCameraConfig): ProtectCameraConfig {
+
+  return { ...config, isAdopted: true, isAdoptedByOther: false, modelKey: "camera" };
+}
+
+// The camera most rows adopt, and the doorbell whose package camera the camera cascade takes with it.
+const PORCH = adopted(makeCameraConfig({ channels: G2_PRO_CHANNELS, id: "camera-porch", mac: "74ACB9000101", name: "Porch Camera" }));
+const FRONT_DOOR = adopted(makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, id: "camera-front-door",
+  mac: "74ACB9000001", name: "Front Door" }));
+
+/* Log a real controller root in over the controller double's platform: the row's accessories restored onto the bridge first, as Homebridge restores its cache before
+ * the plugin logs in, and the row's camera records in the store the root connects to. The controller reports an uptime starting now, so the removal gate stays
+ * unsettled and its stability sweep never runs, and nothing but the row's own removal reaches the platform. stop ends the run: Homebridge's shutdown, the double's
+ * controller and a settle, so no observe loop or process-global subscription outlives the row.
+ */
+async function logIn(options: { accessories?: ProtectAccessory[]; cameras?: ProtectCameraConfig[]; mqtt?: TestMqttClient; userOptions?: string[] } = {}):
+Promise<LoggedInRoot> {
+
+  const clock = new TestClock(TEST_CLOCK_EPOCH);
+  const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+  const store = new TestStateStore(makeProtectState({ cameras: options.cameras ?? [], nvr: nvrConfig }));
+  const { api, controller, logEntries, nvr: double } = makeTestNvr({ clock, store, userOptions: options.userOptions });
+
+  restoreAccessories(double, options.accessories ?? []);
+
+  const client = makeConnectedClient({ nvrConfig, store });
+  const { platform, shutdown } = makeRootPlatform(double);
+  const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
+
+  // The root builds no client of its own beside one already standing, which is how an MQTT double reaches a row.
+  root.mqtt = (options.mqtt ?? null) as unknown as ProtectNvr["mqtt"];
+
+  await root.login();
+  await settle();
+
+  const stop = async (): Promise<void> => {
+
+    shutdown();
+    controller.abort();
+
+    await settle();
+  };
+
+  return { api, connection: client.connection as unknown as TestConnection, double, logEntries, root, stop, store };
+}
+
+describe("the controller root's MQTT availability", () => {
+
+  const CONTROLLER_MAC = makeNvrConfig().mac;
+
+  // Every statement made on a MAC's availability topic, as its word and whether it was retained, in order.
+  function statements(mqtt: TestMqttClient, mac: string): string[] {
+
+    return mqtt.published.filter(({ topic }) => topic === (mac + "/availability")).map(({ payload, retain }) => String(payload) + (retain ? " retained" : ""));
+  }
+
+  // An MQTT double recording its own lines, standing with no broker session unless a row says otherwise.
+  function standMqtt({ connected = false }: { connected?: boolean } = {}): { lines: readonly TestLogEntry[]; mqtt: TestMqttClient } {
+
+    const log = capturingLog();
+    const mqtt = new TestMqttClient({ log });
+
+    mqtt.connected = connected;
+
+    return { lines: log.entries, mqtt };
+  }
+
+  // Liveviews restate themselves on a session, so a session's order reads against something the controller's statement has to come ahead of.
+  test("a session opens with HBPU's statement and then the controller's, ahead of every other restatement", async () => {
+
+    const { mqtt } = standMqtt();
+    const { stop } = await logIn({ cameras: [PORCH], mqtt });
+
+    try {
+
+      assert.deepEqual(statements(mqtt, CONTROLLER_MAC), [], "no session, so nothing was stated");
+
+      mqtt.connected = true;
+
+      assert.deepEqual(mqtt.published.slice(0, 2).map(({ topic }) => topic), [ "availability", CONTROLLER_MAC + "/availability" ]);
+      assert.deepEqual(statements(mqtt, CONTROLLER_MAC), ["online retained"], "the controller reads online");
+      assert.deepEqual(statements(mqtt, PORCH.mac), ["online retained"], "and so does the camera, stating its own");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // The loop states on every transition, and the verdict decides what it says, so a blip the verdict does not read leaves the statement standing.
+  test("the controller and its devices state each transition of the verdict, and a blip it does not read says nothing", async () => {
+
+    const { mqtt } = standMqtt({ connected: true });
+    const { connection, stop } = await logIn({ cameras: [PORCH], mqtt });
+
+    try {
+
+      mqtt.connected = false;
+      mqtt.connected = true;
+
+      const mark = mqtt.published.length;
+
+      connection.isHealthy = false;
+      connection.transition({ from: "healthy", to: "degraded" });
+
+      await settle();
+
+      assert.equal(mqtt.published.length, mark, "a degraded connection the verdict does not read says nothing");
+
+      connection.isLost = true;
+      connection.transition({ from: "degraded", to: "lost" });
+
+      await settle();
+
+      assert.equal(statements(mqtt, CONTROLLER_MAC).at(-1), "offline retained", "the controller's loss is stated");
+      assert.equal(statements(mqtt, PORCH.mac).at(-1), "offline retained", "and on the camera it feeds");
+
+      connection.isHealthy = true;
+      connection.isLost = false;
+      connection.transition({ from: "lost", to: "healthy" });
+
+      await settle();
+
+      assert.equal(statements(mqtt, CONTROLLER_MAC).at(-1), "online retained", "the recovery is stated");
+      assert.equal(statements(mqtt, PORCH.mac).at(-1), "online retained", "and on the camera");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // The root reports an uptime starting at login, so the removal gate refuses to mark anything, and the statement goes out ahead of it regardless.
+  test("a device leaving the adopted set is stated offline ahead of the stability gate, as a vanished record and as an unadopted one", async () => {
+
+    const SHED = adopted(makeCameraConfig({ channels: G2_PRO_CHANNELS, id: "camera-shed", mac: "74ACB9000102", name: "Shed Camera" }));
+    const { mqtt } = standMqtt({ connected: true });
+    const { root, stop, store } = await logIn({ cameras: [ PORCH, SHED ], mqtt });
+
+    try {
+
+      mqtt.connected = false;
+      mqtt.connected = true;
+
+      store.removeCameraRecord(PORCH.id);
+      store.pushCameraPatch(SHED.id, { isAdopted: false });
+
+      await settle();
+
+      assert.equal(statements(mqtt, PORCH.mac).at(-1), "offline retained", "the vanished record reached the broker");
+      assert.equal(statements(mqtt, SHED.mac).at(-1), "offline retained", "and the unadopted one");
+      assert.equal(root.removals.removalStable, false, "with the removal gate closed");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // A statement made with no session is refused and never repeated, so an accessory nothing serves would otherwise leave a stale online on the broker for good.
+  test("an unclaimed restored accessory and a removal before the first session are each stated offline once it starts, and a live device is not", async () => {
+
+    const unclaimed = makeTestAccessory("Old Camera", "74ACB9000103");
+    const removed = adopted(makeCameraConfig({ channels: G2_PRO_CHANNELS, id: "camera-removed", mac: "74ACB9000104", name: "Removed Camera" }));
+
+    const foreign = makeTestAccessory("Foreign Camera", "74ACB9000107");
+
+    unclaimed.context = { mac: "74ACB9000103", nvr: CONTROLLER_MAC };
+    foreign.context = { mac: "74ACB9000107", nvr: "AABBCCDDEEFF" };
+
+    const { mqtt } = standMqtt();
+    const { double, root, stop } = await logIn({ accessories: [ foreign, unclaimed ], cameras: [ PORCH, removed ], mqtt });
+
+    try {
+
+      const accessory = double.platform.accessories.find(({ UUID }) => UUID === accessoryUuid(removed.mac));
+
+      assert.ok(accessory, "the root added the camera it goes on to remove");
+
+      root.removeHomeKitDevice(accessory);
+
+      assert.deepEqual(mqtt.published, [], "no session, so nothing reached the broker");
+
+      mqtt.connected = true;
+
+      assert.deepEqual(statements(mqtt, unclaimed.context.mac ?? ""), ["offline retained"], "the accessory nothing serves reads offline");
+      assert.deepEqual(statements(mqtt, removed.mac), ["offline retained"], "and so does the removal");
+      assert.deepEqual(statements(mqtt, PORCH.mac), ["online retained"], "and the live camera reads only what it says itself");
+      assert.deepEqual(statements(mqtt, "74ACB9000107"), [], "and another controller's accessory is that controller's to state");
+
+      mqtt.connected = false;
+      mqtt.connected = true;
+
+      assert.deepEqual(statements(mqtt, removed.mac), [ "offline retained", "offline retained" ], "a later session is told again, since each starts from nothing");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a removal during a session states the device offline at once, and a second session states it again", async () => {
+
+    const { mqtt } = standMqtt({ connected: true });
+    const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+
+    try {
+
+      mqtt.connected = false;
+      mqtt.connected = true;
+
+      const accessory = double.platform.accessories.find(({ UUID }) => UUID === accessoryUuid(PORCH.mac));
+
+      assert.ok(accessory, "the root added the camera");
+
+      root.removeHomeKitDevice(accessory);
+
+      assert.equal(statements(mqtt, PORCH.mac).at(-1), "offline retained", "the removal's statement goes out with the session standing");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // The removal is on the root's record for the rest of the run, so what comes back under the same MAC has to be taken off what a session is told.
+  test("a device removed and adopted again in the same run is stated only by itself", async () => {
+
+    const { mqtt } = standMqtt();
+    const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+
+    try {
+
+      const accessory = double.platform.accessories.find(({ UUID }) => UUID === accessoryUuid(PORCH.mac));
+
+      assert.ok(accessory, "the root added the camera");
+
+      root.removeHomeKitDevice(accessory);
+      root.addHomeKitDevice(PORCH);
+
+      mqtt.connected = true;
+
+      assert.deepEqual(statements(mqtt, PORCH.mac), ["online retained"], "the session hears the live device and nothing contradicting it");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // A package camera's topic is its parent's, so the removal of an orphan one has no topic of its own to state, and no parent's to speak over.
+  test("removing a package camera whose parent is gone states nothing", async () => {
+
+    const orphan = makeTestAccessory("Orphan Package Camera", "74ACB9000108.PackageCamera");
+
+    orphan.context = { nvr: CONTROLLER_MAC, packageCamera: "74ACB9000108" };
+
+    const { mqtt } = standMqtt({ connected: true });
+    const { double, root, stop } = await logIn({ accessories: [orphan], mqtt });
+
+    try {
+
+      root.removeHomeKitDevice(orphan);
+
+      assert.equal(double.platform.accessories.includes(orphan), false, "the removal ran");
+      assert.deepEqual(statements(mqtt, "74ACB9000108"), [], "and it said nothing on its parent's topic");
+      assert.deepEqual(statements(mqtt, ""), [], "nor on a topic with no MAC in it");
+
+      mqtt.connected = false;
+      mqtt.connected = true;
+
+      assert.deepEqual(statements(mqtt, ""), [], "and a later session is told nothing about it");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // A device the user disabled has no MQTT surface while it stands, and leaves the one statement every removal leaves.
+  test("a disabled device states nothing standing, and its restored accessory's removal states offline", async () => {
+
+    const restored = makeTestAccessory("Disabled Camera", "74ACB9000105");
+    const disabled = adopted(makeCameraConfig({ channels: G2_PRO_CHANNELS, id: "camera-disabled", mac: "74ACB9000105", name: "Disabled Camera" }));
+    const neverAdded = adopted(makeCameraConfig({ channels: G2_PRO_CHANNELS, id: "camera-never", mac: "74ACB9000106", name: "Never Camera" }));
+
+    restored.context = { mac: disabled.mac, nvr: CONTROLLER_MAC };
+
+    const { mqtt } = standMqtt();
+    const { double, stop } = await logIn({ accessories: [restored], cameras: [ disabled, neverAdded ], mqtt,
+      userOptions: [ "Disable.Device." + disabled.mac, "Disable.Device." + neverAdded.mac ] });
+
+    try {
+
+      assert.equal(double.platform.accessories.includes(restored), false, "the restored accessory left HomeKit");
+
+      mqtt.connected = true;
+
+      assert.deepEqual(statements(mqtt, disabled.mac), ["offline retained"], "its removal left the one statement every removal leaves");
+      assert.deepEqual(mqtt.published.filter(({ topic }) => topic.startsWith(neverAdded.mac)), [], "and a disabled device with no accessory has no MQTT surface at all");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // Aborting first would release every word with the lifetime it lives under, so what the row reads is the words themselves and no complaint that any went unsaid.
+  test("shutdown states the controller's and each device's offline, and only then ends the controller's lifetime", async () => {
+
+    const { lines, mqtt } = standMqtt({ connected: true });
+    const { root, stop } = await logIn({ cameras: [PORCH], mqtt });
+
+    try {
+
+      const signalAtWords: boolean[] = [];
+
+      mqtt.onEnd(() => void signalAtWords.push(root.signal.aborted));
+
+      await stop();
+      await settleUntil(() => root.phase === "shuttingDown", { description: "the root to finish its shutdown" });
+
+      assert.equal(statements(mqtt, CONTROLLER_MAC).at(-1), "offline retained", "the controller's word");
+      assert.equal(statements(mqtt, PORCH.mac).at(-1), "offline retained", "and the camera's");
+      assert.deepEqual(signalAtWords, [false], "each stated while the controller's lifetime held");
+      assert.equal(root.signal.aborted, true, "which the shutdown then ended");
+      assert.equal(lines.some(({ message }) => message.includes("went unsaid")), false, "with no word left unsaid");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // HBPU weighs a change-gated publish against whatever the topic last said, so a final word through that gate would say nothing here, and a subscriber reading the end
+  // of the session would never see the word that ends it.
+  test("the controller's final word goes out past the change gate, on a topic that already reads offline", async () => {
+
+    const { mqtt } = standMqtt({ connected: true });
+    const { connection, root, stop } = await logIn({ mqtt });
+
+    try {
+
+      mqtt.connected = false;
+      mqtt.connected = true;
+
+      connection.isLost = true;
+      connection.transition({ from: "healthy", to: "lost" });
+
+      await settle();
+
+      assert.equal(statements(mqtt, CONTROLLER_MAC).at(-1), "offline retained", "the loss is already on the topic");
+
+      const said = statements(mqtt, CONTROLLER_MAC).length;
+
+      await stop();
+      await settleUntil(() => root.phase === "shuttingDown", { description: "the root to finish its shutdown" });
+
+      assert.deepEqual(statements(mqtt, CONTROLLER_MAC).slice(said), ["offline retained"], "and the final word says so again");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // With no client there is nothing to wait on, so the whole of the shutdown stays in the event's own turn, which the rest of the root's teardown has always counted on.
+  test("a controller with no MQTT client shuts down in the shutdown event's own turn", async () => {
+
+    const { double, root, stop } = await logIn();
+
+    try {
+
+      double.platform.api.emit(APIEvent.SHUTDOWN);
+
+      assert.equal(root.phase, "shuttingDown", "the phase moved before the event returned");
+    } finally {
+
+      await stop();
+    }
+  });
+});
+
 describe("the device-removal cascade", () => {
 
   // The controller every row's root logs in as, and another controller, whose accessories this root leaves alone.
@@ -1556,62 +1945,6 @@ describe("the device-removal cascade", () => {
 
   // The prefix the root's logger puts on every line once it has connected: the controller's name and its model.
   const PREFIX = "Test Controller [UniFi Dream Machine SE]: ";
-
-  // The handles a row drives its removal through and reads its outcome from.
-  interface LoggedInRoot {
-
-    api: TestHomebridgeApi;
-    connection: TestConnection;
-    double: TestProtectNvr;
-    logEntries: readonly TestLogEntry[];
-    root: ProtectNvr;
-    stop: () => Promise<void>;
-    store: TestStateStore;
-  }
-
-  // A camera record the root adopts at login: the record makeCameraConfig builds, with the category and the adoption by this controller the membership reconcile reads
-  // before it constructs a camera.
-  function adopted(config: ProtectCameraConfig): ProtectCameraConfig {
-
-    return { ...config, isAdopted: true, isAdoptedByOther: false, modelKey: "camera" };
-  }
-
-  // The camera most rows adopt, and the doorbell whose package camera the camera cascade takes with it.
-  const PORCH = adopted(makeCameraConfig({ channels: G2_PRO_CHANNELS, id: "camera-porch", mac: "74ACB9000101", name: "Porch Camera" }));
-  const FRONT_DOOR = adopted(makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasPackageCamera: true, isDoorbell: true }, id: "camera-front-door",
-    mac: "74ACB9000001", name: "Front Door" }));
-
-  /* Log a real controller root in over the controller double's platform: the row's accessories restored onto the bridge first, as Homebridge restores its cache before
-   * the plugin logs in, and the row's camera records in the store the root connects to. The controller reports an uptime starting now, so the removal gate stays
-   * unsettled and its stability sweep never runs, and nothing but the row's own removal reaches the platform. stop ends the run: Homebridge's shutdown, the double's
-   * controller and a settle, so no observe loop or process-global subscription outlives the row.
-   */
-  async function logIn(options: { accessories?: ProtectAccessory[]; cameras?: ProtectCameraConfig[]; userOptions?: string[] } = {}): Promise<LoggedInRoot> {
-
-    const clock = new TestClock(TEST_CLOCK_EPOCH);
-    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
-    const store = new TestStateStore(makeProtectState({ cameras: options.cameras ?? [], nvr: nvrConfig }));
-    const { api, controller, logEntries, nvr: double } = makeTestNvr({ clock, store, userOptions: options.userOptions });
-
-    restoreAccessories(double, options.accessories ?? []);
-
-    const client = makeConnectedClient({ nvrConfig, store });
-    const { platform, shutdown } = makeRootPlatform(double);
-    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
-
-    await root.login();
-    await settle();
-
-    const stop = async (): Promise<void> => {
-
-      shutdown();
-      controller.abort();
-
-      await settle();
-    };
-
-    return { api, connection: client.connection as unknown as TestConnection, double, logEntries, root, stop, store };
-  }
 
   // Every accessory the root handed Homebridge to unregister, in order.
   function unregistered(api: TestHomebridgeApi): ProtectAccessory[] {

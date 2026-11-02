@@ -1,7 +1,7 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * availability.test.ts: The No Response census, the one verdict behind it, the paths that go past it, and StatusActive beside it, each driven against the REAL device,
- * capability and controller-scoped owner classes.
+ * availability.test.ts: The No Response census, the one verdict behind it, the paths that go past it, StatusActive beside it, and the MQTT statement that reads the same
+ * verdict, each driven against the REAL device, capability and controller-scoped owner classes.
  *
  * An unhandled characteristic shows in no diff: HomeKit reads it from what it holds and marks nothing, so an outage goes unseen on that accessory. The census is
  * therefore the instrument. Each row stands up one family with the flags and fixtures that give it every conditional service, settles the late binds, and reads EVERY
@@ -16,6 +16,8 @@
  * StatusActive stands on a camera's motion, occupancy and ambient light sensors and nowhere else, and it never reads from what the plugin can reach. Those rows run over
  * HAP's own camera controller, which holds the value on a recording camera's motion and occupancy sensors, and they read it through HAP's read path and from what the
  * characteristic holds.
+ *
+ * The MQTT rows cover each path a device's statement goes out by; the paths the controller root owns are in src/nvr/nvr.test.ts, which runs the real root.
  */
 import type { Camera, Chime, Fob, Light, ProtectChimeConfig, ProtectNvrConfig, Relay, Sensor, Viewer } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory, writesTo } from "../testing.helpers.ts";
@@ -29,6 +31,7 @@ import { afterEach, describe, test } from "node:test";
 import { hapStatus, loggedAt, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
 import type { CharacteristicValue } from "homebridge";
+import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL } from "../settings.ts";
 import { ProtectCamera } from "./cameras/camera.ts";
 import { ProtectChime } from "./chime.ts";
 import { ProtectFob } from "./fob.ts";
@@ -1462,6 +1465,291 @@ describe("StatusActive on a camera's sensors", () => {
 
     assert.ok(lightAccessory.getService(Service.MotionSensor), "the light kept the sensor it was restored with");
     assert.deepEqual(statusActiveCarriers(lightAccessory), [], "and no service of a light carries it");
+  });
+});
+
+// Every statement made on a device's availability topic, as its word and whether it was retained, in order.
+function statements(mqtt: TestMqttClient, mac: string): string[] {
+
+  return mqtt.published.filter(({ topic }) => topic === (mac + "/availability")).map(({ payload, retain }) => String(payload) + (retain ? " retained" : ""));
+}
+
+describe("a device's MQTT availability statement", () => {
+
+  afterEach(abortControllers);
+
+  test("a device states online, retained, at the end of its configure, and a path that leaves the verdict where it stood says nothing", () => {
+
+    const config = makeFobConfig();
+    const { fob, mqtt } = standFob(config);
+
+    assert.deepEqual(statements(mqtt, config.mac), ["online retained"], "the configure's statement");
+
+    fob.noteConnectionChanged();
+
+    assert.deepEqual(statements(mqtt, config.mac), ["online retained"], "a refresh that finds nothing moved says nothing");
+  });
+
+  // The controller's verdict is half of every device's, and the connection loop's push is how a device hears of it.
+  test("the controller's loss and its recovery each reach a device's statement through the connection loop's push", () => {
+
+    const config = makeFobConfig();
+    const { fob, mqtt, nvr } = standFob(config);
+
+    nvr.client.connection.isLost = true;
+    fob.noteConnectionChanged();
+
+    assert.deepEqual(statements(mqtt, config.mac), [ "online retained", "offline retained" ], "a lost controller reads offline");
+
+    nvr.client.connection.isLost = false;
+    nvr.client.connection.isRebooting = true;
+    fob.noteConnectionChanged();
+
+    assert.equal(statements(mqtt, config.mac).length, 2, "a reboot reads offline too, which has already been said");
+
+    nvr.client.connection.isRebooting = false;
+    fob.noteConnectionChanged();
+
+    assert.equal(statements(mqtt, config.mac).at(-1), "online retained", "and the recovery reads online");
+  });
+
+  // The record's half moves on its own, with no connection transition to carry it, so the device's own observer states it.
+  test("a device's connection and adoption each reach its statement through its own observer", async () => {
+
+    const { accessory, mqtt, store } = await standCamera();
+    const mac = accessory.context.mac ?? "";
+
+    store.pushCameraPatch("test-camera-1", { state: "DISCONNECTED" });
+
+    await settle();
+
+    assert.equal(statements(mqtt, mac).at(-1), "offline retained", "a camera going away reads offline");
+
+    store.pushCameraPatch("test-camera-1", { state: "CONNECTED" });
+
+    await settle();
+
+    assert.equal(statements(mqtt, mac).at(-1), "online retained", "and coming back reads online");
+
+    store.pushCameraPatch("test-camera-1", { isAdopted: false });
+
+    await settle();
+
+    assert.equal(statements(mqtt, mac).at(-1), "offline retained", "and one no longer adopted reads offline");
+  });
+
+  // The verdict's own exemption reaches the broker: the controller's connection report says nothing about a fob and everything about any other family.
+  test("a DISCONNECTED fob states online until the controller is lost, and a DISCONNECTED viewer states offline", async () => {
+
+    const fobConfig = makeFobConfig();
+    const { fob, mqtt: fobMqtt, nvr: fobNvr, store: fobStore } = standFob(fobConfig);
+
+    fobStore.pushFobPatch("test-fob-1", { state: "DISCONNECTED" });
+
+    await settle();
+
+    assert.deepEqual(statements(fobMqtt, fobConfig.mac), ["online retained"], "an idle fob stays online");
+
+    fobNvr.client.connection.isLost = true;
+    fob.noteConnectionChanged();
+
+    assert.equal(statements(fobMqtt, fobConfig.mac).at(-1), "offline retained", "until its controller is lost");
+
+    const viewerConfig = makeViewerConfig();
+    const viewerStore = new TestStateStore(makeProtectState({ liveviews: [makeLiveviewConfig()], viewers: [viewerConfig] }));
+    const { mqtt: viewerMqtt, nvr: viewerNvr } = standNvr(viewerStore);
+
+    configured(new ProtectViewer(viewerNvr as unknown as ProtectNvr, makeTestAccessory("Test Viewer", viewerConfig.mac),
+      new TestViewerProjection(viewerConfig.id, viewerStore) as unknown as Viewer));
+
+    viewerStore.pushViewerPatch(viewerConfig.id, { state: "DISCONNECTED" });
+
+    await settle();
+
+    assert.deepEqual(statements(viewerMqtt, viewerConfig.mac), [ "online retained", "offline retained" ], "a disconnected viewer is offline");
+  });
+
+  // A vanished record wakes the observer into its record gate, so the root's membership reconcile states that one, and the record's return is the observer's again.
+  test("a record that vanishes says nothing through the observer, and its return within the grace states online", async () => {
+
+    const { accessory, camera, mqtt, store } = await standCamera();
+    const mac = accessory.context.mac ?? "";
+    const record = store.snapshot().cameras.get("test-camera-1");
+
+    assert.ok(record, "the fixture holds the camera's record");
+
+    store.removeCameraRecord("test-camera-1");
+
+    await settle();
+
+    assert.deepEqual(statements(mqtt, mac), ["online retained"], "the observer's gate skipped the vanished record");
+
+    camera.publishAvailability();
+
+    assert.equal(statements(mqtt, mac).at(-1), "offline retained", "and the statement the membership reconcile asks for reads it offline");
+
+    store.addCameraRecord(record);
+
+    await settle();
+
+    assert.equal(statements(mqtt, mac).at(-1), "online retained", "and the record's return reads online");
+  });
+
+  // A device's statement finds the plugin's already on the wire, as HBPU's order holds it, and a family's own restatement finds the device's: availability reads first.
+  test("each broker session restates a device's availability ahead of everything else its family restates", () => {
+
+    const config = makeLightConfig();
+    const store = new TestStateStore(makeProtectState({ lights: [config] }));
+    const { mqtt, nvr } = standNvr(store);
+
+    configured(new ProtectLight(nvr as unknown as ProtectNvr, makeTestAccessory("Test Light", config.mac),
+      new TestLightProjection(config.id, store) as unknown as Light));
+
+    mqtt.connected = false;
+
+    const mark = mqtt.published.length;
+
+    mqtt.connected = true;
+
+    assert.deepEqual(mqtt.published.slice(mark, mark + 3).map(({ topic }) => topic), [ "availability", config.mac + "/availability", config.mac + "/light" ],
+      "HBPU's statement, then the device's, then its state");
+  });
+
+  // The record gate on the restatements every family registers has no business here, since a device lingering in its grace still has this to say.
+  test("a device in its removal grace whose statement fell in a broker outage states offline on the next session", async () => {
+
+    const { accessory, camera, mqtt, store } = await standCamera();
+    const mac = accessory.context.mac ?? "";
+
+    mqtt.connected = false;
+    store.removeCameraRecord("test-camera-1");
+
+    await settle();
+
+    camera.publishAvailability();
+
+    assert.deepEqual(statements(mqtt, mac), ["online retained"], "the broker is away, so the online stands on it");
+
+    mqtt.connected = true;
+
+    assert.equal(statements(mqtt, mac).at(-1), "offline retained", "and the next session replaces it");
+  });
+
+  test("a device states offline, retained, inside the client's end, and one cleaned up mid-run says nothing there", async () => {
+
+    const standing = makeFobConfig({ mac: "74ACB9000601" });
+    const released = makeFobConfig({ id: "test-fob-2", mac: "74ACB9000602" });
+    const store = new TestStateStore(makeProtectState({ fobs: [ standing, released ] }));
+    const { logEntries, mqtt, nvr } = standNvr(store);
+
+    configured(new ProtectFob(nvr as unknown as ProtectNvr, makeTestAccessory("Standing Fob", standing.mac),
+      new TestFobProjection(standing.id, store) as unknown as Fob));
+    configured(new ProtectFob(nvr as unknown as ProtectNvr, makeTestAccessory("Released Fob", released.mac),
+      new TestFobProjection(released.id, store) as unknown as Fob)).cleanup();
+
+    await mqtt.end();
+
+    assert.deepEqual(statements(mqtt, standing.mac), [ "online retained", "offline retained" ], "the standing fob's final word");
+    assert.deepEqual(statements(mqtt, released.mac), ["online retained"], "and the one cleaned up has none left to say");
+    assert.equal(logEntries.some(({ message }) => message.includes("went unsaid")), false, "with no word left unsaid");
+  });
+
+  // HBPU weighs a change-gated publish against whatever the topic last said, so a final word through that gate would say nothing here, and a subscriber reading the end
+  // of the session would never see the word that ends it.
+  test("a device's final word goes out past the change gate, on a topic that already reads offline", async () => {
+
+    const config = makeFobConfig();
+    const { fob, mqtt, nvr } = standFob(config);
+
+    nvr.client.connection.isLost = true;
+    fob.noteConnectionChanged();
+
+    assert.deepEqual(statements(mqtt, config.mac), [ "online retained", "offline retained" ], "the loss is already on the topic");
+
+    await mqtt.end();
+
+    assert.deepEqual(statements(mqtt, config.mac), [ "online retained", "offline retained", "offline retained" ], "and the final word says so again");
+  });
+
+  // The removal's statement is change-gated, so it adds nothing where the device already said so, and writes the gate's memory, so a device re-adopted under the same
+  // identity is heard saying online.
+  test("a removal states the device offline, retained and change-gated, and what is re-adopted under its MAC is heard saying online", () => {
+
+    const config = makeFobConfig();
+    const { accessory, fob, mqtt, nvr, store } = standFob(config);
+
+    nvr.platform.accessories.push(accessory);
+    nvr.configuredDevices.set(accessory.UUID, fob);
+    nvr.removeHomeKitDevice(accessory);
+
+    assert.deepEqual(statements(mqtt, config.mac), [ "online retained", "offline retained" ], "the removal's statement");
+
+    configured(new ProtectFob(nvr as unknown as ProtectNvr, makeTestAccessory("Test Fob", config.mac), new TestFobProjection(config.id, store) as unknown as Fob));
+
+    assert.equal(statements(mqtt, config.mac).at(-1), "online retained", "the next device on that topic is heard");
+  });
+
+  test("a removal of a device that already said so adds nothing", () => {
+
+    const config = makeFobConfig();
+    const { accessory, fob, mqtt, nvr } = standFob(config);
+
+    nvr.client.connection.isLost = true;
+    fob.noteConnectionChanged();
+    nvr.platform.accessories.push(accessory);
+
+    const said = statements(mqtt, config.mac).length;
+
+    nvr.removeHomeKitDevice(accessory);
+
+    assert.equal(nvr.platform.accessories.includes(accessory), false, "the removal ran");
+    assert.equal(statements(mqtt, config.mac).length, said, "and its statement found the topic already there");
+  });
+
+  // A package camera's topics sit under its parent's MAC, so a statement of its own would speak over the parent that stands for the shared hardware.
+  test("a doorbell and the package camera standing beside it say one final word between them", async () => {
+
+    const { accessory, camera, mqtt } = await standCamera({ config: { channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasMic: true, hasPackageCamera: true,
+      isDoorbell: true } } });
+
+    assert.ok(camera.doorbell?.packageCamera, "the doorbell stood its package camera up");
+
+    await mqtt.end();
+
+    assert.deepEqual(statements(mqtt, accessory.context.mac ?? ""), [ "online retained", "offline retained" ], "the parent's word, and none from the package camera");
+  });
+
+  test("a package camera states nothing of its own, through its detach, its push and the client's end, and its parent speaks for the topic", async () => {
+
+    const { accessory, camera, mqtt, nvr, store } = await standCamera({ config: { channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasMic: true, hasPackageCamera: true,
+      isDoorbell: true } } });
+    const mac = accessory.context.mac ?? "";
+    const packageCamera = camera.doorbell?.packageCamera;
+
+    assert.ok(packageCamera, "the doorbell stood its package camera up");
+    assert.deepEqual(statements(mqtt, mac), ["online retained"], "the doorbell and its package camera stated once between them");
+
+    nvr.client.connection.isLost = true;
+    packageCamera.noteConnectionChanged();
+
+    assert.deepEqual(statements(mqtt, mac), ["online retained"], "the package camera's push says nothing");
+
+    nvr.client.connection.isLost = false;
+
+    assert.equal(packageCamera.accessory.context.mac, undefined, "a package camera's accessory carries no MAC of its own");
+
+    store.pushCameraFeatureFlags("test-camera-1", { hasPackageCamera: false });
+
+    await settle();
+
+    nvr.platform.clock.advance(PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL * 1000);
+
+    assert.equal(nvr.platform.accessories.includes(packageCamera.accessory), false, "the package camera's detach ran");
+    assert.deepEqual(statements(mqtt, mac), ["online retained"], "and said nothing over its parent");
+
+    await mqtt.end();
+
+    assert.deepEqual(statements(mqtt, mac), [ "online retained", "offline retained" ], "the end's word is the parent's alone");
   });
 });
 

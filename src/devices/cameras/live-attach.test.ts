@@ -77,7 +77,7 @@ describe("live-attach reclassification (suite C)", () => {
 
     assert.ok(doorbellService, "the Doorbell service now exists");
     assert.equal(doorbellService.isPrimaryService, true, "the Doorbell service is primary");
-    assert.equal(store.observerCount, 19, "the promoted camera carries the nineteen-observer doorbell census");
+    assert.equal(store.observerCount, 20, "the promoted camera carries the doorbell census, with its MQTT availability observer");
 
     // The rebuild fires exactly one removeController then one configureController, in that order, at this event, since the CameraController is the one HAP
     // object that cannot change in place and must be torn down and reconfigured to pick up the HKSV factory reset and supported-config hash change.

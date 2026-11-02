@@ -191,7 +191,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
   test("seven observers register, construction wakes none, and the always-present Battery service carries its battery state", () => {
 
-    assert.equal(store.observerCount, 7, "the two base observers plus the sensor's five are registered against the store double");
+    assert.equal(store.observerCount, 8, "the base observers, the MQTT availability observer and the sensor's five are registered against the store double");
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
 
     const battery = accessory.getService(Service.Battery);
@@ -1268,7 +1268,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
   test("seven observers register and a bare alarmTriggeredAt push wakes only its observer and sensor.config", async () => {
 
-    assert.equal(store.observerCount, 7, "the two base observers plus the sensor's five are registered against the store double");
+    assert.equal(store.observerCount, 8, "the base observers, the MQTT availability observer and the sensor's five are registered against the store double");
 
     const baseline = wakeLog.length;
 
@@ -1961,7 +1961,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     const service = built.accessory.getService(Service.AirQualitySensor);
 
     assert.ok(service, "the service exists before the patch");
-    assert.equal(built.store.observerCount, 7, "the air-quality surface added no observer - it goes through the reconcile the whole-record observer already drives");
+    assert.equal(built.store.observerCount, 8, "the air-quality surface added no observer - it goes through the reconcile the whole-record observer already drives");
 
     const baseline = wakeLog.length;
 

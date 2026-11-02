@@ -135,9 +135,9 @@ describe("real ProtectChime construction and play behavior", () => {
     controllers.length = 0;
   });
 
-  test("three observers register, construction wakes none, and the buzzer plus one speaker switch exist", () => {
+  test("its observers register, construction wakes none, and the buzzer plus one speaker switch exist", () => {
 
-    assert.equal(store.observerCount, 3, "the two base observers plus the chime's ringtone-collection observer are registered against the store double");
+    assert.equal(store.observerCount, 4, "the base observers, the MQTT availability observer and the chime's ringtone-collection observer are registered");
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
     assert.ok(accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_BUZZER), "configureDevice configured the buzzer switch");
     assert.ok(accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_DOORBELL_CHIME_SPEAKER + ".test-ringtone-1"),
@@ -201,7 +201,7 @@ describe("real ProtectChime construction and play behavior", () => {
 
     assert.equal(projection.playBuzzerCalls.length, 1, "the real playTone dispatched a single playBuzzer call with no ringtone join");
     assert.equal(projection.playSpeakerCalls.length, 0, "the buzzer never dispatches to the speaker");
-    assert.deepEqual(mqtt.published, [{ payload: "buzzer", retain: false, topic: projection.config.mac + "/tone" }],
+    assert.deepEqual(mqtt.publishedTo("/tone"), [{ payload: "buzzer", retain: false, topic: projection.config.mac + "/tone" }],
       "an accepted buzzer publishes its tone name on the device-scoped topic");
     assert.ok(loggedAt(logEntries, "info", "Playing buzzer."), "the Playing info log fired for the buzzer");
     assert.equal(await triggerGet(buzzerSwitch.getCharacteristic(Characteristic.On)), true, "the On getter reads the armed play-timer");
@@ -288,7 +288,7 @@ describe("real ProtectChime construction and play behavior", () => {
     await triggerSet(speakerSwitch.getCharacteristic(Characteristic.On), true);
 
     assert.equal(fixture.projection.playSpeakerCalls.length, 0, "no command is issued when there is no ring to source playback from");
-    assert.equal(fixture.mqtt.published.length, 0, "a no-op play publishes nothing");
+    assert.equal(fixture.mqtt.publishedTo("/tone").length, 0, "a no-op play publishes nothing");
     assert.ok(!loggedAt(fixture.logEntries, "info", "Playing Empty Ring."), "the Playing info log does NOT fire on the no-op set");
 
     // Let the deferred revert (outside this.timers) fire within the test; no playback-reset timer is armed on a no-op, so there is none to clean up.
@@ -311,7 +311,7 @@ describe("real ProtectChime construction and play behavior", () => {
     await triggerSet(speakerSwitch.getCharacteristic(Characteristic.On), true);
 
     assert.equal(projection.playSpeakerCalls.length, 1, "the command was attempted");
-    assert.equal(mqtt.published.length, 0, "a failed play publishes nothing");
+    assert.equal(mqtt.publishedTo("/tone").length, 0, "a failed play publishes nothing");
     assert.ok(loggedAt(logEntries, "error", "Unable to play Test Ringtone: The chime is unreachable."),
       "the shared command-error helper reported the single failure line");
     assert.ok(!loggedAt(logEntries, "info", "Playing Test Ringtone."), "the Playing info log does NOT fire on the failed play");
@@ -349,7 +349,7 @@ describe("real ProtectChime construction and play behavior", () => {
     await triggerSet(buzzerSwitch.getCharacteristic(Characteristic.On), false);
 
     assert.equal(projection.playBuzzerCalls.length, 0, "a falsy set issues no command - you cannot undo a play");
-    assert.equal(mqtt.published.length, 0, "a falsy set publishes nothing");
+    assert.equal(mqtt.publishedTo("/tone").length, 0, "a falsy set publishes nothing");
     assert.ok(!loggedAt(logEntries, "info", "Playing "), "a falsy set logs no Playing line and arms no play-timer");
 
     // The falsy path arms only the deferred revert (outside this.timers); let it fire within the test.

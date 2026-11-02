@@ -143,7 +143,7 @@ describe("package camera remove-on-false (BC2)", () => {
 
     try {
 
-      assert.equal(store.observerCount, 19, "only the doorbell's observers survive the detach");
+      assert.equal(store.observerCount, 20, "only the doorbell's observers survive the detach, its MQTT availability observer among them");
       store.pushCameraPatch(harness.cameraId, { state: "DISCONNECTED" });
 
       await settle();

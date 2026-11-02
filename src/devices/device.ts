@@ -3,12 +3,13 @@
  * device.ts: ProtectDevice - the per-accessory device base (its shared spine, ProtectBase, lives in device-base.ts).
  */
 import type { API, CharacteristicValue, Service } from "homebridge";
-import type { AcquireServiceOptions, AcquireServiceResult, HomebridgePluginLogging, Nullable, ValidServiceOptions, ValidServiceResult } from "homebridge-plugin-utils";
+import type { AcquireServiceOptions, AcquireServiceResult, HomebridgePluginLogging, MqttAvailabilityPayload, Nullable, ValidServiceOptions,
+  ValidServiceResult } from "homebridge-plugin-utils";
 import type { DeviceCollectionKey, ProtectDeviceConfig, ProtectState } from "unifi-protect";
+import { MQTT_AVAILABILITY_OFFLINE, MQTT_AVAILABILITY_ONLINE, acquireService, getServiceName, mqttGetTopic, mqttSetTopic, mqttTopic, ownedName, presenceChanged,
+  resolveNameOverride, sanitizeName, setAccessoryName, setServiceName, validCharacteristic, validService, watchServiceName } from "homebridge-plugin-utils";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, ProtectServiceNaming, ProtectServiceOptions, WithoutIdentity } from "../types.ts";
-import { acquireService, getServiceName, mqttGetTopic, mqttSetTopic, ownedName, presenceChanged, resolveNameOverride, sanitizeName, setAccessoryName, setServiceName,
-  validCharacteristic, validService, watchServiceName } from "homebridge-plugin-utils";
 import { describeDevice, deviceDisplayNaming } from "./device-descriptor.ts";
 import { isDeviceAdopted, isDeviceOnline } from "unifi-protect";
 import { legacyFamilyForOption, resolveLegacySelection } from "../options-legacy.ts";
@@ -177,14 +178,17 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   /* Set this device up for HomeKit, the template every family shares: the hints first, because every service acquisition reads them to decide whether the plugin owns
    * the part's name, then the family's own configuration, then its observers. A family supplies configureDevice and extends spawnObservers; it never overrides this
    * order. The device claims its accessory last, so a restored accessory goes on refusing until the setup standing behind it has finished, and one whose setup threw
-   * never stops.
+   * never stops. Its availability statement brackets the family's work: what keeps the statement current registers ahead of everything the family registers, so it opens
+   * every later broker session's restatements, and the statement itself goes out once the claim has made it true.
    */
   public override configure(): void {
 
     this.configureHints();
+    this.configureAvailability();
     this.configureDevice();
     this.spawnObservers();
     this.platform.claimAccessory(this.accessory, this);
+    this.publishAvailability();
   }
 
   // Configure the family's HomeKit services, characteristics, and MQTT interface on this device's accessory, the family's half of the configure() template above.
@@ -1045,11 +1049,60 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     this.platform.persistence.persist(this.accessory);
   }
 
-  // Pushed by the NVR's connection observe loop each time the connection moves, walking every device from one reader of that fact. The base device holds nothing that
-  // depends on it, and a family that does extends this.
+  // Pushed by the NVR's connection observe loop each time the connection moves, walking every device from one reader of that fact. The connection is half of what this
+  // device's availability reads, so the statement is made again here, and a family with more that depends on the connection extends this.
   public noteConnectionChanged(): void {
 
-    // No-op by default; the camera family's override re-establishes its buffer and settles its reboot watch.
+    this.publishAvailability();
+  }
+
+  /* Keep this device's availability statement standing on the broker wherever the controller's MQTT is enabled, an MQTT that is not costing nothing at all.
+   *
+   * Each broker session restates it, since the client forgets what each topic last delivered when a session starts. This registers on the client directly rather than
+   * through restateOnConnect, which skips a device whose record is absent: a device lingering in its removal grace still has this one thing to say, and with a statement
+   * lost to a broker outage, the online it stated last would otherwise stand until the removal.
+   *
+   * The final word is stated inside the client's graceful end, so the broker holds the device offline while the plugin is not running. It publishes on the client under
+   * the very signal the end hands it, the one signal the end admits, and it skips the change gate, because the broker has to hold offline whatever this device last
+   * stated. The registration lives as long as this device does, so a device removed mid-run, whose removal already said so, says nothing more.
+   *
+   * The observer follows the record's half of the verdict. Its selector reduces adoption and connection to one value, so it wakes on a change to either and on nothing
+   * else in the record, and the change gate is what decides whether a wake says anything, which is how a family that ignores one of them stays quiet about it. A record
+   * that vanishes wakes it into observeState's gate, which skips the handler, so the membership reconcile states that one, and the record's return wakes it again.
+   */
+  protected configureAvailability(): void {
+
+    const mqtt = this.nvr.mqtt;
+
+    if(!mqtt) {
+
+      return;
+    }
+
+    const config = this.deviceConfigSelector();
+
+    mqtt.onConnect(() => this.publishAvailability(), { signal: this.observeSignal });
+    mqtt.onEnd(async (signal: AbortSignal): Promise<void> => mqtt.publish(mqttTopic(this.mqttId, mqttTopics.availability.topic), MQTT_AVAILABILITY_OFFLINE,
+      { retain: true, signal }), { signal: this.observeSignal });
+
+    this.observeState({ key: "device.availability", selector: (state) => {
+
+      const record = config(state);
+
+      return record && [ isDeviceAdopted(record), isDeviceOnline(record) ].join();
+    }, title: "availability" }, () => this.publishAvailability());
+  }
+
+  /* State this device's availability on its own topic, read from the verdict every handler's refusal reads, so what HomeKit is shown and what the broker holds cannot
+   * disagree. It is retained, so a subscriber attaching mid-session reads the last statement, and it composes with the plugin-level statement the client makes: a device
+   * is available only when both read online. It is change-gated because more than one path restates it, so one that leaves the verdict where it stood publishes nothing.
+   * Public because the controller states a device leaving its adopted set, whose record the device's own observer can no longer read.
+   */
+  public publishAvailability(): void {
+
+    const availability: MqttAvailabilityPayload = this.isAvailable ? MQTT_AVAILABILITY_ONLINE : MQTT_AVAILABILITY_OFFLINE;
+
+    this.publishState(mqttTopics.availability.topic, availability, { retain: true });
   }
 
   // The HomeKit / event-timer identity of this device, sourced from the persisted accessory-context MAC rather than the live config so it survives a vanished record. For

@@ -137,7 +137,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
 
   test("four observers register, construction wakes none, and a liveview switch per seeded liveview exists", () => {
 
-    assert.equal(store.observerCount, 4, "the two base observers plus the viewer's active-liveview and liveview-collection observers are registered");
+    assert.equal(store.observerCount, 5, "the base observers, the MQTT availability observer and the viewer's liveview observers are registered");
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
     assert.ok(accessory.getServiceById(Service.Switch, "liveview-1"), "a liveview switch exists for the first seeded liveview");
     assert.ok(accessory.getServiceById(Service.Switch, "liveview-2"), "a liveview switch exists for the second seeded liveview");
