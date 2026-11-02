@@ -4,7 +4,7 @@
  */
 import { AudioRecordingCodecType, capabilityGate, formatErrorMessage, parseValueList, presenceChanged, toStartCase, validCharacteristic } from "homebridge-plugin-utils";
 import type { Camera, LivestreamSource, ProtectState, SnapshotOptions, TalkbackSession } from "unifi-protect";
-import type { CharacteristicValue, Resolution } from "homebridge";
+import type { CharacteristicValue, Resolution, Service } from "homebridge";
 import type { LivestreamAudioFormat, StreamingDelegate } from "../../media/stream-delegate.ts";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
 import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS, PROTECT_NVR_REBOOT_RECENCY_MS,
@@ -141,7 +141,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   private isDeleted: boolean;
   public isRinging: boolean;
   // The latched tamper state, set by the firehose router's tamper delivery (a one-way latch, like isRinging is set by the doorbell delivery) and read back by the
-  // tamper-detection onGet and the availability projection. Public because its single writer is the NVR-level event dispatch, not this class.
+  // tamper-detection onGet and the state-change re-apply. Public because its single writer is the NVR-level event dispatch, not this class.
   public isTampered: boolean;
   public detectLicensePlate: string[];
   // The composed doorbell capability, attached when (and only when) the controller reports this camera as a doorbell. It is assigned only once the capability's
@@ -151,8 +151,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // arm never double-register (homebridge-plugin-utils subscribe is not safe to call twice). It starts false, and ProtectCamera's own configureDoorbellRingMqtt alone
   // sets it, after the gate passes.
   #ringMqttRegistered = false;
-  // The composed ambient light capability, built the first time this camera reconciles and held for the rest of its life. Nullable, which is what makes the
-  // availability delegation total: a camera whose capability was never built - and one already torn down - optional-chains to a no-op.
+  // The composed ambient light capability, built the first time this camera reconciles and held for the rest of its life, which the accessor's single assignment is what
+  // holds. Nullable until then, and again once the camera is torn down.
   #ambientLight: Nullable<AmbientLightCapability> = null;
   // The composed streaming capability, acquired when this camera is configured and held for the rest of its life. Nullable, which is what makes the NVR-walk reads total:
   // a camera whose capability was never acquired - and one already torn down - optional-chains to a no-op.
@@ -537,7 +537,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     this.doorbell = null;
 
     // Release the ambient light handle. The capability needs no cleanup call of its own - its lifetime signal is composed against this camera's, so the super below
-    // drains its poll - and nulling the handle here is what keeps the availability delegation total once the camera is gone.
+    // drains its poll.
     this.#ambientLight = null;
 
     // Tear down the streaming capability, which releases its delegate and unregisters the controller it registered.
@@ -585,10 +585,11 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     // The lifecycle state enum drives independent reactions, so each gets its own observer on the same slice. We watch state because isOnline - and therefore the
     // device-online half of isReachable - derives from it; the controller-health half is pushed by the NVR connection loop, not observed here. This wake carries the
-    // availability projection, the reboot-return watch (the path a camera that comes back on its own takes), and, on the connect edge, the capability reconcile.
-    this.observeState({ key: "camera.state", selector: state => cam(state)?.state, title: "availability" }, () => {
+    // tamper re-apply and the buffer supervisor's wake, the reboot-return watch (the path a camera that comes back on its own takes), and, on the connect edge, the
+    // capability reconcile.
+    this.observeState({ key: "camera.state", selector: state => cam(state)?.state, title: "camera state" }, () => {
 
-      this.updateAvailability();
+      this.updateCameraState();
       this.#reconcileRebootReturn();
 
       // The capability reconcile holds back a frozen-capability reading taken while the camera is not connected, so the connect edge is a capability wake: it lands
@@ -2007,7 +2008,7 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // its own slice; this composition re-applies them all at once.
   public updateDevice(): boolean {
 
-    this.updateAvailability();
+    this.updateCameraState();
     this.updateNightVision();
     this.updateStatusIndicator();
     this.updateRecordingSwitches();
@@ -2018,43 +2019,33 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     return true;
   }
 
-  // Push the availability projection: StatusActive on the motion and light sensors (the device-online half of reachability), plus a re-apply of the latched
-  // tamper state when the motion sensor actually carries StatusTampered. We guard that re-apply behind testCharacteristic because updateCharacteristic routes
-  // through getCharacteristic, which lazily materializes an absent optional characteristic - an unguarded write would sprout an always-false phantom
-  // StatusTampered onto a camera without tamper detection. Guarding it mirrors how the sensor family fans StatusTampered out, and it lets this one base
-  // projection serve the package camera too: the package configures no tamper characteristic and carries no light sensor, so the guarded base produces exactly
-  // the package's surface and the package needs no override of its own. Driven by the lifecycle-state observer, which the package camera spawns independently
+  // React to a change in the camera's lifecycle state: a re-apply of the latched tamper state when the motion sensor actually carries StatusTampered, and a wake of the
+  // buffer's supervisor. We guard that re-apply behind testCharacteristic because updateCharacteristic routes through getCharacteristic, which lazily materializes an
+  // absent optional characteristic - an unguarded write would sprout an always-false phantom StatusTampered onto a camera without tamper detection. Guarding it mirrors
+  // how the sensor family fans StatusTampered out, and it lets this one reaction serve the package camera too: the package configures no tamper characteristic, so the
+  // guarded write does nothing there and the package needs no override of its own. Driven by the lifecycle-state observer, which the package camera spawns independently
   // against the shared physical device's state.
-  protected updateAvailability(): void {
+  protected updateCameraState(): void {
 
     const motionSensor = this.accessory.getService(this.hap.Service.MotionSensor);
-
-    motionSensor?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
 
     if(motionSensor?.testCharacteristic(this.hap.Characteristic.StatusTampered)) {
 
       motionSensor.updateCharacteristic(this.hap.Characteristic.StatusTampered, this.isTampered);
     }
 
-    // The light sensor's reachability push belongs to the capability that owns the service, so we delegate rather than reach into the accessory, exactly as updateDevice
-    // composes the doorbell capability's own refresh. The optional chain no-ops for a camera whose capability was never built or has been released - the package camera,
-    // which never reaches the reconcile chokepoint, and any camera after teardown.
-    this.#ambientLight?.updateAvailability();
-
-    // Wake the supervisor on every availability change, both directions. The offline edge stops an in-flight buffer through the honest terminated path, and the online
+    // Wake the supervisor on every lifecycle state change, both directions. The offline edge stops an in-flight buffer through the honest terminated path, and the online
     // edge re-establishes a buffer an offline-at-startup reconcile could not - so this is deliberately NOT reachability-gated. The optional chain no-ops for a camera
     // whose streaming delegate has not been built yet, and the reconcile's own coalescing makes any sweep-driven extra call a harmless no-op.
     void this.stream?.timeshift?.reconcile();
   }
 
-  // Push the reachability projection, then wake the supervisor when the camera is reachable. Overrides the base to add the streaming-arm kick: the base rewrites
-  // StatusActive from isReachable and reports the transition, and on a reachable camera we reconcile so a buffer that could not establish while the camera was unhealthy
-  // re-establishes in place. The kick is reachability-gated - the unhealthy edge preserves recover-in-place and must not tear a live buffer down here - but is NOT keyed
-  // on the returned transition, which is null when no service carries StatusActive, so the buffer still revives on a camera that advertises no StatusActive
-  // characteristic.
-  public override refreshReachability(): Nullable<{ now: boolean; was: boolean }> {
+  // Wake the supervisor when the camera is reachable, and settle the reboot watch. Overrides the base to add the streaming-arm kick: on a reachable camera we reconcile
+  // so a buffer that could not establish while the camera was unhealthy re-establishes in place. The kick is reachability-gated, because the unhealthy edge preserves
+  // recover-in-place and must not tear a live buffer down here.
+  public override noteConnectionChanged(): void {
 
-    const transition = super.refreshReachability();
+    super.noteConnectionChanged();
 
     if(this.isReachable) {
 
@@ -2062,14 +2053,12 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     }
 
     this.#reconcileRebootReturn();
-
-    return transition;
   }
 
   /**
    * Note that the controller rebooted and start watching for this camera to come back. Every camera blips when its controller reboots, so the plugin quiets those
    * disruptions for a settling window...a camera that is still away when the window expires is the genuine exception, and this watch is what gives it a voice. The fact
-   * belongs to the physical camera rather than to HomeKit Secure Video, which is why it lives here beside the availability projection: a camera nobody records is
+   * belongs to the physical camera rather than to HomeKit Secure Video, which is why it lives here beside the camera state reaction: a camera nobody records is
    * exactly as gone as one that is.
    *
    * Arming is unconditional. The controller's reboot event arrives only after a fresh bootstrap has re-dispatched current device state, so there is no pre-reboot
@@ -2230,6 +2219,29 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   public get videoCodecName(): string {
 
     return this.fromRecord((config) => config.videoCodec.replace("h265", "hevc"), "").toUpperCase();
+  }
+
+  /* A camera's motion and occupancy sensors carry StatusActive from the moment they are set up, and it never reads from what the plugin can reach. HAP adds a
+   * characteristic reading false, so one this sensor does not carry yet starts active. Where the camera can record, that is the plugin's only write, because HAP's
+   * controller holds the value from its build on, writing active and then what it saved, so a value the accessory cache restored is left for it. Everywhere else nothing
+   * holds the value, so it reads active for good, which also clears a value the cache restored.
+   */
+  protected override settleStatusActive(service: Service): void {
+
+    const transition = validCharacteristic({ characteristic: this.hap.Characteristic.StatusActive, service, validate: true });
+
+    // A characteristic the gate attached changes the service Homebridge's accessory cache holds, so the accessory is marked for the next save.
+    if(presenceChanged(transition)) {
+
+      this.platform.persistence.persist(this.accessory);
+    }
+
+    if((transition === "attached") || !this.isHksvCapable) {
+
+      service.updateCharacteristic(this.hap.Characteristic.StatusActive, true);
+    }
+
+    this.answerHeld(service, this.hap.Characteristic.StatusActive);
   }
 
   // Whether this camera can back HomeKit Secure Video: the controller's motion report, read through the record by the shared eligibility predicate. Read non-throwing

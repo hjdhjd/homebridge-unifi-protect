@@ -8,7 +8,7 @@ import type { DeviceCollectionKey, ProtectDeviceConfig, ProtectState } from "uni
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, ProtectServiceNaming, ProtectServiceOptions, WithoutIdentity } from "../types.ts";
 import { acquireService, getServiceName, mqttGetTopic, mqttSetTopic, ownedName, presenceChanged, resolveNameOverride, sanitizeName, setAccessoryName, setServiceName,
-  updateServices, validService, watchServiceName } from "homebridge-plugin-utils";
+  validCharacteristic, validService, watchServiceName } from "homebridge-plugin-utils";
 import { describeDevice, deviceDisplayNaming } from "./device-descriptor.ts";
 import { isDeviceAdopted, isDeviceOnline } from "unifi-protect";
 import { legacyFamilyForOption, resolveLegacySelection } from "../options-legacy.ts";
@@ -547,10 +547,9 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
       // Initialize the state of the motion sensor.
       service.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
-      service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
+      this.settleStatusActive(service);
 
       this.answerHeld(service, this.hap.Characteristic.MotionDetected);
-      service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(this.answering(() => this.isReachable));
 
       // Configure our MQTT support.
       this.subscribeGet(mqttTopics.motion.topic, mqttTopics.motion.label,
@@ -574,6 +573,23 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     }
 
     return true;
+  }
+
+  // Settle StatusActive on a motion or occupancy sensor as it is set up. A light or a standalone sensor carries none, one restored from the accessory cache included, No
+  // Response being what HomeKit shows when it cannot be reached. The camera family overrides this, because a camera's sensors carry it.
+  protected settleStatusActive(service: Service): void {
+
+    this.removeStatusActive(service);
+  }
+
+  // Take StatusActive off a service, the one a restored service carries from the accessory cache included, marking the accessory for the next save when that changed what
+  // Homebridge's accessory cache holds. The gate reads presence without attaching, so a service that never carried it costs one lookup.
+  protected removeStatusActive(service: Service): void {
+
+    if(presenceChanged(validCharacteristic({ characteristic: this.hap.Characteristic.StatusActive, service, validate: false }))) {
+
+      this.platform.persistence.persist(this.accessory);
+    }
   }
 
   // Configure a switch to easily activate or deactivate motion sensor detection for HomeKit.
@@ -700,13 +716,9 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
       // Initialize the state of the occupancy sensor.
       service.updateCharacteristic(this.hap.Characteristic.OccupancyDetected, false);
-      service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
+      this.settleStatusActive(service);
 
       this.answerHeld(service, this.hap.Characteristic.OccupancyDetected);
-      service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(this.answering(() => {
-
-        return this.isReachable;
-      }));
 
       // Resolve which smart detection types determine occupancy through the family's one derivation. It answers a fresh list that is assigned whole, so a live
       // re-creation of the service starts from the current answer rather than adding to the previous one.
@@ -872,9 +884,9 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
 
   // Two-scope reachability: controller health gates every device at once (a controller outage freezes device.isOnline at a stale value, so it cannot be trusted alone),
   // device.isOnline gates each device. This answers whether an operation is worth starting right now, the question the media paths ask, and isAvailable below answers
-  // whether the plugin can vouch for the values HomeKit reads. StatusActive characteristics across the accessory read this; operation-initiation gates read this; HKSV
-  // composes its readiness gate (buffer >= 10s) at its call site, never inside here. The library deliberately does NOT ship this composition (a deliberate design
-  // decision: isOnline is last-known device state) - the plugin is the consumer that composes per-operation reachability.
+  // whether the plugin can vouch for the values HomeKit reads. Operation-initiation gates read this; HKSV composes its readiness gate (buffer >= 10s) at its call site,
+  // never inside here. The library deliberately does NOT ship this composition (a deliberate design decision: isOnline is last-known device state) - the plugin is the
+  // consumer that composes per-operation reachability.
   public get isReachable(): boolean {
 
     return this.nvr.client.connection.isHealthy && this.isOnline;
@@ -1033,32 +1045,11 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     this.platform.persistence.persist(this.accessory);
   }
 
-  // Pushed by the NVR's connection observe loop when controller-level reachability changes. Rewrites StatusActive from isReachable on every service on the accessory
-  // that carries that characteristic, through the homebridge-plugin-utils sweep. Single source: one read of isReachable, one push to every relevant service; no second
-  // list of services, no parallel registry.
-  //
-  // Returns the reachability transition (the prior and new StatusActive value) when the accessory's HomeKit-visible reachability actually flipped, or null when it
-  // was unchanged or the accessory carries no StatusActive characteristic. The prior value is read from the first StatusActive-bearing service - the characteristic
-  // itself is the single source of "what HomeKit was last shown", so no flag is held on the accessory to remember it. The NVR connection loop forwards a non-null
-  // transition to its reachability-fanout diagnostics channel; the StatusActive write happens here regardless of whether anyone is observing that channel.
-  public refreshReachability(): Nullable<{ now: boolean; was: boolean }> {
+  // Pushed by the NVR's connection observe loop each time the connection moves, walking every device from one reader of that fact. The base device holds nothing that
+  // depends on it, and a family that does extends this.
+  public noteConnectionChanged(): void {
 
-    const now = this.isReachable;
-
-    // The first StatusActive-bearing service supplies the representative prior value: every such service is driven from the same isReachable, so they share one
-    // transition. We read it before the sweep writes the new value to every service that carries the characteristic.
-    const carrier = this.accessory.services.find((service) => service.testCharacteristic(this.hap.Characteristic.StatusActive));
-
-    if(!carrier) {
-
-      return null;
-    }
-
-    const was = carrier.getCharacteristic(this.hap.Characteristic.StatusActive).value === true;
-
-    updateServices(this.accessory, this.hap.Characteristic.StatusActive, now);
-
-    return (was === now) ? null : { now, was };
+    // No-op by default; the camera family's override re-establishes its buffer and settles its reboot watch.
   }
 
   // The HomeKit / event-timer identity of this device, sourced from the persisted accessory-context MAC rather than the live config so it survives a vanished record. For

@@ -9,7 +9,6 @@ import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryExh
   ProtectDeviceConfig, ProtectLogging, ProtectNvrConfig, StateStore } from "unifi-protect";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, maskAddressCredentials, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, MqttClient, Nullable } from "homebridge-plugin-utils";
-import type { NvrLifecyclePayload, ReachabilityFanoutPayload } from "../diagnostics.ts";
 import { OVERRIDE_ADDRESS_ZONE_WARNING, canTransition, createConnectRetryPolicy, createLivestreamEpisodeLatch, deviceInventory, isDisruptionExpected,
   resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
@@ -21,6 +20,7 @@ import type { ConnectFailure } from "./nvr-policy.ts";
 import { DeviceRemovalCascade } from "./nvr-removal-cascade.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
+import type { NvrLifecyclePayload } from "../diagnostics.ts";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
 import { ProtectCameraPackage } from "../devices/cameras/camera-package.ts";
 import { ProtectChime } from "../devices/chime.ts";
@@ -1115,10 +1115,9 @@ export class ProtectNvr {
   // Spawn the connection-state observe loop - the single consumer of connection.observe(), carrying two controller-wide duties on each transition. First it concludes an
   // induced reboot on the connection's recovery edge (so the resume rides this existing iterator rather than a second subscription); then it pushes recomputed
   // reachability to every accessory. Controller health is one fact with one reader: rather than N accessories each subscribing to the connection monitor (which would be
-  // 2N iterators and N readers of a single fact), this loop walks the configured accessories and pushes each its recomputed reachability. An accessory whose
-  // HomeKit-visible reachability actually flipped is published on the reachability-fanout diagnostics channel. Pull where the fact is per-device (the per-device leaf
-  // observers); push where the fact is controller-wide (here). Package cameras ride the endpoints iterator, so their reachability is pushed - and published on the
-  // fanout channel - first-class rather than fanned out by the parent doorbell.
+  // 2N iterators and N readers of a single fact), this loop walks the configured accessories and pushes each its recomputed reachability. Pull where the fact is
+  // per-device (the per-device leaf observers); push where the fact is controller-wide (here). The endpoints iterator walks package cameras, so their reachability is
+  // pushed first-class rather than fanned out by the parent doorbell.
   private startConnectionObserver(): void {
 
     this.spawnLoop("the controller connection", async () => {
@@ -1141,12 +1140,7 @@ export class ProtectNvr {
 
         for(const device of deviceEndpoints(this.configuredDevices)) {
 
-          const flip = device.refreshReachability();
-
-          if(flip && channels.reachabilityFanout.hasSubscribers) {
-
-            channels.reachabilityFanout.publish({ accessoryId: device.accessory.UUID, now: flip.now, was: flip.was } satisfies ReachabilityFanoutPayload);
-          }
+          device.noteConnectionChanged();
         }
       }
     });

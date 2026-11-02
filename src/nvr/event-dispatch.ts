@@ -750,7 +750,7 @@ export class ProtectEventDispatch {
   // Camera tamper delivery. A tamper occurrence latches the camera tampered and trips StatusTampered on its motion sensor. The latch is one-way - UniFi Protect emits no
   // paired "tamper cleared" occurrence and the camera config carries no tamper-state field, so the occurrence is its only source - and it clears only when the user
   // toggles tamper detection in Protect (which resets isTampered through configureTamperDetection) or restarts the plugin. We set a public flag on the camera, mirroring
-  // how the doorbell-ring delivery sets isRinging, so the camera's own tamper-detection onGet and availability projection read back a single source of truth.
+  // how the doorbell-ring delivery sets isRinging, so the camera's own tamper-detection onGet and state-change re-apply read back a single source of truth.
   public tamperEventHandler(protectDevice: ProtectCamera): void {
 
     // This handler is a no-op on repeat: once latched, a repeat tamper occurrence changes nothing until the state is cleared - we act only on the false-to-true edge.
@@ -763,7 +763,7 @@ export class ProtectEventDispatch {
 
     // Guard the StatusTampered push behind testCharacteristic: updateCharacteristic lazily materializes an absent optional characteristic, so an unguarded write on a
     // camera without tamper detection would sprout an always-false phantom. The isTampered latch above stays the single source of truth - the camera's tamper-detection
-    // onGet and its availability projection both read it back - so a camera with no StatusTampered characteristic still records the latch even though we skip the push.
+    // onGet and its state-change re-apply read it back - so a camera with no StatusTampered characteristic still records the latch even though we skip the push.
     const motionSensor = protectDevice.accessory.getService(this.hap.Service.MotionSensor);
 
     if(motionSensor?.testCharacteristic(this.hap.Characteristic.StatusTampered)) {

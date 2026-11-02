@@ -545,7 +545,7 @@ describe("camera tamper delivery (real ProtectEventDispatch.tamperEventHandler)"
 
   test("latches the camera even when it has no motion sensor to display the state", () => {
 
-    // A camera without a motion sensor still latches tampered (the flag the availability projection and onGet read); the characteristic write is simply skipped.
+    // A camera without a motion sensor still latches tampered (the flag the state-change re-apply and onGet read); the characteristic write is simply skipped.
     const accessory = makeTestAccessory();
     const { camera, dispatch } = makeTamperDispatch(accessory);
 

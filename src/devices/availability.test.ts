@@ -1,7 +1,7 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * availability.test.ts: The No Response census, the one verdict behind it and the paths that go past it, each driven against the REAL device, capability and
- * controller-scoped owner classes.
+ * availability.test.ts: The No Response census, the one verdict behind it, the paths that go past it, and StatusActive beside it, each driven against the REAL device,
+ * capability and controller-scoped owner classes.
  *
  * An unhandled characteristic shows in no diff: HomeKit reads it from what it holds and marks nothing, so an outage goes unseen on that accessory. The census is
  * therefore the instrument. Each row stands up one family with the flags and fixtures that give it every conditional service, settles the late binds, and reads EVERY
@@ -12,6 +12,10 @@
  *
  * The rows after the census hold the verdict to what it reads, and the paths that go past the refusal to what they keep: an MQTT set and the plugin's own writes reach
  * the device through an outage exactly as they always have, while the same characteristic refuses a HomeKit write.
+ *
+ * StatusActive stands on a camera's motion, occupancy and ambient light sensors and nowhere else, and it never reads from what the plugin can reach. Those rows run over
+ * HAP's own camera controller, which holds the value on a recording camera's motion and occupancy sensors, and they read it through HAP's read path and from what the
+ * characteristic holds.
  */
 import type { Camera, Chime, Fob, Light, ProtectChimeConfig, ProtectNvrConfig, Relay, Sensor, Viewer } from "unifi-protect";
 import { Characteristic, Service, TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory, writesTo } from "../testing.helpers.ts";
@@ -172,8 +176,8 @@ NvrHarness & { factory: ReturnType<typeof makeTestNvr>["factory"] } {
  * @returns The camera and its handles.
  */
 async function standCamera(options: { chimes?: ProtectChimeConfig[]; config?: Parameters<typeof makeCameraConfig>[0];
-  doorbellSettings?: ProtectNvrConfig["doorbellSettings"]; userOptions?: string[]; } = {}): Promise<NvrHarness & { accessory: TestProtectAccessory; camera: ProtectCamera;
-    chimeProjections: TestChimeProjection[]; }> {
+  doorbellSettings?: ProtectNvrConfig["doorbellSettings"]; restored?: TestProtectAccessory; seed?: (accessory: TestProtectAccessory) => void;
+  userOptions?: string[]; } = {}): Promise<NvrHarness & { accessory: TestProtectAccessory; camera: ProtectCamera; chimeProjections: TestChimeProjection[] }> {
 
   const config = makeCameraConfig(options.config ?? { channels: G2_PRO_CHANNELS });
   const chimes = options.chimes ?? [];
@@ -184,7 +188,10 @@ async function standCamera(options: { chimes?: ProtectChimeConfig[]; config?: Pa
 
   factory.realControllers = true;
 
-  const accessory = makeTestAccessory(config.name ?? "Test Camera", config.mac);
+  const accessory = options.restored ?? makeTestAccessory(config.name ?? "Test Camera", config.mac);
+
+  options.seed?.(accessory);
+
   const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, new TestCameraProjection(config.id, store) as unknown as Camera));
 
   await settle();
@@ -893,6 +900,568 @@ describe("the paths that go past the refusal", () => {
 
     assert.deepEqual(values, [true], "a service that stands runs the body once, whatever the verdict reads");
     assert.deepEqual(writesTo(accessory, service.getCharacteristic(Characteristic.On)), [true], "and states the value it set in one change");
+  });
+});
+
+// HAP's camera controller on an accessory, as far as these rows drive it: what it saves, and the factory reset it runs on its recording arm.
+interface CameraControllerHandle {
+
+  activeCameraController: { handleFactoryReset: () => void; serialize: () => unknown };
+}
+
+// HAP's accessory as these rows restart it: Homebridge's cache writes it through serialize and reads it back through deserialize, and HAP's own storage holds what the
+// camera controller saved.
+interface RestorableAccessory {
+
+  _associatedHAPAccessory: { controllerStorage: { controllerData: Record<string, unknown>; enqueueSaveRequest: () => void; initialized: boolean } };
+  _associatedPlatform: string;
+  _associatedPlugin: string;
+}
+
+// The class Homebridge's cache reads an accessory back through.
+interface AccessoryCache {
+
+  deserialize: (json: unknown) => TestProtectAccessory;
+  serialize: (accessory: TestProtectAccessory) => unknown;
+}
+
+/* Restart an accessory as Homebridge's cache and HAP's storage do it: every characteristic comes back holding the value the last run left, and the camera controller's
+ * saved state waits in HAP's storage for the next registration.
+ *
+ * @param accessory - The accessory the last run left.
+ * @param adjust    - A change to what the cache holds, for a row whose value the last run did not write.
+ *
+ * @returns The restored accessory, ready for a camera to stand on.
+ */
+function restartAccessory(accessory: TestProtectAccessory, adjust?: (restored: TestProtectAccessory) => void): TestProtectAccessory {
+
+  const cache = accessory.constructor as unknown as AccessoryCache;
+  const saved = (accessory._associatedHAPAccessory as unknown as CameraControllerHandle).activeCameraController.serialize();
+  const old = accessory as unknown as RestorableAccessory;
+
+  old._associatedPlugin = "test-plugin";
+  old._associatedPlatform = "test-platform";
+
+  const restored = cache.deserialize(JSON.parse(JSON.stringify(cache.serialize(accessory))));
+  const { controllerStorage } = (restored as unknown as RestorableAccessory)._associatedHAPAccessory;
+
+  // These rows publish nothing, so there is no store for HAP's storage to write what the restored controller saves to.
+  controllerStorage.enqueueSaveRequest = (): void => undefined;
+  controllerStorage.initialized = true;
+  controllerStorage.controllerData = { camera: { data: saved } };
+  adjust?.(restored);
+
+  return restored;
+}
+
+// Every service on an accessory carrying StatusActive, read without materializing one.
+function statusActiveCarriers(accessory: ProtectAccessory): string[] {
+
+  return accessory.services.filter((service) => service.testCharacteristic(Characteristic.StatusActive)).map(({ UUID }) => UUID);
+}
+
+// What the motion and occupancy sensors read, in that order, "none" for a sensor that carries no StatusActive and "gone" for one that does not stand.
+function sensorActives(accessory: ProtectAccessory): (CharacteristicValue | null | string)[] {
+
+  return [ Service.MotionSensor, Service.OccupancySensor ].map((kind) => {
+
+    const service = accessory.getService(kind);
+
+    return !service ? "gone" : service.testCharacteristic(Characteristic.StatusActive) ? service.getCharacteristic(Characteristic.StatusActive).value : "none";
+  });
+}
+
+// Set a sensor's StatusActive on an accessory as the cache restored it.
+function restoreActive(accessory: TestProtectAccessory, kind: typeof Service.MotionSensor, value: boolean): void {
+
+  (accessory.getService(kind) ?? accessory.addService(kind, accessory.displayName)).updateCharacteristic(Characteristic.StatusActive, value);
+}
+
+// Stand a recording camera up with its occupancy sensor and read out both sensors' StatusActive and HAP's camera switch.
+async function standSwitchedCamera(options: Parameters<typeof standCamera>[0] = {}): Promise<Awaited<ReturnType<typeof standCamera>> & { actives: Characteristic[];
+  home: Characteristic; motionEvents: Characteristic; }> {
+
+  const harness = await standCamera({ ...options, userOptions: [ "Enable.Motion.OccupancySensor", "Enable.Motion.Switch", ...(options.userOptions ?? []) ] });
+  const motion = harness.accessory.getService(Service.MotionSensor)?.getCharacteristic(Characteristic.StatusActive);
+  const occupancy = harness.accessory.getService(Service.OccupancySensor)?.getCharacteristic(Characteristic.StatusActive);
+  const home = harness.accessory.getService(Service.CameraOperatingMode)?.getCharacteristic(Characteristic.HomeKitCameraActive);
+  const motionEvents = harness.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_MOTION_SENSOR)?.getCharacteristic(Characteristic.On);
+
+  assert.ok(motion && occupancy && home && motionEvents, "the fixture stood up both sensors, HAP's camera switch and the Motion Events switch");
+
+  return { ...harness, actives: [ motion, occupancy ], home, motionEvents };
+}
+
+// Stand a camera on an accessory without settling, so a row reads what its configure alone left, its registration still to come.
+function constructCamera(accessory: TestProtectAccessory, config: Parameters<typeof makeCameraConfig>[0], userOptions: string[] = ["Enable.Motion.OccupancySensor"]):
+{ camera: ProtectCamera; nvr: TestProtectNvr; projection: TestCameraProjection; store: TestStateStore } {
+
+  const record = makeCameraConfig(config);
+  const store = new TestStateStore(makeProtectState({ cameras: [record] }));
+  const { factory, nvr } = standNvr(store, { userOptions });
+  const projection = new TestCameraProjection(record.id, store);
+
+  factory.realControllers = true;
+
+  const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
+
+  return { camera, nvr, projection, store };
+}
+
+describe("StatusActive on a camera's sensors", () => {
+
+  afterEach(abortControllers);
+
+  test("a fresh camera's sensors carry it reading active from their setup, through the recording audio probe's wait, to the controller's build", async () => {
+
+    const accessory = makeTestAccessory("Test Camera", "74ACB9000010");
+    const record = makeCameraConfig({ channels: G2_PRO_CHANNELS });
+    const store = new TestStateStore(makeProtectState({ cameras: [record] }));
+    const { factory, nvr } = standNvr(store, { userOptions: ["Enable.Motion.OccupancySensor"] });
+    const projection = new TestCameraProjection(record.id, store);
+    let release = (): void => undefined;
+
+    projection.livestreamGate = new Promise((resolve) => {
+
+      release = resolve;
+    });
+    factory.realControllers = true;
+
+    configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
+
+    await settle();
+
+    assert.equal(projection.livestreamCalls.length, 1, "the probe is waiting on the camera's stream");
+    assert.equal(accessory.getService(Service.CameraOperatingMode), undefined, "and no controller is built yet");
+    assert.deepEqual(sensorActives(accessory), [ true, true ], "both sensors read active through the wait");
+
+    const motion = accessory.getService(Service.MotionSensor)?.getCharacteristic(Characteristic.StatusActive);
+    const occupancy = accessory.getService(Service.OccupancySensor)?.getCharacteristic(Characteristic.StatusActive);
+
+    assert.ok(motion && occupancy, "both sensors carry it");
+    assert.deepEqual([ await triggerGet(motion), await triggerGet(occupancy) ], [ true, true ], "as HomeKit reads it");
+
+    release();
+
+    await settle();
+
+    assert.ok(accessory.getService(Service.CameraOperatingMode), "the build landed");
+    assert.deepEqual(sensorActives(accessory), [ true, true ], "and both still read active");
+  });
+
+  test("on a recording camera each follows HAP's camera switch alone, and neither the Motion Events switch nor the connection moves it", async () => {
+
+    const { actives, camera, home, motionEvents, nvr, store } = await standSwitchedCamera();
+
+    const expectAll = async (expected: boolean, label: string): Promise<void> => {
+
+      for(const active of actives) {
+
+        assert.equal(active.value, expected, label + ", as the characteristic holds it");
+        // eslint-disable-next-line no-await-in-loop -- Each read is its own assertion.
+        assert.equal(await triggerGet(active), expected, label + ", as HomeKit reads it");
+      }
+    };
+
+    await expectAll(true, "a camera on in Home reads active");
+
+    await triggerSet(home, false);
+    await expectAll(false, "off in Home reads inactive");
+
+    await triggerSet(home, true);
+    await expectAll(true, "and on again reads active");
+
+    let writes = 0;
+
+    for(const active of actives) {
+
+      active.on("change", () => writes++);
+    }
+
+    await triggerSet(motionEvents, false);
+    await expectAll(true, "the Motion Events switch moves nothing");
+
+    await triggerSet(motionEvents, true);
+
+    nvr.client.connection.isHealthy = false;
+    nvr.client.connection.isLost = true;
+    camera.noteConnectionChanged();
+
+    nvr.client.connection.isHealthy = true;
+    nvr.client.connection.isLost = false;
+    store.pushCameraPatch("test-camera-1", { state: "DISCONNECTED" });
+
+    await settle();
+
+    assert.equal(writes, 0, "nothing the plugin holds wrote to either sensor");
+  });
+
+  /* A restart through Homebridge's cache and HAP's storage, with a real camera on the restored accessory. The configure reads first, ahead of the registration, because
+   * that is where a plugin write would land, and HAP's restore follows in the registration itself, so what it saved is what stands.
+   */
+  test("a restart leaves a camera off in Home reading inactive, and the plugin writes neither sensor ahead of HAP's restore", async () => {
+
+    const { accessory, home } = await standSwitchedCamera({ config: { channels: G2_PRO_CHANNELS } });
+
+    await triggerSet(home, false);
+
+    const restored = restartAccessory(accessory);
+
+    assert.deepEqual(sensorActives(restored), [ false, false ], "the cache restored both inactive");
+
+    const { accessory: standing, actives, home: restoredHome } = await standSwitchedCamera({ config: { channels: G2_PRO_CHANNELS }, restored });
+
+    assert.equal(standing, restored, "the camera stood on the restored accessory");
+    assert.ok(!restoredHome.value, "HAP restored the camera switch off");
+    assert.deepEqual(actives.map(({ value }) => value), [ false, false ], "and both sensors read what it saved");
+
+    await triggerSet(restoredHome, true);
+
+    assert.deepEqual(actives.map(({ value }) => value), [ true, true ], "and the mirror still moves them");
+  });
+
+  test("the configure leaves a restored value for HAP where the camera can record, inactive included, and HAP's build writes what it saved", async () => {
+
+    const { accessory } = await standSwitchedCamera({ config: { channels: G2_PRO_CHANNELS } });
+    const restored = restartAccessory(accessory, (restoring) => {
+
+      restoreActive(restoring, Service.MotionSensor, false);
+      restoreActive(restoring, Service.OccupancySensor, false);
+    });
+
+    constructCamera(restored, { channels: G2_PRO_CHANNELS });
+
+    assert.deepEqual(sensorActives(restored), [ false, false ], "the configure wrote neither sensor");
+
+    await settle();
+
+    assert.deepEqual(sensorActives(restored), [ true, true ], "the camera is on in what HAP saved, so its build clears the stale value");
+  });
+
+  test("HAP's factory reset sets both sensors active", async () => {
+
+    const { accessory, actives, home } = await standSwitchedCamera();
+    const { activeCameraController: controller } = accessory._associatedHAPAccessory as unknown as CameraControllerHandle;
+
+    await triggerSet(home, false);
+
+    assert.deepEqual(actives.map(({ value }) => value), [ false, false ], "the camera is off in Home");
+
+    controller.handleFactoryReset();
+
+    assert.deepEqual(actives.map(({ value }) => value), [ true, true ], "and the reset set both back");
+  });
+
+  test("during an outage each refuses, and on recovery answers what HAP holds", async () => {
+
+    const { actives, home, nvr } = await standSwitchedCamera();
+
+    await triggerSet(home, false);
+
+    nvr.client.connection.isLost = true;
+
+    for(const active of actives) {
+
+      // eslint-disable-next-line no-await-in-loop -- Each read is its own assertion.
+      await assert.rejects(triggerGet(active), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+    }
+
+    nvr.client.connection.isLost = false;
+
+    assert.deepEqual(await Promise.all(actives.map(triggerGet)), [ false, false ], "the value HAP holds, the camera still off");
+  });
+
+  test("a camera with no recording arm reads active for good, which clears a restored inactive, and refuses while lost", async () => {
+
+    const { accessory, camera, nvr, store } = await standCamera({ config: { channels: G2_PRO_CHANNELS, featureFlags: { hasMotionDetection: false } },
+      seed: (seeded) => restoreActive(seeded, Service.OccupancySensor, false), userOptions: ["Enable.Motion.OccupancySensor"] });
+
+    assert.equal(accessory.getService(Service.CameraOperatingMode), undefined, "the build gave it no recording arm");
+
+    const active = accessory.getService(Service.OccupancySensor)?.getCharacteristic(Characteristic.StatusActive);
+
+    assert.ok(active, "the occupancy sensor carries it");
+    assert.equal(active.value, true, "the restored inactive reads active");
+
+    let writes = 0;
+
+    active.on("change", () => writes++);
+
+    nvr.client.connection.isHealthy = false;
+    nvr.client.connection.isLost = true;
+    camera.noteConnectionChanged();
+
+    await assert.rejects(triggerGet(active), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+
+    nvr.client.connection.isHealthy = true;
+    nvr.client.connection.isLost = false;
+    store.pushCameraPatch("test-camera-1", { state: "DISCONNECTED" });
+
+    await settle();
+
+    assert.equal(writes, 0, "nothing wrote it through the outage or the state change");
+    assert.equal(active.value, true, "and it still reads active");
+  });
+
+  // The connection is No Response's to report, so a camera its controller reports away at its setup reads active all the same, with a recording arm or without one.
+  test("a camera set up while it reads DISCONNECTED reads active, and its reads refuse", async () => {
+
+    for(const featureFlags of [ {}, { hasMotionDetection: false } ]) {
+
+      const record = { ...makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags }), state: "DISCONNECTED" as const };
+      const store = new TestStateStore(makeProtectState({ cameras: [record] }));
+      const { factory, nvr } = standNvr(store, { userOptions: ["Enable.Motion.OccupancySensor"] });
+      const accessory = makeTestAccessory("Test Camera", "74ACB9000014");
+
+      factory.realControllers = true;
+
+      configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, new TestCameraProjection(record.id, store) as unknown as Camera));
+
+      const active = accessory.getService(Service.OccupancySensor)?.getCharacteristic(Characteristic.StatusActive);
+
+      assert.ok(active, "the occupancy sensor carries it");
+      assert.equal(active.value, true, "and it reads active from its setup");
+
+      // eslint-disable-next-line no-await-in-loop -- Each camera is its own assertion.
+      await settle();
+
+      assert.equal(active.value, true, "and through its registration");
+
+      // eslint-disable-next-line no-await-in-loop -- As above.
+      await assert.rejects(triggerGet(active), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+    }
+  });
+
+  // No controller registers for a camera with no channels, so the configure is all there is to clear what the cache restored.
+  test("a camera that cannot record and registers no controller reads active from its configure", () => {
+
+    const accessory = makeTestAccessory("Test Camera", "74ACB9000011");
+
+    restoreActive(accessory, Service.OccupancySensor, false);
+    constructCamera(accessory, { channels: [], featureFlags: { hasMotionDetection: false } });
+
+    assert.deepEqual(sensorActives(accessory), [ "gone", true ], "the occupancy sensor reads active");
+  });
+
+  /* A camera can lose its eligibility between its configure and its registration, which builds a controller with no recording arm over sensors the configure left.
+   * HAP writes nothing on them, so a value restored inactive would stand with nothing left to move it.
+   */
+  test("a registration with no recording arm sets active what the configure left for one", async () => {
+
+    const accessory = makeTestAccessory("Test Camera", "74ACB9000012");
+
+    restoreActive(accessory, Service.MotionSensor, false);
+    restoreActive(accessory, Service.OccupancySensor, false);
+
+    const { store } = constructCamera(accessory, { channels: G2_PRO_CHANNELS });
+
+    assert.deepEqual(sensorActives(accessory), [ false, false ], "the configure left both for HAP");
+
+    store.pushCameraFeatureFlags("test-camera-1", { hasMotionDetection: false });
+
+    await settle();
+
+    assert.equal(accessory.getService(Service.CameraOperatingMode), undefined, "the build grew no recording arm");
+    assert.deepEqual(sensorActives(accessory), [ true, true ], "and both read active");
+  });
+
+  test("a camera that gains recording while running hands HAP its sensors through the rebuild, each carrying it throughout", async () => {
+
+    const { accessory, nvr, store } = await standCamera({ config: { channels: G2_PRO_CHANNELS, featureFlags: { hasMotionDetection: false } },
+      userOptions: ["Enable.Motion.OccupancySensor"] });
+
+    assert.deepEqual(sensorActives(accessory), [ "gone", true ], "the occupancy sensor reads active ahead of the gain");
+
+    store.pushCameraFeatureFlags("test-camera-1", { hasMotionDetection: true });
+
+    assert.deepEqual(sensorActives(accessory), [ "gone", true ], "and through it");
+
+    await settle();
+
+    const motion = accessory.getService(Service.MotionSensor)?.getCharacteristic(Characteristic.StatusActive);
+    const occupancy = accessory.getService(Service.OccupancySensor)?.getCharacteristic(Characteristic.StatusActive);
+    const home = accessory.getService(Service.CameraOperatingMode)?.getCharacteristic(Characteristic.HomeKitCameraActive);
+
+    assert.ok(motion && occupancy && home, "the gain stood the motion sensor up and built HAP's camera switch");
+    assert.deepEqual([ motion.value, occupancy.value ], [ true, true ], "both read active");
+
+    await triggerSet(home, false);
+
+    assert.deepEqual([ motion.value, occupancy.value ], [ false, false ], "and HAP mirrors the switch onto both");
+
+    nvr.client.connection.isLost = true;
+
+    await assert.rejects(triggerGet(motion), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+    await assert.rejects(triggerGet(occupancy), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+  });
+
+  test("a recording camera losing eligibility while running keeps its controller, and HAP still holds both sensors", async () => {
+
+    const { actives, home, store } = await standSwitchedCamera();
+
+    store.pushCameraFeatureFlags("test-camera-1", { hasMotionDetection: false });
+
+    await settle();
+
+    await triggerSet(home, false);
+
+    assert.deepEqual(actives.map(({ value }) => value), [ false, false ], "the standing controller still mirrors the switch");
+  });
+
+  test("a rebuild sets both active ahead of the rebuilt controller, through the probe's wait, on the characteristic that stood", async () => {
+
+    const accessory = makeTestAccessory("Test Camera", "74ACB9000013");
+    const { projection, store } = constructCamera(accessory, { channels: G2_PRO_CHANNELS });
+
+    await settle();
+
+    const actives = [ Service.MotionSensor, Service.OccupancySensor ].map((kind) => accessory.getService(kind)?.getCharacteristic(Characteristic.StatusActive));
+    const home = accessory.getService(Service.CameraOperatingMode)?.getCharacteristic(Characteristic.HomeKitCameraActive);
+
+    assert.ok(home, "the build gave the accessory HAP's camera switch");
+
+    await triggerSet(home, false);
+
+    assert.deepEqual(sensorActives(accessory), [ false, false ], "the camera is off in Home");
+
+    let release = (): void => undefined;
+
+    projection.livestreamGate = new Promise((resolve) => {
+
+      release = resolve;
+    });
+
+    store.pushCameraFeatureFlags("test-camera-1", { hasSpeaker: true });
+
+    await settle();
+
+    assert.equal(accessory.getService(Service.CameraOperatingMode), undefined, "the teardown took the controller down and the probe holds the rebuild");
+    assert.deepEqual(sensorActives(accessory), [ true, true ], "HAP's factory reset set both active");
+
+    release();
+
+    await settle();
+
+    const rebuilt = accessory.getService(Service.CameraOperatingMode)?.getCharacteristic(Characteristic.HomeKitCameraActive);
+
+    assert.ok(rebuilt, "the rebuild built its own camera switch");
+    assert.deepEqual(sensorActives(accessory), [ true, true ], "both still read active");
+    assert.deepEqual([ Service.MotionSensor, Service.OccupancySensor ].map((kind) => accessory.getService(kind)?.getCharacteristic(Characteristic.StatusActive)), actives,
+      "on the characteristics that stood");
+
+    await triggerSet(rebuilt, false);
+
+    assert.deepEqual(sensorActives(accessory), [ false, false ], "and the rebuilt controller mirrors its switch");
+  });
+
+  test("a package camera carries it from its setup, ahead of a deferred registration, and follows its own camera switch once it records", async () => {
+
+    const channels = G6_PRO_ENTRY_CHANNELS.filter(({ name }) => name !== "Package Camera");
+    const { camera: deferred, store } = await standCamera({ config: { channels, featureFlags: { hasMic: true, hasPackageCamera: true, isDoorbell: true } } });
+    const waiting = deferred.doorbell?.packageCamera?.accessory;
+
+    assert.ok(waiting, "the doorbell stood its package camera up");
+    assert.equal(waiting.getService(Service.CameraOperatingMode), undefined, "the package camera's registration is deferred");
+    assert.deepEqual(sensorActives(waiting), [ true, "gone" ], "its motion sensor reads active with no controller");
+
+    store.pushCameraPatch("test-camera-1", { channels: G6_PRO_ENTRY_CHANNELS });
+
+    await settle();
+
+    const active = waiting.getService(Service.MotionSensor)?.getCharacteristic(Characteristic.StatusActive);
+    const home = waiting.getService(Service.CameraOperatingMode)?.getCharacteristic(Characteristic.HomeKitCameraActive);
+    const parent = deferred.accessory.getService(Service.MotionSensor)?.getCharacteristic(Characteristic.StatusActive);
+
+    assert.ok(active && home && parent, "the channel's arrival registered the package camera's controller");
+    assert.equal(active.value, true, "it reads active");
+
+    await triggerSet(home, false);
+
+    assert.equal(active.value, false, "the package's switch moved its sensor");
+    assert.equal(parent.value, true, "and not its parent's");
+  });
+
+  test("a package camera that cannot record reads active for good", async () => {
+
+    const { camera, nvr } = await standCamera({ config: { channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasMic: true, hasMotionDetection: false,
+      hasPackageCamera: true, isDoorbell: true } } });
+    const lone = camera.doorbell?.packageCamera?.accessory;
+    const active = lone?.getService(Service.MotionSensor)?.getCharacteristic(Characteristic.StatusActive);
+
+    assert.ok(active, "a package camera stands its motion sensor whether or not it can record, carrying it");
+    assert.equal(lone?.getService(Service.CameraOperatingMode), undefined, "its build grew no recording arm");
+    assert.equal(active.value, true, "it reads active");
+
+    nvr.client.connection.isLost = true;
+
+    await assert.rejects(triggerGet(active), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+  });
+
+  test("a camera's ambient light sensor reads active for good, which clears a restored inactive, refuses while lost, and follows nothing", async () => {
+
+    const { accessory, actives: [motion], home, nvr } = await standSwitchedCamera({ config: { channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } },
+      seed: (seeded) => restoreActive(seeded, Service.LightSensor, false) });
+    const active = accessory.getService(Service.LightSensor)?.getCharacteristic(Characteristic.StatusActive);
+
+    assert.ok(active, "the light sensor carries it");
+    assert.equal(active.value, true, "the restored inactive reads active");
+
+    await triggerSet(home, false);
+
+    assert.equal(motion?.value, false, "the camera switch moved the motion sensor");
+    assert.equal(active.value, true, "and not the light sensor");
+
+    nvr.client.connection.isLost = true;
+
+    await assert.rejects(triggerGet(active), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+
+    nvr.client.connection.isLost = false;
+
+    assert.equal(await triggerGet(active), true, "it answers active once the controller has recovered");
+  });
+
+  // A camera's motion, occupancy and ambient light sensors carry it. Everything else loses it, a service restored from the cache carrying it included.
+  test("no service of a light or a standalone sensor carries it, one restored with it included, and on a camera only its sensors do", async () => {
+
+    const restore = (accessory: TestProtectAccessory, kinds: (typeof Service.MotionSensor)[]): void => {
+
+      for(const kind of kinds) {
+
+        accessory.addService(kind, accessory.displayName).getCharacteristic(Characteristic.StatusActive);
+      }
+    };
+
+    const { accessory: cameraAccessory } = await standCamera({ config: { channels: G2_PRO_CHANNELS, featureFlags: { hasLuxCheck: true } }, userOptions: BASE_SWITCHES });
+
+    assert.deepEqual(statusActiveCarriers(cameraAccessory).toSorted(), [ Service.LightSensor.UUID, Service.MotionSensor.UUID, Service.OccupancySensor.UUID ].toSorted(),
+      "a camera's motion, occupancy and ambient light sensors are the carriers");
+
+    const record = makeSensorConfig({ alarmEnabled: true, ambientLight: 250, glassBreak: true, glassBreakEnabled: true, humidity: 55, humidityEnabled: true,
+      lightEnabled: true, motionEnabled: true, mountType: "door", temperature: 21.5, temperatureEnabled: true });
+    const sensorStore = new TestStateStore(makeProtectState({ sensors: [record] }));
+    const { nvr: sensorNvr } = standNvr(sensorStore, { userOptions: BASE_SWITCHES });
+    const sensorAccessory = makeTestAccessory("Test Sensor", record.mac);
+
+    restore(sensorAccessory, [ Service.HumiditySensor, Service.LightSensor, Service.MotionSensor, Service.OccupancySensor, Service.TemperatureSensor ]);
+
+    configured(new ProtectSensor(sensorNvr as unknown as ProtectNvr, sensorAccessory, new TestSensorProjection(record.id, sensorStore) as unknown as Sensor));
+
+    await settle();
+
+    assert.ok(sensorAccessory.getService(Service.MotionSensor) && sensorAccessory.getService(Service.TemperatureSensor), "the sensor kept what it was restored with");
+    assert.deepEqual(statusActiveCarriers(sensorAccessory), [], "no service of a sensor carries it");
+
+    const lightRecord = makeLightConfig();
+    const lightStore = new TestStateStore(makeProtectState({ lights: [lightRecord] }));
+    const { nvr: lightNvr } = standNvr(lightStore, { userOptions: BASE_SWITCHES });
+    const lightAccessory = makeTestAccessory("Test Light", lightRecord.mac);
+
+    restore(lightAccessory, [ Service.MotionSensor, Service.OccupancySensor ]);
+
+    configured(new ProtectLight(lightNvr as unknown as ProtectNvr, lightAccessory, new TestLightProjection(lightRecord.id, lightStore) as unknown as Light));
+
+    assert.ok(lightAccessory.getService(Service.MotionSensor), "the light kept the sensor it was restored with");
+    assert.deepEqual(statusActiveCarriers(lightAccessory), [], "and no service of a light carries it");
   });
 });
 

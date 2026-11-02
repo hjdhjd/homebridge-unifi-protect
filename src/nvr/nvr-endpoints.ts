@@ -14,7 +14,7 @@ import { countActiveRecordingViews } from "./nvr-policy.ts";
 
 /**
  * Every HomeKit device endpoint a controller manages: each configured device and, immediately after a camera-family device that carries one, its package camera. Any
- * controller-wide push or read (the reachability fan-out, the probesize reset, the disconnect teardown, the scheduled reboot's active-recording count) walks this
+ * controller-wide push or read (the connection loop's notice, the probesize reset, the disconnect teardown, the scheduled reboot's active-recording count) walks this
  * iterator. A consumer that needs camera-typed members narrows with instanceof ProtectCamera - sound and cast-free, since package cameras are ProtectCamera
  * subclasses, and the parent's packageCamera getter delegates to the capability.
  *

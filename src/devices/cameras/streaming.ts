@@ -137,6 +137,16 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
       this.answerHeld(service, this.hap.Characteristic.StreamingStatus);
     }
 
+    // A controller with no recording arm holds no sensor's StatusActive, so each reads active from here on. This clears a value the accessory cache restored that the
+    // configure left for a recording arm the camera lost before this build.
+    if(!this.#stream.builtFor.hksvCapable) {
+
+      for(const serviceType of [ this.hap.Service.MotionSensor, this.hap.Service.OccupancySensor ]) {
+
+        this.accessory.getService(serviceType)?.updateCharacteristic(this.hap.Characteristic.StatusActive, true);
+      }
+    }
+
     // Tell the host its controller is registered, so it can configure the services the registration gave the accessory. The call is synchronous, like the rest of this
     // stretch.
     this.host.onControllerRegistered();

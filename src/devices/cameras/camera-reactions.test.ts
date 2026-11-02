@@ -4,7 +4,7 @@
  * REAL constructed ProtectCamera.
  *
  * The camera leaf registers its state observers (camera.ts). Some are already netted by camera-construction.test.ts (camera.channels -> the streaming reconcile,
- * camera.state -> updateAvailability, and the camera.state.hksv both-edge timeshift reconcile). This suite nets the device-state reactions behavior-FIRST - each is a
+ * camera.state -> updateCameraState, and the camera.state.hksv both-edge timeshift reconcile). This suite nets the device-state reactions behavior-FIRST - each is a
  * structural-sharing store push (pushCameraPatch / pushCameraFeatureFlags) followed by a settle and an assertion on the effect the reaction produced (the characteristic
  * it WROTE, or the recording dispatch it routed to), never on the private updater that wrote it - plus the bound GET read-throughs and the two pure-context onSets (HKSV
  * recording, doorbell mute) whose handlers write only accessory.context and never touch the controller. The camera.lastMotion bare-motion observer is netted here through
@@ -892,8 +892,8 @@ describe("camera-family observer reactions and bound read handlers (camera-react
   /* The reboot-return watch: the camera-owned answer to "did this camera come back after the controller rebooted?".
    *
    * The watch is timer-backed for ABSENCE, because nothing fires when a camera simply fails to reappear, and kicked for the RETURN through both reachability paths.
-   * That split is what these arms drive: the keyed one-shot on the harness's test clock for the absence half, and the state observe / reachability override for the
-   * return half. The one clock carries every timer the camera and the NVR double arm from construction onward, so an advance also fires whatever else is due on it -
+   * That split is what these arms drive: the keyed one-shot on the harness's test clock for the absence half, and the state observe / noteConnectionChanged override for
+   * the return half. The one clock carries every timer the camera and the NVR double arm from construction onward, so an advance also fires whatever else is due on it -
    * the harness's zero-delay stability sweep among them, which touches nothing these arms read. Each arm aborts its controller inside its own finally, and the suite's
    * shared afterEach abort then lands as a harmless second call.
    */
@@ -1081,8 +1081,8 @@ describe("camera-family observer reactions and bound read handlers (camera-react
     });
 
     // (c-e) The return half through the CONTROLLER-HEALTH path, both polarities. A whole-controller recovery never wakes the camera's state observe - the device state
-    // was frozen through the outage and the store dedups on the selected value - so the reachability override is the path that has to carry the cancel. The negative
-    // polarity is what proves the cancel is reachability-gated rather than firing on any push at all.
+    // was frozen through the outage and the store dedups on the selected value - so the noteConnectionChanged override is the path that has to carry the cancel. The
+    // negative polarity is what proves the cancel is reachability-gated rather than firing on any push at all.
     test("a controller-health recovery alone cancels the watch, and an unhealthy push does not", async () => {
 
       const watch = await buildWatchCamera();
@@ -1099,14 +1099,14 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         assert.equal(watch.camera.hasRebootReturnWatch, true, "the reboot armed the watch");
 
-        // The negative polarity: a reachability push while the controller is STILL unhealthy must leave the watch armed.
-        watch.camera.refreshReachability();
+        // The negative polarity: the connection loop's notice while the controller is STILL unhealthy must leave the watch armed.
+        watch.camera.noteConnectionChanged();
 
-        assert.equal(watch.camera.hasRebootReturnWatch, true, "a reachability push on an unreachable camera left the watch armed");
+        assert.equal(watch.camera.hasRebootReturnWatch, true, "the connection loop's notice on an unreachable camera left the watch armed");
 
         // The controller returns. Nothing pushes the camera's device state, so this is the health path alone.
         watch.nvr.client.connection.isHealthy = true;
-        watch.camera.refreshReachability();
+        watch.camera.noteConnectionChanged();
 
         assert.equal(watch.camera.hasRebootReturnWatch, false, "the controller-health recovery alone cancelled the watch");
 
@@ -1229,9 +1229,9 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
         assert.equal(countWarns(watch.logEntries, RETURN_LINE), 0, "a device-state return behind an unhealthy controller does not yet close the story");
 
-        // The controller returns. The reachability push is now the only thing that moves, and it completes the pair.
+        // The controller returns. The connection loop's notice is now the only thing that moves, and it completes the pair.
         watch.nvr.client.connection.isHealthy = true;
-        watch.camera.refreshReachability();
+        watch.camera.noteConnectionChanged();
 
         assert.equal(countWarns(watch.logEntries, RETURN_LINE), 1, "the controller-health path announced the all-clear and closed the story");
         assert.equal(countWarns(watch.logEntries, ABSENCE_LINE), 1, "closing the story re-told nothing");

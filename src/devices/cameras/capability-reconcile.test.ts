@@ -200,6 +200,7 @@ describe("the camera capability reconcile - the ambient light sensor pilot", () 
       assert.ok(projection.luxCalls.length >= 1,
         "the wiring re-ran against the restored service, re-issuing the controller lux read that re-establishes the handlers and poll");
       assert.equal(lightSensorCount(accessory), 1, "the re-wire reused the restored service - no duplicate ambient light sensor");
+      assert.equal(restored.getCharacteristic(Characteristic.StatusActive).value, true, "the StatusActive the service was restored with reads active");
     } finally {
 
       camera.cleanup();
@@ -1713,13 +1714,13 @@ describe("the camera capability reconcile - HomeKit Secure Video eligibility", (
 
       await settle();
 
-      // The leaf stood the motion sensor up dressed: its resting state, StatusActive from reachability, and its motion MQTT. The leaf runs ahead of the tamper leaf, so
+      // The leaf stood the motion sensor up dressed: its resting state, StatusActive reading active, and its motion MQTT. The leaf runs ahead of the tamper leaf, so
       // the same pass dressed the new sensor with StatusTampered bound to the camera's tamper latch; moving the leaf after the tamper leaf leaves it absent -> RED.
       const sensor = motionSensor(accessory);
 
       assert.ok(sensor, "the gain created the motion sensor");
       assert.equal(sensor.getCharacteristic(Characteristic.MotionDetected).value, false, "MotionDetected initialized to false");
-      assert.equal(sensor.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive initialized from reachability");
+      assert.equal(sensor.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive reads active from the sensor's setup");
       assert.equal(motionRegistrations(harness, "get"), 1, "the motion MQTT get registered once");
       assert.equal(motionRegistrations(harness, "set"), 1, "the motion MQTT set registered once");
       assert.equal(sensor.testCharacteristic(Characteristic.StatusTampered), true, "the tamper leaf dressed the new sensor with StatusTampered in the same pass");

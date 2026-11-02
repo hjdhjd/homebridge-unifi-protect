@@ -13,8 +13,7 @@ import diagnosticsChannel from "node:diagnostics_channel";
  *
  * Channel names follow a stable `hbup:<subsystem>:<event>` taxonomy and are declared exactly once here; call sites import the publisher they need rather than
  * re-deriving the channel-name string, so a rename is a single edit and a typo is impossible at the call site. This is the mirror of the library's diagnostics
- * module, kept deliberately small: the channels declared here - firehose dispatch, controller lifecycle, the per-accessory observer-wake, and the
- * reachability fan-out - cover the plugin's internal lifecycle and per-device reaction points.
+ * module, kept deliberately small: the channels declared here cover the plugin's internal lifecycle and per-device reaction points.
  */
 export const channels = {
 
@@ -30,11 +29,7 @@ export const channels = {
   // A per-accessory narrow-selector observer yielded - its watched slice changed and its reaction is about to run. The single forward-only window onto the
   // per-device reaction model, naming which accessory woke and which slice triggered it, so a debug subscriber can confirm an observer wakes only on its own field
   // rather than on routine config churn.
-  observerWake: diagnosticsChannel.channel("hbup:observer:wake"),
-
-  // The NVR's connection-observe loop pushed a reachability change out to an accessory's StatusActive fan-out (the N+1 topology: one reader of controller health,
-  // a push to many accessories). Fires per accessory whose reachability actually flipped.
-  reachabilityFanout: diagnosticsChannel.channel("hbup:reachability:fanout")
+  observerWake: diagnosticsChannel.channel("hbup:observer:wake")
 } as const;
 
 /**
@@ -54,17 +49,6 @@ export interface FirehoseDispatchPayload {
 export interface NvrLifecyclePayload {
 
   event: "connected" | "controllerLost" | "controllerRebooted" | "controllerRecovered" | "shuttingDown";
-}
-
-/**
- * Payload published on {@link channels.reachabilityFanout}. `accessoryId` is the HomeKit accessory UUID; `was` and `now` are the StatusActive value before and
- * after the fan-out, so a subscriber sees the actual reachability flip rather than every repeat write that changes nothing.
- */
-export interface ReachabilityFanoutPayload {
-
-  accessoryId: string;
-  now: boolean;
-  was: boolean;
 }
 
 /**

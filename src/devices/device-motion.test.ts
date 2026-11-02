@@ -317,7 +317,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
   describe("the occupancy sensor (Motion.OccupancySensor)", () => {
 
-    test("with the feature, the occupancy service exists with StatusActive reading isReachable and OccupancyDetected initialized false", async () => {
+    test("with the feature, the occupancy service exists carrying no StatusActive and OccupancyDetected initialized false", () => {
 
       const built = buildMotionDevice({ userOptions: ["Enable.Motion.OccupancySensor"] });
 
@@ -333,10 +333,8 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       assert.equal(occupancy.getCharacteristic(Characteristic.OccupancyDetected).value, Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED,
         "OccupancyDetected initialized to not detected");
 
-      // StatusActive reads isReachable, a non-trivial harness-driven value: the carrier is isConnected: true and CONNECTED and the client connection is healthy, so
-      // isReachable is true.
-      assert.equal(occupancy.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive initialized to isReachable (true for a reachable carrier)");
-      assert.equal(await triggerGet(occupancy.getCharacteristic(Characteristic.StatusActive)), true, "the StatusActive getter reads isReachable (true)");
+      // This device is no camera, so its sensors carry no StatusActive, No Response being what HomeKit shows when it cannot be reached.
+      assert.equal(occupancy.testCharacteristic(Characteristic.StatusActive), false, "the occupancy sensor carries no StatusActive");
     });
 
     test("without the feature, no occupancy service is materialized", () => {
@@ -370,8 +368,8 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
 
       assert.ok(occupancy, "the reconcile re-created the occupancy service");
       assert.ok(occupancyGets() > baseline, "the reconcile-created service re-registered its occupancy MQTT GET - the init block ran");
-      assert.equal(await triggerGet(occupancy.getCharacteristic(Characteristic.StatusActive)), true,
-        "StatusActive carries an onGet reading isReachable after the re-creation");
+      assert.equal(await triggerGet(occupancy.getCharacteristic(Characteristic.OccupancyDetected)), Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED,
+        "OccupancyDetected carries its read handler after the re-creation");
     });
 
     test("the base answers no smart-occupancy types for a non-camera, on the first configure and on a re-created service", async () => {
@@ -460,7 +458,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
   });
 
   /* The first-time setup across configure passes. A runtime reconfigure runs as a later pass (initialized true), and on it the setup - the MQTT registrations, the
-   * StatusActive read-through, and the initial values - runs only for a service that pass created; a service the pass finds standing keeps the registrations it already
+   * read handlers, and the initial values - runs only for a service that pass created; a service the pass finds standing keeps the registrations it already
    * has. The MQTT double records every registration, so a second one is directly countable.
    */
   describe("the motion and occupancy setup across configure passes", () => {
@@ -476,12 +474,15 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       // A Homebridge restart restores each service with none of its handlers or MQTT registrations, so the first pass answers kept and still sets each one up.
       const built = buildMotionDevice({ seedAccessory: (accessory) => {
 
-        accessory.addService(Service.MotionSensor, "Test Sensor");
-        accessory.addService(Service.OccupancySensor, "Test Sensor");
+        accessory.addService(Service.MotionSensor, "Test Sensor").getCharacteristic(Characteristic.StatusActive);
+        accessory.addService(Service.OccupancySensor, "Test Sensor").getCharacteristic(Characteristic.StatusActive);
       }, userOptions: ["Enable.Motion.OccupancySensor"] });
 
       device = built.device;
 
+      assert.equal(built.accessory.getService(Service.MotionSensor)?.testCharacteristic(Characteristic.StatusActive), false,
+        "the StatusActive the motion service was restored with came off it");
+      assert.equal(built.accessory.getService(Service.OccupancySensor)?.testCharacteristic(Characteristic.StatusActive), false, "and off the occupancy service");
       assert.equal(built.accessory.services.filter((service) => service.UUID === Service.MotionSensor.UUID).length, 1, "the first pass kept the restored motion service");
       assert.equal(registrations(built.mqtt, "get", "/motion/get"), 1, "the restored motion service registered its motion MQTT get");
       assert.equal(registrations(built.mqtt, "set", "/motion/set"), 1, "the restored motion service registered its motion MQTT set");
@@ -508,8 +509,7 @@ describe("base ProtectDevice motion capability (device-motion concern net)", () 
       assert.ok(motion, "the reconcile re-created the motion service");
       assert.equal(registrations(built.mqtt, "get", "/motion/get") - getBaseline, 1, "the re-created service registered its motion MQTT get once");
       assert.equal(registrations(built.mqtt, "set", "/motion/set") - setBaseline, 1, "the re-created service registered its motion MQTT set once");
-      assert.equal(await triggerGet(motion.getCharacteristic(Characteristic.StatusActive)), true,
-        "StatusActive carries an onGet reading isReachable after the re-creation");
+      assert.equal(await triggerGet(motion.getCharacteristic(Characteristic.MotionDetected)), false, "MotionDetected carries its read handler after the re-creation");
     });
 
     test("a steady-state reconcile over a standing motion service registers nothing a second time", () => {

@@ -1318,7 +1318,7 @@ export class TestBaseDevice extends ProtectDevice<Sensor> {
     return this.configureMotionSensor(pass);
   }
 
-  // Public window onto the base configureOccupancySensor (the occupancy service plus its StatusActive / OccupancyDetected characteristics and the occupancy MQTT get).
+  // Public window onto the base configureOccupancySensor (the occupancy service plus its OccupancyDetected characteristic and the occupancy MQTT get).
   public configureOccupancySensorFor(pass: ProtectConfigurePass = {}): boolean {
 
     return this.configureOccupancySensor(pass);

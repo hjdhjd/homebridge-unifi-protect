@@ -353,7 +353,8 @@ describe("doorbell + package camera family construction (suite B)", () => {
       "the package's rename line carries its own suffixed \"Name [Model]\" prefix, distinct from the doorbell's");
   });
 
-  test("a device-state push drives the package's narrow availability projection: StatusActive only, StatusTampered never appears", async () => {
+  // Connection is No Response's question, so a device-state push moves neither camera's StatusActive.
+  test("a device-state push moves nothing on the package's StatusActive, and StatusTampered never appears", async () => {
 
     store.pushCameraPatch(cameraId, { state: "DISCONNECTED" });
 
@@ -362,16 +363,14 @@ describe("doorbell + package camera family construction (suite B)", () => {
     const motionService = packageAccessory().getService(Service.MotionSensor);
 
     assert.ok(motionService, "the package carries its motion sensor");
-    assert.equal(motionService.getCharacteristic(Characteristic.StatusActive).value, false, "the package's own state observer drove StatusActive inactive");
+    assert.equal(motionService.getCharacteristic(Characteristic.StatusActive).value, true, "the package's own state observer moved nothing on StatusActive");
     assert.equal(motionService.testCharacteristic(Characteristic.StatusTampered), false,
-      "the guarded base availability projection never sprouts StatusTampered onto the package motion sensor");
+      "the guarded camera state reaction never sprouts StatusTampered onto the package motion sensor");
 
     // Restore the connected state for the suites that follow.
     store.pushCameraPatch(cameraId, { state: "CONNECTED" });
 
     await settle();
-
-    assert.equal(motionService.getCharacteristic(Characteristic.StatusActive).value, true, "the return to CONNECTED restores StatusActive");
   });
 
   test("an isDoorbell flap within one drain self-collapses: no WARN, the capability stays attached, and the controller never churns", async () => {
@@ -398,34 +397,23 @@ describe("doorbell + package camera family construction (suite B)", () => {
     assert.equal(controllerEvents(accessory).length, churnBaseline, "the flap drove zero controller churn - no rebuild");
   });
 
-  test("controller-health reachability: the doorbell no longer fans out to the package, whose endpoint surface is first-class", async () => {
+  // The connection loop walks the package camera as an endpoint of its own, and nothing it pushes moves a camera's active state.
+  test("controller-health reachability moves neither camera's active state, and the package answers its own push", () => {
 
     nvr.client.connection.isHealthy = false;
 
-    // The doorbell's own refresh runs first, exactly as the NVR endpoints iterator would drive it - and its refresh does not touch the package accessory.
-    const doorbellTransition = doorbell.refreshReachability();
+    assert.ok(doorbell.packageCamera, "the package camera instance is live");
 
-    assert.deepEqual(doorbellTransition, { now: false, was: true }, "the doorbell reports its own reachability flip");
+    doorbell.noteConnectionChanged();
+    doorbell.packageCamera.noteConnectionChanged();
 
     const motionService = packageAccessory().getService(Service.MotionSensor);
 
-    assert.equal(motionService?.getCharacteristic(Characteristic.StatusActive).value, true, "the deleted override no longer fans reachability into the package");
-
-    // The package endpoint the iterator yields right after its parent: the base refreshReachability writes the identical StatusActive surface and reports the flip
-    // for the reachability-fanout diagnostics.
-    assert.ok(doorbell.packageCamera, "the package camera instance is live");
-
-    const packageTransition = doorbell.packageCamera.refreshReachability();
-
-    assert.deepEqual(packageTransition, { now: false, was: true }, "the package reports its own reachability flip for the fanout diagnostics");
-    assert.equal(motionService.getCharacteristic(Characteristic.StatusActive).value, false, "the package endpoint write landed on its motion sensor");
+    assert.equal(motionService?.getCharacteristic(Characteristic.StatusActive).value, true, "the package's StatusActive stands through the outage");
+    assert.equal(doorbell.accessory.getService(Service.MotionSensor)?.getCharacteristic(Characteristic.StatusActive).value, true, "and so does the doorbell's");
 
     // Restore controller health for any suite that follows.
     nvr.client.connection.isHealthy = true;
-    doorbell.refreshReachability();
-    doorbell.packageCamera.refreshReachability();
-
-    assert.equal(motionService.getCharacteristic(Characteristic.StatusActive).value, true, "the restored health reads back active");
   });
 
   test("family cleanup unwinds the doorbell and the package together", async () => {

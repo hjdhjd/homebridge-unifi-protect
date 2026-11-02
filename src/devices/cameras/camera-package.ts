@@ -42,9 +42,9 @@ export class ProtectCameraPackage extends ProtectCamera {
     // the projection's non-throwing id rather than the throwing config, so the selector binding never depends on a present record.
     const cam = this.nvr.client.state.selectors.camera.byId(this.device.id);
 
-    // The lifecycle state of the shared physical device drives the package accessory's availability, exactly as it drives the parent's - each side observes the same
-    // slice and pushes its own narrow projection.
-    this.observeState({ key: "camera.state", selector: state => cam(state)?.state, title: "availability" }, () => this.updateAvailability());
+    // The lifecycle state of the shared physical device wakes the package camera's buffer supervisor through the reaction the parent runs too - each side observes the
+    // same slice for itself.
+    this.observeState({ key: "camera.state", selector: state => cam(state)?.state, title: "camera state" }, () => this.updateCameraState());
 
     // The package channel can be provisioned after adoption (a doorbell that was not fully provisioned when first adopted). We reduce the channel to a computed
     // primitive - its formatted dimension tuple, or undefined while absent - so the store's value dedup wakes this only when the package channel appears or genuinely

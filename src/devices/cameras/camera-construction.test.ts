@@ -139,7 +139,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
 
     assert.ok(motionService, "the minimal camera is HKSV-capable, so configureMotionSensor built the motion service through the real acquireService");
     assert.equal(motionService.getCharacteristic(Characteristic.MotionDetected).value, false, "MotionDetected initialized to false");
-    assert.equal(motionService.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive initialized from isReachable, which is true");
+    assert.equal(motionService.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive reads active from the sensor's setup");
 
     // The tamper-detection configure path reads prior existence side-effect-free through testCharacteristic and, with tamper detection unavailable on this camera, never
     // creates StatusTampered - the gate's prune branch has no prior characteristic to remove. The testCharacteristic predicate never lazily creates, so this is a pure
@@ -223,7 +223,7 @@ describe("camera HKSV self-heal observer", () => {
     healController?.abort();
   });
 
-  // Behavior-first coverage of the both-edge availability kick (the camera.state observer drives updateAvailability, camera.ts): every camera lifecycle-state edge wakes
+  // Behavior-first coverage of the both-edge availability kick (the camera.state observer drives updateCameraState, camera.ts): every camera lifecycle-state edge wakes
   // the supervisor's reconcile, so ONE observer handles both directions - the offline edge ends an in-flight recording through the honest terminated path, and the online
   // edge re-establishes the buffer an offline-at-startup reconcile could not. We build our OWN camera here rather than reuse the suite-scoped one (that suite uses
   // before(), not beforeEach(), so its camera must not be mutated), spy on the factory-installed timeshift double's reconcile, then drive a genuine offline->online state
@@ -243,7 +243,7 @@ describe("camera HKSV self-heal observer", () => {
 
     await settle();
 
-    // The availability observer calls updateAvailability on every lifecycle edge, which wakes the supervisor's reconcile through the standing-buffer kick; we read the
+    // The availability observer calls updateCameraState on every lifecycle edge, which wakes the supervisor's reconcile through the standing-buffer kick; we read the
     // factory-installed timeshift double's reconcile tally so the assertions observe the reconcile firing per edge rather than a private field. The hksv double retains
     // isRecording and updateRecordingActive: the capability's delegate teardown calls updateRecordingActive(false) gated on
     // isRecording: true. The confined casts bridge the doubles to the StreamingDelegate types their fields are declared as.

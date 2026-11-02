@@ -276,7 +276,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Configure the motion sensor.
     if(this.configureMotionSensor({ enabled: this.ufp.motionSettings.isEnabled, initialized })) {
 
-      // Apply the connection and tamper status characteristics to the motion service ourselves; battery status is handled separately by configureBatteryService.
+      // Apply the tamper status characteristic to the motion service ourselves; battery status is handled separately by configureBatteryService.
       const motionService = this.accessory.getService(this.hap.Service.MotionSensor);
 
       if(motionService) {
@@ -389,8 +389,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
         continue;
       }
 
-      // Apply the connection and tamper status characteristics every reconcile, exactly like every other sensor service: this unconditional call is the sole per-device
-      // StatusActive driver when a device goes offline while the controller stays healthy. It does not touch ContactSensorState, so the alarm VALUE is not re-pushed.
+      // Apply the tamper status characteristic every reconcile, exactly like every other sensor service. It does not touch ContactSensorState, so the alarm VALUE is not
+      // re-pushed.
       this.configureStateCharacteristics(service);
 
       // Seed the alarm VALUE bits exactly once per service lifetime - the first configure (initialized false) or a late capability creating the service (an
@@ -868,14 +868,11 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     return Boolean(service?.getCharacteristic(options.characteristic).value);
   }
 
-  // Configure the additional state characteristics in HomeKit.
+  // Configure the additional state characteristics in HomeKit. No service of a sensor carries StatusActive, one restored from the accessory cache included, No Response
+  // being what HomeKit shows when the sensor cannot be reached.
   private configureStateCharacteristics(service: Service): boolean {
 
-    // Retrieve the current connection status when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(this.answering(() => this.isReachable));
-
-    // Update the current connection status.
-    service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
+    this.removeStatusActive(service);
 
     // Retrieve the current tamper status when requested.
     service.getCharacteristic(this.hap.Characteristic.StatusTampered).onGet(this.answering(() => this.tampered));
@@ -1167,9 +1164,9 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
       }
     });
 
-    // The reactive tamper push: when the controller's tamperingDetectedAt changes, re-write StatusTampered across every sensor service that carries it, mirroring how
-    // refreshReachability sweeps StatusActive. One read of the projection field, one write per state-bearing service; no second copy of "are we tampered?" is held
-    // anywhere. The onGet already reads through, so this is purely the push that keeps HomeKit current between reads.
+    // The reactive tamper push: when the controller's tamperingDetectedAt changes, re-write StatusTampered across every sensor service that carries it. One read of the
+    // projection field, one write per state-bearing service; no second copy of "are we tampered?" is held anywhere. The onGet already reads through, so this is purely
+    // the push that keeps HomeKit current between reads.
     this.observeState({ key: "sensor.tamperingDetectedAt", selector: state => sensor(state)?.tamperingDetectedAt, title: "tamper detection" },
       () => updateServices(this.accessory, this.hap.Characteristic.StatusTampered, this.tampered));
 
@@ -1185,13 +1182,11 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
         () => this.updateAlarmState(descriptor));
     }
 
-    // The remaining sensor reactions are a full service reconciliation (battery, the per-mode sensor services, the status indicator, StatusActive). They key off many
-    // settings sub-objects and live stat values, so we observe the whole sensor record and re-derive - reproducing a refresh-on-any-change, but now structurally silent
-    // when nothing changed (the store's reference dedup). The alarm family and tamper own their VALUE pushes through their dedicated observers above; what this broad
-    // observer still uniquely provides is each service's per-device StatusActive push (via the unconditional configureStateCharacteristics) and the runtime
-    // capability-flip existence reconcile. Decomposing this into per-service observers - which would also retire the StatusTampered re-apply - safe to run more than once
-    // - the dedicated tamper observer already owns - is a tracked follow-up; any such retirement MUST first add a sensor.state -> refreshReachability availability
-    // observer to preserve the per-device StatusActive push this broad observer currently provides.
+    // The remaining sensor reactions are a full service reconciliation (battery, the per-mode sensor services, the status indicator). They key off many settings
+    // sub-objects and live stat values, so we observe the whole sensor record and re-derive - reproducing a refresh-on-any-change, but structurally silent when
+    // nothing changed (the store's reference dedup). The alarm family and tamper own their VALUE pushes through their dedicated observers above; what this broad observer
+    // still uniquely provides is the runtime capability-flip existence reconcile. Decomposing this into per-service observers - which would also retire the
+    // StatusTampered re-apply - safe to run more than once - the dedicated tamper observer already owns - is a tracked follow-up.
     this.observeState({ key: "sensor.config", selector: sensor, title: "sensor settings" }, () => this.updateDevice({ initialized: true }));
   }
 

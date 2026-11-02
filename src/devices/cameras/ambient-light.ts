@@ -6,14 +6,13 @@ import type { Camera, ProtectCameraConfig } from "unifi-protect";
 import type { ProtectCamera } from "./camera.ts";
 import { ProtectDeviceCapability } from "../device-capability.ts";
 import type { ProtectNvr } from "../../nvr/nvr.ts";
-import type { Service } from "homebridge";
 import type { WithoutIdentity } from "../../types.ts";
 import { capabilityGate } from "homebridge-plugin-utils";
 import { mqttTopics } from "../../mqtt.ts";
 
 /* The ambient light capability composed onto a ProtectCamera: the HomeKit LightSensor a camera with lux-reading hardware advertises, its 60-second controller poll, its
  * two read handlers, and its MQTT reading. The whole surface is capability-held - the last-known reading lives here and nothing outside this class touches it - which is
- * what makes the boundary clean enough to own: the host's only interest in it is the one availability push below.
+ * what makes the boundary clean enough to own: the host pushes nothing to it.
  *
  * Its body is convergence, which reconcile() implements, and configure() holds the registration that must stand once, the MQTT restatement. The gate
  * re-decides the sensor's existence from live capability and user state, the service is acquired get-or-create, and the handlers and the poll are RE-BOUND on every
@@ -76,10 +75,6 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
     // sits above the poll registration below, so a hidden sensor registers no interval.
     const { service } = this.validService({
 
-      onServiceCreate: (lightSensorService: Service) => {
-
-        lightSensorService.addOptionalCharacteristic(this.hap.Characteristic.StatusActive);
-      },
       serviceType: this.hap.Service.LightSensor,
       validate: capabilityGate({ capability: this.ufp.featureFlags.hasLuxCheck, toggle: this.hasFeature("Device.AmbientLightSensor") })
     });
@@ -88,6 +83,11 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
 
       return;
     }
+
+    // Only a motion or occupancy sensor goes inactive, so this sensor's StatusActive reads active for good, read from nothing, which clears a value the accessory cache
+    // restored. A read still refuses with the rest of the accessory.
+    service.updateCharacteristic(this.hap.Characteristic.StatusActive, true);
+    this.answerHeld(service, this.hap.Characteristic.StatusActive);
 
     // Read the camera's current lux level, mapping every failure to the -1 no-reading sentinel that both callers below skip on.
     const getLux = async (): Promise<number> => {
@@ -152,9 +152,6 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
     // Poll every 60 seconds - ambient light changes slowly enough that a faster cadence would only add controller chatter without a visible HomeKit benefit.
     this.timers.setInterval("ambientLight", () => void updateAmbientLight(), 60 * 1000);
 
-    // Retrieve the active state when requested.
-    service.getCharacteristic(this.hap.Characteristic.StatusActive).onGet(this.answering(() => this.isReachable));
-
     // Initialize the sensor's reading. We adopt only a genuine reading: a failed read (-1 - the camera unreachable, or the lux capability transiently withdrawn during a
     // controller reconnect) leaves the last-known value in place rather than stamping the HomeKit display to the floor, mirroring the 60-second poll's skip-on-(-1) guard
     // above. On the first reconcile there is no prior reading - the field seeds 0, which HomeKit cannot represent - so we floor to the minimum only in that case.
@@ -179,7 +176,6 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
     service.getCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel).onGet(this.answering(() => this.#ambientLight));
 
     service.updateCharacteristic(this.hap.Characteristic.CurrentAmbientLightLevel, this.#ambientLight);
-    service.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
 
     // Publish a genuine reading this run adopted. It is the capability's statement as it is built, and a later run that reads the same level leaves it unsent while one
     // that reads a moved level sends it.
@@ -187,12 +183,5 @@ export class AmbientLightCapability extends ProtectDeviceCapability<ProtectCamer
 
       this.publishState(mqttTopics.ambientlight.topic, this.#ambientLight.toString());
     }
-  }
-
-  // Reflect the host's reachability onto the sensor's StatusActive characteristic, composed by the camera's availability projection. The service is resolved at call time
-  // rather than held, so a push that arrives before the first reconcile - or after the gate has pruned the sensor - finds nothing and no-ops.
-  public updateAvailability(): void {
-
-    this.accessory.getService(this.hap.Service.LightSensor)?.updateCharacteristic(this.hap.Characteristic.StatusActive, this.isReachable);
   }
 }

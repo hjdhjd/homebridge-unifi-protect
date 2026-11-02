@@ -322,10 +322,11 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         }
       },
 
-      // Our motion sensor.
+      // Our motion and occupancy sensors, whose StatusActive HAP holds from here on. An occupancy sensor adds no recording trigger.
       sensors: !this.protectCamera.isHksvCapable ? undefined : {
 
-        motion: this.protectCamera.accessory.getService(this.hap.Service.MotionSensor)
+        motion: this.protectCamera.accessory.getService(this.hap.Service.MotionSensor),
+        occupancy: this.protectCamera.accessory.getService(this.hap.Service.OccupancySensor)
       },
 
       streamingOptions: {

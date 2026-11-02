@@ -1,18 +1,18 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * reachability.test.ts: Unit tests for the primitives the projection-backed accessory base depends on for correct teardown and reachability reporting - the composed
- * per-accessory abort signal (teardown) and the StatusActive reachability fan-out - exercised against the real production ProtectDevice.
+ * per-accessory abort signal (teardown) and the reachability read the media paths gate on - exercised against the real production ProtectDevice.
  *
- * These import the real ProtectDevice and drive its own isReachable, refreshReachability, and cleanup directly: every relative import specifier resolves to its
+ * These import the real ProtectDevice and drive its own isReachable, noteConnectionChanged, and cleanup directly: every relative import specifier resolves to its
  * on-disk ".ts" sibling under the project's "node --strip-types" test runner (the shared tsconfig's rewriteRelativeImportExtensions rewrites it back to ".js" on
  * emit), and the lone non-erasable construct - the ProtectReservedNames string identifiers - is an erasable "as const" object.
  *
  * The abstract base is exercised through the smallest possible concrete leaf: beside the empty configureDevice ProtectDevice requires, which never runs because the
  * leaf is built without being configured, the subclass adds nothing but a window onto the protected composed signal, and every method under test is the base's own.
- * It is constructed against the minimal mocks isReachable / refreshReachability / cleanup actually read, and the rig hands production the runtime's HAP, whose classes
- * the accessory's own characteristics come from, so the production fan-out reaches the very characteristics the test materialized.
+ * It is constructed against the minimal mocks isReachable / noteConnectionChanged / cleanup actually read, and the rig hands production the runtime's HAP, whose classes
+ * the accessory's own characteristics come from.
  */
-import { Characteristic, Service, hap, makeTestAccessory, writesTo } from "../testing.helpers.ts";
+import { Characteristic, Service, hap, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import { ProtectDevice } from "./device.ts";
@@ -24,7 +24,7 @@ import assert from "node:assert/strict";
 import { composeSignals } from "homebridge-plugin-utils";
 
 // The smallest concrete leaf of the abstract base. Its configureDevice is the empty body ProtectDevice requires and never runs, so a near-empty subclass is a
-// faithful, fully real instance of the production class - isReachable, refreshReachability, and cleanup are all the base's own, inherited unchanged. The one other
+// faithful, fully real instance of the production class - isReachable, noteConnectionChanged, and cleanup are all the base's own, inherited unchanged. The one other
 // addition exposes the protected composed signal so the teardown assertion can observe exactly what cleanup() aborts.
 class TestProtectDevice extends ProtectDevice {
 
@@ -183,67 +183,22 @@ describe("reachability (real ProtectDevice)", () => {
     assert.equal(instance.isReachable, false, "a vanished record reports unreachable without throwing");
   });
 
-  test("refreshReachability writes the reachable state to every service carrying StatusActive and leaves services without it untouched", () => {
+  // No Response answers for reachability, so the connection loop's push sweeps nothing onto the accessory, and a service with no use for StatusActive grows none from it.
+  test("noteConnectionChanged writes no StatusActive onto any service, whatever the reachable state reads", () => {
 
     const accessory = makeTestAccessory();
-
-    // Two sensor services carry StatusActive; we materialize the characteristic on each, mirroring how the configure paths create it during setup.
     const motion = accessory.addService(Service.MotionSensor, "Motion");
     const occupancy = accessory.addService(Service.OccupancySensor, "Occupancy");
+    const { connection, instance } = makeReachableDevice(accessory);
 
-    motion.getCharacteristic(Characteristic.StatusActive);
-    occupancy.getCharacteristic(Characteristic.StatusActive);
+    for(const isHealthy of [ true, false ]) {
 
-    // A switch service deliberately does NOT carry StatusActive - the fan-out must skip it via the testCharacteristic guard.
-    const toggle = accessory.addService(Service.Switch, "Some Switch");
+      connection.isHealthy = isHealthy;
+      instance.noteConnectionChanged();
 
-    toggle.getCharacteristic(Characteristic.On);
-
-    const { connection, device, instance } = makeReachableDevice(accessory);
-
-    // Reachable: the real refreshReachability computes isReachable, walks accessory.services, and writes true to every StatusActive-bearing service.
-    connection.isHealthy = true;
-    device.config.state = "CONNECTED";
-    instance.refreshReachability();
-
-    assert.equal(motion.getCharacteristic(Characteristic.StatusActive).value, true, "the motion sensor's StatusActive reflects the reachable state");
-    assert.equal(occupancy.getCharacteristic(Characteristic.StatusActive).value, true, "the occupancy sensor's StatusActive reflects the reachable state");
-    assert.equal(toggle.testCharacteristic(Characteristic.StatusActive), false, "the switch never gained a StatusActive characteristic - the fan-out left it untouched");
-
-    // Unreachable (a controller outage): every StatusActive-bearing service goes inactive, the real improvement over leaving them stale-active.
-    connection.isHealthy = false;
-    instance.refreshReachability();
-
-    assert.equal(motion.getCharacteristic(Characteristic.StatusActive).value, false, "the motion sensor goes inactive when unreachable");
-    assert.equal(occupancy.getCharacteristic(Characteristic.StatusActive).value, false, "the occupancy sensor goes inactive when unreachable");
-    assert.equal(toggle.testCharacteristic(Characteristic.StatusActive), false, "the switch is still untouched after the second pass");
-  });
-
-  test("refreshReachability answers null and writes nothing when no service carries StatusActive", () => {
-
-    const accessory = makeTestAccessory();
-    const toggle = accessory.addService(Service.Switch, "Some Switch");
-
-    toggle.getCharacteristic(Characteristic.On);
-
-    const { instance } = makeReachableDevice(accessory);
-
-    assert.equal(instance.refreshReachability(), null, "an accessory with no StatusActive carrier reports no transition");
-    assert.equal(toggle.testCharacteristic(Characteristic.StatusActive), false, "the sweep created no StatusActive characteristic");
-  });
-
-  test("refreshReachability answers null when the reachable state did not flip, and still writes it", () => {
-
-    const accessory = makeTestAccessory();
-    const motion = accessory.addService(Service.MotionSensor, "Motion");
-
-    motion.updateCharacteristic(Characteristic.StatusActive, true);
-
-    const { instance } = makeReachableDevice(accessory);
-    const writeBaseline = writesTo(accessory, motion.getCharacteristic(Characteristic.StatusActive)).length;
-
-    assert.equal(instance.refreshReachability(), null, "a reachable device already shown active reports no transition");
-    assert.equal(writesTo(accessory, motion.getCharacteristic(Characteristic.StatusActive)).length, writeBaseline + 1, "the unchanged reachable state was still written");
+      assert.equal(motion.testCharacteristic(Characteristic.StatusActive), false, "the motion sensor carries no StatusActive");
+      assert.equal(occupancy.testCharacteristic(Characteristic.StatusActive), false, "and neither does the occupancy sensor");
+    }
   });
 
   test("cleanup() aborts the composed per-accessory signal, tearing down every observe loop bound to it", () => {

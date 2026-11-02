@@ -190,7 +190,7 @@ export abstract class ProtectDeviceCapability<H extends ProtectCapabilityHost = 
   }
 
   // Whether the host is currently reachable, delegated to the host - the two-scope composition of controller health with the device's own online state. A capability
-  // consults this before issuing a controller read that would only fail, and reflects it onto any StatusActive characteristic its own services carry.
+  // consults this before issuing a controller read that would only fail.
   protected get isReachable(): boolean {
 
     return this.host.isReachable;

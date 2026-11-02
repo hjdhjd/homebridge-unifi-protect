@@ -751,9 +751,9 @@ export class TestStreamingDelegate implements StreamingDelegate {
   }
 }
 
-/* Build HAP's own camera controller for a camera, with the arms production's delegate gives one: the recording arm and the motion link where the camera can back HomeKit
- * Secure Video, and the streaming arm always. A registration therefore builds exactly the services production's does, and the delegates behind it do nothing, because the
- * rows it serves read those services and no session ever starts.
+/* Build HAP's own camera controller for a camera, with the arms production's delegate gives one: the recording arm and the motion and occupancy links where the camera
+ * can back HomeKit Secure Video, and the streaming arm always. A registration therefore builds exactly the services production's does, and the delegates behind it do
+ * nothing, because the rows it serves read those services and no session ever starts.
  *
  * @param camera      - The camera the controller is for.
  * @param resolutions - The resolutions the controller advertises.
@@ -780,7 +780,7 @@ function makeRealCameraController(camera: ProtectCameraHost, resolutions: Resolu
           video
         }
       },
-      sensors: { motion: camera.accessory.getService(hap.Service.MotionSensor) }
+      sensors: { motion: camera.accessory.getService(hap.Service.MotionSensor), occupancy: camera.accessory.getService(hap.Service.OccupancySensor) }
     } : {}),
     streamingOptions: {
 

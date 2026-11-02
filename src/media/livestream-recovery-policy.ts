@@ -104,7 +104,7 @@ export function livestreamRecoveryDecision(context: RecoveryContext,
 
   // 3. This camera is unavailable. Steps 1-2 cleared the controller (induced disruption, then drowning), so isReachable's controller half is necessarily true here
   //    - which means !cameraReachable is exactly "this one camera is not reachable", whether it is offline (rebooting, lost power, off the network) or its controller
-  //    record has been removed (unadopted, lingering in the removal grace), read through the single availability helper rather than a parallel device-online accessor.
+  //    record has been removed (unadopted, lingering in the removal grace), read through isReachable rather than a parallel device-online accessor.
   //    Reconnecting its livestream is futile, and a self-heal reboot cannot help here - the controller reports an offline camera unavailable, and a removed record
   //    has no camera to reboot - so wait rather than burn reconnect attempts toward the self-heal give-up. The attempts counter only advances on a failed reconnect,
   //    never on a wait (the deliberate counter behavior above), so this defer costs zero attempts and the give-up is unreachable for an unavailable camera by

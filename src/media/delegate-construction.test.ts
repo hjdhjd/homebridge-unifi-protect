@@ -171,6 +171,29 @@ describe("media-delegate construction against the ProtectCameraHost stub", () =>
     assert.equal(options.recording?.delegate, stream.hksv, "the controller's recording arm is driven by that recording delegate");
     assert.ok(options.recording.options, "the controller's recording arm carries its recording options");
     assert.equal(options.sensors?.motion, motionSensor, "the controller's motion link is the accessory's own motion sensor");
+    assert.equal(options.sensors.occupancy, undefined, "and with no occupancy sensor standing it is handed none");
+  });
+
+  test("ProtectStreamingDelegate hands HAP an occupancy sensor exactly where it gives it a recording arm", () => {
+
+    const { accessory, controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    const occupancySensor = accessory.addService(Service.OccupancySensor, "Test Camera");
+
+    host.isHksvCapable = true;
+
+    let options = cameraControllerOptions(new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]).controller);
+
+    assert.ok(options.recording, "a camera that can record gets the recording arm");
+    assert.equal(options.sensors?.occupancy, occupancySensor, "and HAP gets the accessory's own occupancy sensor");
+
+    host.isHksvCapable = false;
+    options = cameraControllerOptions(new ProtectStreamingDelegate(host, [[ 1920, 1080, 30 ]]).controller);
+
+    assert.equal(options.recording, undefined, "a camera that cannot record gets no recording arm");
+    assert.equal(options.sensors, undefined, "and hands HAP no sensor");
   });
 
   /* The advertised recording audio format is the camera's own, read from its livestream by the derivation, in one channel, or the whole stand-in when the stream was not

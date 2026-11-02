@@ -10,7 +10,7 @@
  * The sensor-specific surface: the always-present Battery service (configureBatteryService is unconditional, and updateBatteryStatus writes BatteryLevel /
  * StatusLowBattery), the per-mode services (the alarm family's alarm sound and glass-break twins / ambient light / contact-via-mountType / humidity / temperature) with
  * their read-through getters, the ambient 0.0001 HomeKit floor and the two-source read-select behind temperature and humidity (the stats block for the USL family, the
- * air-quality block for UP Air Quality hardware) with its resolve-else-hold write path, the StatusActive / StatusTampered state characteristics each carries, and the
+ * air-quality block for UP Air Quality hardware) with its resolve-else-hold write path, the StatusTampered state characteristic each carries, and the
  * per-mode MQTT publishes; the leak (default LeakSensor, internal / external subtypes) plus the moisture variant (Sensor.MoistureSensor swaps to a subtyped
  * ContactSensor, and the mode-flip cleanup removes the opposite-type service); the air-quality surface (the AirQualitySensor with its always-present level and its
  * presence-driven densities, the CarbonDioxideSensor with the controller-configured alert threshold and its presence-driven level, the opt-in vape ContactSensor at its
@@ -313,7 +313,7 @@ describe("real ProtectSensor construction and family behavior", () => {
       "ContactSensorState initialized from a non-null alarmTriggeredAt");
     assert.equal(await triggerGet(alarm.getCharacteristic(Characteristic.ContactSensorState)), Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
       "the alarm onGet reads through alarmTriggeredAt !== null");
-    assert.equal(alarm.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive carried from isReachable");
+    assert.equal(alarm.testCharacteristic(Characteristic.StatusActive), false, "a sensor service carries no StatusActive");
     assert.equal(alarm.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
       "StatusTampered carried from sensorTamperState(null)");
     assert.ok(built.mqtt.published.some((entry) => (entry.topic === built.projection.config.mac + "/alarm") && (entry.payload === "true")),
@@ -372,7 +372,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.ok(contact, "a door mountType materializes the mount-type ContactSensor at its subtype");
     assert.equal(await triggerGet(contact.getCharacteristic(Characteristic.ContactSensorState)), Characteristic.ContactSensorState.CONTACT_DETECTED,
       "the contact onGet reads through isOpened ?? false");
-    assert.equal(contact.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive carried from isReachable");
+    assert.equal(contact.testCharacteristic(Characteristic.StatusActive), false, "a sensor service carries no StatusActive");
     assert.ok(built.mqtt.published.some((entry) => entry.topic === built.projection.config.mac + "/contact"), "the contact state published on the device-scoped topic");
 
     built.sensor.cleanup();
@@ -483,7 +483,7 @@ describe("real ProtectSensor construction and family behavior", () => {
       "CurrentTemperature initialized from stats.temperature.value");
     assert.equal(await triggerGet(temperature.getCharacteristic(Characteristic.CurrentTemperature)), storedByHap(Characteristic.CurrentTemperature, 21.5),
       "the temperature onGet reads through the stat value");
-    assert.equal(temperature.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive carried from isReachable");
+    assert.equal(temperature.testCharacteristic(Characteristic.StatusActive), false, "a sensor service carries no StatusActive");
     assert.equal(temperature.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
       "StatusTampered carried from sensorTamperState(null)");
     assert.ok(built.mqtt.published.some((entry) => entry.topic === built.projection.config.mac + "/temperature"),
@@ -1007,7 +1007,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     built.sensor.cleanup();
   });
 
-  test("a late glass-break capability creates the service with StatusActive and onGet wired, then lands a subsequent alarm value", async () => {
+  test("a late glass-break capability creates the service with its state characteristics and onGet wired, then lands a subsequent alarm value", async () => {
 
     const built = buildSensor();
 
@@ -1026,7 +1026,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     const glass = built.accessory.getServiceById(Service.ContactSensor, ProtectReservedNames.CONTACT_SENSOR_GLASS_BREAK);
 
     assert.ok(glass, "the late capability created the glass-break ContactSensor");
-    assert.equal(glass.getCharacteristic(Characteristic.StatusActive).value, true, "the created service seeded StatusActive from isReachable");
+    assert.equal(glass.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED, "the created service seeded StatusTampered");
     assert.equal(await triggerGet(glass.getCharacteristic(Characteristic.ContactSensorState)), Characteristic.ContactSensorState.CONTACT_DETECTED,
       "the created service wired its onGet read-through (clear)");
 
@@ -1314,11 +1314,10 @@ describe("real ProtectSensor construction and family behavior", () => {
       "both narrow alarm-family observers woke in table order, then the whole-record observer");
   });
 
-  test("the alarm-family service's StatusActive flips offline alongside the motion service every reconcile", async () => {
+  test("the alarm-family service's state characteristics are applied alongside the motion service's every reconcile", async () => {
 
-    // A glass-break device with motion enabled: both services carry StatusActive seeded true (reachable). Driving the device offline via a state push wakes the
-    // whole-record reconcile, whose UNCONDITIONAL configureStateCharacteristics must flip the glass-break service's StatusActive false alongside the motion service's -
-    // proving the state characteristics run for the alarm family every reconcile, not only at create.
+    // A glass-break device with motion enabled, each service's StatusTampered moved off what the record says. A state push wakes the whole-record reconcile, whose
+    // UNCONDITIONAL configureStateCharacteristics must put each back - proving the state characteristics run for the alarm family every reconcile, not only at create.
     const built = buildSensor({ glassBreak: true, glassBreakEnabled: true, motionEnabled: true });
 
     await settle();
@@ -1328,16 +1327,18 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(glass, "the glass-break service exists");
     assert.ok(motion, "the motion service exists");
-    assert.equal(glass.getCharacteristic(Characteristic.StatusActive).value, true, "the glass-break StatusActive starts active (reachable)");
-    assert.equal(motion.getCharacteristic(Characteristic.StatusActive).value, true, "the motion StatusActive starts active (reachable)");
+    glass.updateCharacteristic(Characteristic.StatusTampered, Characteristic.StatusTampered.TAMPERED);
+    motion.updateCharacteristic(Characteristic.StatusTampered, Characteristic.StatusTampered.TAMPERED);
 
     built.store.pushSensorPatch("test-sensor-1", { state: "DISCONNECTED" });
 
     await settle();
 
-    assert.equal(motion.getCharacteristic(Characteristic.StatusActive).value, false, "the offline device flipped the motion service's StatusActive");
-    assert.equal(glass.getCharacteristic(Characteristic.StatusActive).value, false,
-      "the offline device flipped the alarm-family service's StatusActive too, proving configureStateCharacteristics runs every reconcile");
+    assert.equal(motion.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED, "the reconcile put the motion one back");
+    assert.equal(glass.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
+      "and the alarm-family service's, proving configureStateCharacteristics runs every reconcile");
+    assert.equal(glass.testCharacteristic(Characteristic.StatusActive), false, "and an offline device grows no StatusActive on the alarm-family service");
+    assert.equal(motion.testCharacteristic(Characteristic.StatusActive), false, "nor on the motion service");
 
     built.sensor.cleanup();
   });
@@ -1393,7 +1394,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(service, "a reporting index materializes the AirQualitySensor service");
     assert.equal(service.getCharacteristic(Characteristic.AirQuality).value, 1, "AirQuality initialized to excellent from an index of 42");
-    assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, true, "StatusActive carried from isReachable");
+    assert.equal(service.testCharacteristic(Characteristic.StatusActive), false, "a sensor service carries no StatusActive");
     assert.equal(service.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
       "StatusTampered carried from the tamper read-through");
     assert.equal(service.testCharacteristic(Characteristic.PM2_5Density), false, "an index-only sensor carries no PM2.5 density");
@@ -1548,7 +1549,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, false, "the device is genuinely unreachable for this pass");
+    assert.equal(built.sensor.isReachable, false, "the device is genuinely unreachable for this pass");
     assert.equal(service.testCharacteristic(Characteristic.PM2_5Density), true, "the density held through the offline window despite its metric reading quiet");
     assert.equal(service.getCharacteristic(Characteristic.PM2_5Density).value, 3, "the held density still reports the last reading");
     assert.ok(built.accessory.getService(Service.AirQualitySensor), "the service itself held too");
@@ -1573,7 +1574,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, false, "the device is genuinely unreachable for this pass");
+    assert.equal(built.sensor.isReachable, false, "the device is genuinely unreachable for this pass");
     assert.equal(service.getCharacteristic(Characteristic.PM2_5Density).value, 7, "the reported density was written while the device was unreachable");
     assert.equal(writesTo(built.accessory, service.getCharacteristic(Characteristic.PM2_5Density)).at(-1), 7, "the write log's latest entry is the newly reported value");
 
@@ -1617,7 +1618,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.ok(service, "the vape contact sensor exists");
     assert.equal(service.getCharacteristic(Characteristic.ContactSensorState).value, Characteristic.ContactSensorState.CONTACT_DETECTED,
       "the all-clear status leaves the contact closed");
-    assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, true, "the vape sensor carries the shared state characteristics");
+    assert.equal(service.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
+      "the vape sensor carries the shared state characteristic");
     assert.equal(logCount(built.logEntries, "info", "Vaping"), 0, "a quiet first reading is saved silently rather than narrated");
     assert.ok(loggedAt(built.logEntries, "info", "vape"), "the vape label reached the enabled-sensors log");
 
@@ -1789,7 +1791,8 @@ describe("real ProtectSensor construction and family behavior", () => {
     assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideDetected).value, Characteristic.CarbonDioxideDetected.CO2_LEVELS_NORMAL,
       "a reading below the configured threshold is not an alert");
     assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).value, 800, "the level carries the reading");
-    assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, true, "the carbon dioxide service carries the shared state characteristics");
+    assert.equal(service.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
+      "the carbon dioxide service carries the shared state characteristic");
     assert.ok(loggedAt(built.logEntries, "info", "carbon dioxide"), "the carbon dioxide label reached the enabled-sensors log");
 
     built.store.pushSensorPatch("test-sensor-1", { airQuality: airQualityBlock({ co2: { status: "neutral", value: 1200 } }) });
@@ -1843,7 +1846,7 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     await settle();
 
-    assert.equal(service.getCharacteristic(Characteristic.StatusActive).value, false, "the device is genuinely unreachable for this pass");
+    assert.equal(built.sensor.isReachable, false, "the device is genuinely unreachable for this pass");
     assert.equal(service.testCharacteristic(Characteristic.CarbonDioxideLevel), true, "the level held through the offline window despite its metric reading quiet");
     assert.equal(service.getCharacteristic(Characteristic.CarbonDioxideLevel).value, 800, "the held level still reports the last reading");
     assert.ok(built.accessory.getService(Service.CarbonDioxideSensor), "the service itself held too");
@@ -2195,8 +2198,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(humidity, "the humidity service exists");
     assert.ok(temperature, "the temperature service exists");
-    assert.equal(humidity.getCharacteristic(Characteristic.StatusActive).value, true, "the humidity service carries the shared state characteristics");
-    assert.equal(temperature.getCharacteristic(Characteristic.StatusActive).value, true, "the temperature service carries the shared state characteristics");
+    assert.equal(humidity.testCharacteristic(Characteristic.StatusActive), false, "the humidity service carries no StatusActive");
+    assert.equal(temperature.testCharacteristic(Characteristic.StatusActive), false, "and neither does the temperature service");
     assert.equal(humidity.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
       "the humidity service carries the tamper read-through too");
 
@@ -2219,7 +2222,7 @@ describe("real ProtectSensor construction and family behavior", () => {
       "the smoke onGet reads through the at-rest block");
     assert.equal(await triggerGet(carbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected)), Characteristic.CarbonMonoxideDetected.CO_LEVELS_NORMAL,
       "the carbon monoxide onGet reads through the at-rest block");
-    assert.equal(smoke.getCharacteristic(Characteristic.StatusActive).value, true, "the smoke service carries the shared state characteristics");
+    assert.equal(smoke.testCharacteristic(Characteristic.StatusActive), false, "the smoke service carries no StatusActive");
     assert.equal(smoke.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED, "and the shared tamper read-through");
     assert.equal(smoke.getCharacteristic(Characteristic.StatusFault).value, Characteristic.StatusFault.NO_FAULT, "an at-rest detector reports no smoke fault");
     assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusFault).value, Characteristic.StatusFault.NO_FAULT, "and no carbon monoxide fault");
@@ -2294,7 +2297,8 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(smoke, "the SmokeSensor materializes on the advertisement alone, with no block in sight");
     assert.ok(carbonMonoxide, "the CarbonMonoxideSensor materializes on the advertisement alone");
-    assert.equal(smoke.getCharacteristic(Characteristic.StatusActive).value, true, "the state characteristics still run for a detector that has not reported");
+    assert.equal(smoke.getCharacteristic(Characteristic.StatusTampered).value, Characteristic.StatusTampered.NOT_TAMPERED,
+      "the state characteristics still run for a detector that has not reported");
     assert.equal(writesTo(built.accessory, smoke.getCharacteristic(Characteristic.SmokeDetected)).length, 0, "the detection characteristic never took a value");
     assert.equal(writesTo(built.accessory, smoke.getCharacteristic(Characteristic.StatusFault)).length, 0, "nor did its fault characteristic");
     assert.equal(writesTo(built.accessory, carbonMonoxide.getCharacteristic(Characteristic.CarbonMonoxideDetected)).length, 0, "nor did the carbon monoxide detection");
@@ -2635,7 +2639,7 @@ describe("real ProtectSensor construction and family behavior", () => {
     testing.sensor.cleanup();
   });
 
-  test("both smoke services' StatusActive flips false when the detector goes offline on a reconcile", async () => {
+  test("neither smoke service grows a StatusActive when the detector goes offline on a reconcile", async () => {
 
     const built = buildSensor({ alarmTypes: [ "smoke", "CO" ], smokeStatus: makeSmokeStatus(), type: "USL-Smoke-US" });
 
@@ -2646,14 +2650,12 @@ describe("real ProtectSensor construction and family behavior", () => {
 
     assert.ok(smoke, "the SmokeSensor exists");
     assert.ok(carbonMonoxide, "the CarbonMonoxideSensor exists");
-    assert.equal(smoke.getCharacteristic(Characteristic.StatusActive).value, true, "the smoke StatusActive starts active (reachable)");
-
     built.store.pushSensorPatch("test-sensor-1", { state: "DISCONNECTED" });
 
     await settle();
 
-    assert.equal(smoke.getCharacteristic(Characteristic.StatusActive).value, false, "the offline detector flipped the smoke service's StatusActive");
-    assert.equal(carbonMonoxide.getCharacteristic(Characteristic.StatusActive).value, false, "and the carbon monoxide service's alongside it");
+    assert.equal(smoke.testCharacteristic(Characteristic.StatusActive), false, "the offline detector grew none on the smoke service");
+    assert.equal(carbonMonoxide.testCharacteristic(Characteristic.StatusActive), false, "nor on the carbon monoxide service");
 
     built.sensor.cleanup();
   });

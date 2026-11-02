@@ -102,10 +102,10 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
       // HARD-assert the LightSensor exists FIRST (non-optional): an absent service would let every onGet assertion pass vacuously.
       assert.ok(lightSensor, "featureFlags.hasLuxCheck materializes the ambient LightSensor");
 
-      // The CurrentAmbientLightLevel onGet (ambient-light.ts) reads the stored init value, and the StatusActive onGet (ambient-light.ts) reads isReachable (true here).
+      // The CurrentAmbientLightLevel onGet (ambient-light.ts) reads the stored init value, and StatusActive reads active.
       assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel)), 100,
         "the positive init reading passes through untouched to the CurrentAmbientLightLevel onGet");
-      assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.StatusActive)), true, "the StatusActive onGet reads isReachable");
+      assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.StatusActive)), true, "the sensor's StatusActive reads active");
       assert.equal(built.projection.luxCalls.length, 1, "the construction-time init issued the lux query exactly once, proving the projection's lux() is wired");
     });
 
@@ -204,7 +204,7 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
         assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.CurrentAmbientLightLevel)), 0.0001,
           "the unreachable init re-maps the -1 no-reading sentinel to the 0.0001 floor");
         assert.equal(projection.luxCalls.length, 0, "the doomed query is never issued while unreachable - lux() is never called");
-        assert.equal(await triggerGet(lightSensor.getCharacteristic(Characteristic.StatusActive)), false, "the StatusActive onGet reads the unreachable state");
+        assert.equal(lightSensor.getCharacteristic(Characteristic.StatusActive).value, true, "and an unreachable camera's sensor reads active as well");
       } finally {
 
         camera.cleanup();
