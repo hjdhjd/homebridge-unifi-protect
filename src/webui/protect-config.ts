@@ -326,7 +326,8 @@ const saveTarget = (items: ProtectControllerConfig[], originalAddress: unknown):
  *   - A Disable entry carries no value reading whatsoever, so its only scope is its trailing segment: `Disable.Option.MAC`.
  *   - An Enable entry additionally carries the value readings, which put the scope ahead of the value: `Enable.Option.MAC` bare, `Enable.Option.MAC=value` in the
  *     canonical form, and `Enable.Option.MAC.value` in the legacy spelling the parser still accepts from configurations written before the delimiter existed. The
- *     scope sits anywhere from the second segment onward across those three, so every one of them is tested.
+ *     scope sits anywhere from the second segment onward across those spellings, so every one of them is tested. On a free-form value option the bare spelling's
+ *     segment is the global value rather than a scope, and sweeping one that happens to spell a swept MAC costs nothing, so the test does not tell the two apart.
  *
  * The cost of reading the grammar without the catalog that names where an option ends: an Enable entry in the legacy spelling whose VALUE text happens to contain
  * a bare MAC of its own, as a whole dot-delimited segment, reads as addressing that MAC. Sweeping such an entry is the wrong call in principle and an unreachable

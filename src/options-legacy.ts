@@ -141,10 +141,10 @@ const FAMILY_OPTION: Readonly<Record<LegacyFamily, string>> = {
   timeshiftPin: "Video.Timeshift.Only"
 };
 
-/* The families whose surviving option KEPT the name a retired master carried, which is what makes their scoped entries dangerous rather than merely stale. The
- * current catalog reads the trailing segment of `Enable.Motion.OccupancySensor.<identifier>` as that option's GLOBAL value, so one such entry would enable the option
- * for every device on every controller with a device identifier standing in as the selection. Those entries are rewritten into the canonical scoped form, which says
- * what the user meant and says nothing globally. A family whose surviving option took a new name cannot be misread this way and needs no rewrite.
+/* The families whose surviving option KEPT the name a retired master carried, so a retired master's scoped entry spells the same as an entry of the current option. The
+ * current catalog reads the trailing segment of `Enable.Motion.OccupancySensor.<identifier>` as the scope it names, because an option declaring its choices keeps a bare
+ * segment a scoped enable. Those entries are rewritten into the canonical scoped form, which says what the user meant in the one spelling every reader shares. A family
+ * whose surviving option took a new name shares no spelling with its retired master and needs no rewrite.
  */
 const KEPT_NAME_FAMILIES: ReadonlySet<LegacyFamily> = new Set<LegacyFamily>([ "objectSensors", "occupancy" ]);
 
