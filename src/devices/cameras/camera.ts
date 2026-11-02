@@ -421,8 +421,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
     // Configure our NVR recording switches.
     this.configureNvrRecordingSwitch();
 
-    // Configure the status indicator light switch.
-    this.configureStatusLedSwitch();
+    // Configure the status indicator light switch, which a camera with no status light does not stand.
+    this.configureStatusLedSwitch({ enabled: this.ufp.featureFlags.hasLedStatus });
 
     // Configure the doorbell trigger. It runs BEFORE the mute switch because the trigger is what creates the Doorbell service on a plain camera, and the mute switch's
     // gate requires that service to already exist. A camera the controller demoted (a cached Doorbell service, trigger now disabled) takes the trigger's disabled

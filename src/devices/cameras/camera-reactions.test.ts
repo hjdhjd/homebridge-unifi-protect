@@ -677,14 +677,14 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
     test("with the status-LED switch option, a ledSettings push reflects isEnabled onto the switch On", async () => {
 
-      built = await buildCamera({ userOptions: ["Enable.Device.StatusLed.Switch"] });
+      built = await buildCamera({ featureFlags: { hasLedStatus: true }, userOptions: ["Enable.Device.StatusLed.Switch"] });
 
-      // HARD-assert the switch exists FIRST: the materialization gate is hasFeature("Device.StatusLed.Switch") alone (device.ts - isEnabled defaults true at the
-      // unconditional camera.ts call site, with NO hasLedStatus and NO ledSettings precondition), so the userOption alone materializes it. An absent service would
-      // let the value assertion pass vacuously.
+      // HARD-assert the switch exists FIRST: the materialization gate is hasFeature("Device.StatusLed.Switch") over a camera with a status light (device.ts, with
+      // camera.ts passing hasLedStatus as enabled and NO ledSettings precondition), so the userOption materializes it. An absent service would let the value assertion
+      // pass vacuously.
       const statusLedSwitch = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED);
 
-      assert.ok(statusLedSwitch, "Enable.Device.StatusLed.Switch materializes the SWITCH_STATUS_LED switch (no hasLedStatus precondition)");
+      assert.ok(statusLedSwitch, "Enable.Device.StatusLed.Switch materializes the SWITCH_STATUS_LED switch on a camera with a status light");
 
       // makeCameraConfig seeds ledSettings.isEnabled false; push true, which wakes the ledSettings observer -> updateStatusIndicator -> the switch write. statusLed is
       // ledSettings.isEnabled.
@@ -707,7 +707,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
     test("without the status-LED switch option, the switch is absent and a ledSettings push writes nothing", async () => {
 
-      built = await buildCamera();
+      built = await buildCamera({ featureFlags: { hasLedStatus: true } });
 
       assert.equal(built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED), undefined,
         "omitting Enable.Device.StatusLed.Switch materializes no status-LED switch");

@@ -7,8 +7,8 @@
  * controller double holds, so the prefix each writes is what tells the levels apart: the plugin's carries none, makeTestNvr's controllerPrefix gives the controller's
  * one, and a device's logger writes its own descriptor.
  */
+import { Service, TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { TestCameraProjection, makeCameraConfig } from "./testing.helpers.ts";
-import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { afterEach, describe, test } from "node:test";
 import { formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
@@ -17,6 +17,7 @@ import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
 import { ProtectCamera } from "./cameras/camera.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectNvrSystemInfo } from "../nvr/nvr-systeminfo.ts";
+import { ProtectReservedNames } from "../types.ts";
 import { ProtectSecuritySystem } from "../liveviews/security-system.ts";
 import type { TestCameraFeatureFlags } from "./testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
@@ -51,7 +52,8 @@ const DEVICE_FEATURES: DeviceFeature[] = [
 
   MOTION_SWITCH,
   { kindLabel: "Motion sensor automation triggers", label: "Motion sensor automation trigger", option: "Motion.Trigger", withoutHardware: NO_MOTION },
-  { kindLabel: "Status indicator light switches", label: "Status indicator light switch", option: "Device.StatusLed.Switch" },
+  { featureFlags: { hasLedStatus: true }, kindLabel: "Status indicator light switches", label: "Status indicator light switch", option: "Device.StatusLed.Switch",
+    withoutHardware: {} },
   { featureFlags: DOORBELL, kindLabel: "Doorbell mute switches", label: "Doorbell mute switch", option: "Doorbell.Mute", withoutHardware: {} },
   { kindLabel: "Doorbell automation triggers", label: "Doorbell automation trigger", option: "Doorbell.Trigger" },
   { featureFlags: DOORBELL, kindLabel: "Protect chime volume controls", label: "Protect chime volume control", option: "Doorbell.Volume.Dimmer" },
@@ -174,6 +176,36 @@ describe("a plain feature option's line", () => {
 
     assert.deepEqual(await cameraLines(MOTION_SWITCH, ["Enable.Motion.Switch." + CONTROLLER_MAC], [ CAMERA_MAC, SECOND_CAMERA_MAC ]),
       [CONTROLLER_PREFIX + "Motion sensor switches enabled."]);
+  });
+
+  // The catalog scopes the option to a camera with a status light, so a camera with none stands no switch with the option on, and one the cache restored comes off.
+  test("a camera with no status light stands no status light switch, and a restored one comes off", async () => {
+
+    const standSwitch = async (featureFlags: Partial<TestCameraFeatureFlags>, options: { restored?: boolean } = {}): Promise<boolean> => {
+
+      const config = makeCameraConfig({ channels: G2_PRO_CHANNELS, featureFlags, id: "camera-0", mac: CAMERA_MAC, name: "Test Camera" });
+      const store = new TestStateStore(makeProtectState({ cameras: [config] }));
+      const { controller, nvr } = makeTestNvr({ store, userOptions: ["Enable.Device.StatusLed.Switch"] });
+      const accessory = makeTestAccessory("Test Camera", CAMERA_MAC);
+
+      controllers.push(controller);
+
+      if(options.restored) {
+
+        accessory.addService(Service.Switch, "Test Camera Status Indicator", ProtectReservedNames.SWITCH_STATUS_LED);
+      }
+
+      configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, new TestCameraProjection(config.id, store) as unknown as Camera));
+
+      await settle();
+
+      return !!accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED);
+    };
+
+    assert.equal(await standSwitch({ hasLedStatus: true }), true, "a camera with a status light stands the switch");
+    assert.equal(await standSwitch({}), false, "a camera with none does not");
+    assert.equal(await standSwitch({}, { restored: true }), false, "and one the cache restored comes off");
+    assert.equal(await standSwitch({ hasLedStatus: true }, { restored: true }), true, "where a camera with a status light keeps it");
   });
 
   // The package camera's device line reads its parent doorbell's MAC, the entry hasFeature reads, where the id it answers to carries a suffix no entry addresses.

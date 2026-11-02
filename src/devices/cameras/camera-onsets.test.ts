@@ -362,9 +362,9 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
     test("a camera status-LED On set routes through statusLedCommand to the ledSettings isEnabled write", async () => {
 
-      built = await buildCamera({ userOptions: ["Enable.Device.StatusLed.Switch"] });
+      built = await buildCamera({ featureFlags: { hasLedStatus: true }, userOptions: ["Enable.Device.StatusLed.Switch"] });
 
-      // HARD-assert the switch exists FIRST: the materialization gate is hasFeature("Device.StatusLed.Switch") alone (no hasLedStatus precondition), so the userOption
+      // HARD-assert the switch exists FIRST: the materialization gate is hasFeature("Device.StatusLed.Switch") over a camera with a status light, so the userOption
       // materializes it; an absent service would let the payload assertion pass vacuously.
       const statusLedSwitch = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED);
 
@@ -380,7 +380,7 @@ describe("camera-family device.update-backed onSet handlers (camera-onsets conce
 
     test("a rejecting camera status-LED set reports the failure through the shared helper and reverts no characteristic", async () => {
 
-      built = await buildCamera({ userOptions: ["Enable.Device.StatusLed.Switch"] });
+      built = await buildCamera({ featureFlags: { hasLedStatus: true }, userOptions: ["Enable.Device.StatusLed.Switch"] });
 
       const statusLedSwitch = built.accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_STATUS_LED);
 
