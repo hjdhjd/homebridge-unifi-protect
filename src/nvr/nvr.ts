@@ -1280,10 +1280,23 @@ export class ProtectNvr {
     }
   }
 
+  // Run the one-time sweep on reaching stability. It runs from a bare timer, where a throw would reach Homebridge's process handler and end every controller with it, so
+  // a failed sweep is said once and this controller runs on, sweeping again the next time it reaches stability.
+  private sweepRemovableDevices(): void {
+
+    try {
+
+      this.reassessDevices();
+    } catch(error) {
+
+      this.log.error("Unable to finish checking the Protect controller's devices: %s.", formatErrorMessage(error));
+    }
+  }
+
   // Re-assess the full device inventory now that the controller is stable, marking for (graced) removal anything genuinely gone. The one-time sweep on reaching
   // stability: immediate at startup for a controller already up past the window (the uptime backdate), the window after any recovery otherwise. Cache cleanup is
   // stability-gated along with membership removal, so a cached orphan is removed only once the controller has held good for the window.
-  private sweepRemovableDevices(): void {
+  private reassessDevices(): void {
 
     if(!this.removals.removalStable) {
 

@@ -1046,6 +1046,46 @@ describe("the controller root's stability sweep", () => {
       await settle();
     }
   });
+
+  // The sweep runs from a bare timer, where a throw would reach Homebridge's process handler and end every controller with it, so one failed sweep is said once and
+  // the controller runs on.
+  test("a stability sweep that throws logs an error and leaves the controller running", async () => {
+
+    const clock = new TestClock(TEST_CLOCK_EPOCH);
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "7.3.70" };
+    const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
+    const { controller, logEntries, nvr: double } = makeTestNvr({ clock, store });
+    const client = makeConnectedClient({ nvrConfig, store });
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
+
+    try {
+
+      await root.login();
+      await settle();
+
+      const { liveviews } = root as unknown as { liveviews: Nullable<{ configureLiveviews: () => void }> };
+
+      assert.ok(liveviews, "the controller stood up its liveviews owner");
+
+      liveviews.configureLiveviews = (): void => {
+
+        throw new TypeError("Injected fault.");
+      };
+
+      clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
+
+      assert.equal(logCount(logEntries, "error", "Unable to finish checking the Protect controller's devices: Injected fault."), 1,
+        "the failed sweep is said once at error");
+      assert.equal(root.phase, "running", "and the controller runs on");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
+  });
 });
 
 /* The line a controller whose address can never work logs once its connect retry stops, transcribed rather than referenced so a wording that drifts by a character
