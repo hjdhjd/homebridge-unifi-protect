@@ -4,10 +4,10 @@
  *
  * Every add and every removal runs inside a pass over many accessories - the startup population inside login(), a membership or liveview observer's reconcile, the
  * stability sweep, a removal grace's timer - and each of those is a place where a throw does far more than fail one accessory. An observer loop that a throw leaves
- * ends for good, so its category takes no further adds or removals until a restart, while a throw out of a bare timer callback or out of the voided login() reaches
- * Homebridge's process handler and takes the bridge down. So each add and each removal goes through this one function: it says a throw once at error, in the
- * sentence its act selects, and hands the pass back null so the pass goes on to the next accessory. The accessory whose change failed is retried by whatever brings
- * its pass around again...the next change to its category, the next stability sweep, or the next change to the flag its owner observes.
+ * ends for good, so its category takes no further adds or removals until a restart, a throw out of login() stops its controller until a restart, and a throw out of a
+ * bare timer callback reaches Homebridge's process handler and takes the bridge down. So each add and each removal goes through this one function: it says a throw once
+ * at error, in the sentence its act selects, and hands the pass back null so the pass goes on to the next accessory. The accessory whose change failed is retried by
+ * whatever brings its pass around again...the next change to its category, the next stability sweep, or the next change to the flag its owner observes.
  *
  * Isolating a change is only half of retrying it safely. An owner whose setup threw has already been released by configured() before the throw reaches here, so a
  * retry stands one live instance on the accessory rather than a second beside a half-configured first.

@@ -10,9 +10,11 @@
  * platform's internals, so the rows survive a change in how the wiring is spelled. The one internal read is the list of controllers the walk built, which the
  * platform keeps to itself, and which the trim rows read because a controller says nothing until it logs in.
  *
- * No row reaches a controller login, an FFmpeg probe, or the Homebridge launch handshake. A configuration with no controllers returns before the walk, and nothing
- * here emits the launch signal, so the launch handler the walk registers is never called. Most entries a row configures carry no credentials, so the walk builds
- * no controller for them, and a row whose entry carries credentials ends with Homebridge's shutdown, so the controller built for it lets go of what it subscribed to.
+ * The launch rows are the one place the launch signal is emitted, and they stand in for what lies behind it: a mocked FFmpeg probe answers with a populated value, and
+ * each row replaces login on the controllers it reads, unless it answers unifi-protect's connect with a client double to reach a real login's rejection, so no row
+ * reaches a real probe or a real controller. A configuration with no controllers returns before the walk. Most entries a row configures carry no credentials,
+ * so the walk builds no controller for them, and a row whose entry carries credentials ends with Homebridge's shutdown, so the controller built for it lets go of what it
+ * subscribed to.
  *
  * Every option entry the translation rows configure is written in the RETIRED option grammar, deliberately and throughout: what those rows exist to prove is that such a
  * configuration reaches the engine translated. That is the exemption the zero-residue sweeps carry for this file, alongside the translation layer's own suite.
@@ -20,16 +22,21 @@
  * The restore sweep's rows hand the platform an accessory the way Homebridge hands one back from its cache, and read and write it through HAP's own paths.
  */
 import type { API, Logging } from "homebridge";
-import { APIEvent, FeatureOptions, HAPStatus, Perms } from "homebridge-plugin-utils";
-import { Characteristic, Service, makeTestAccessory, makeTestApi } from "./testing.helpers.ts";
+import { APIEvent, FeatureOptions, FfmpegCodecs, HAPStatus, Perms, parseFfmpegVersionParts } from "homebridge-plugin-utils";
+import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, makeTestApi } from "./testing.helpers.ts";
+import type { ProtectNvrConfig, ProtectNvrLiveviewConfig } from "unifi-protect";
 import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
+import { TestMqttClient, assertNoUnhandledRejections, capturingLog, hapStatus, settle, settleUntil, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { featureOptionCategories, featureOptions } from "./options.ts";
-import { hapStatus, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
+import { makeConnectedClient, makeNvrConfig } from "./nvr/testing.helpers.ts";
+import { ProtectClient } from "unifi-protect";
 import type { ProtectNvr } from "./nvr/nvr.ts";
 import { ProtectPlatform } from "./platform.ts";
 import type { ProtectPlatformConfig } from "./types.ts";
+import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 
 // The controller and camera these rows resolve against.
 const CONTROLLER = "AABBCCDDEEFF";
@@ -58,7 +65,7 @@ function listedAgain(address: string): TestLogEntry {
  *
  * The logger is a callable object because Homebridge's own logger is: the plugin's debug router wraps it, so a plain record would not survive the wrap. The API double
  * is HBPU's, over the Homebridge runtime the root harness loads, and it emits nothing on its own: a configuration with controllers registers its launch handler once
- * its walk is done, and nothing here launches, while a configuration with no controllers returns before anything on the API is touched.
+ * its walk is done, and only the launch rows emit the signal it waits on, while a configuration with no controllers returns before anything on the API is touched.
  *
  * @param options     - The configured feature options the platform is constructed with.
  * @param controllers - The configured controllers value, in whatever shape a hand edit could leave it, or absent for a configuration with none.
@@ -83,7 +90,7 @@ function buildPlatform(options: string[], controllers?: unknown): { api: TestHom
 }
 
 /* The controllers the walk built, in the order it built them. The platform keeps the list to itself, and a controller it builds logs nothing until it logs in,
- * which no row here reaches, so this is the one internal the rows read.
+ * which no row here reaches for real, so this is the one internal the rows read.
  *
  * @param platform - The constructed platform.
  *
@@ -235,6 +242,259 @@ describe("platform construction and the configured controllers", () => {
     const { lines } = buildPlatform([], [ null, "unifi.local", { address: "10.0.0.1" } ]);
 
     assert.deepEqual(lines, [NO_CREDENTIALS], "construction completes, and only the one entry is read");
+  });
+});
+
+describe("the platform's launch of its controllers", () => {
+
+  const FIRST = { address: "10.0.0.1", password: "password", username: "username" };
+  const SECOND = { address: "10.0.0.2", password: "password", username: "username" };
+  const LOGIN_REJECTED = "10.0.0.1: Unable to finish starting the Protect controller: %s. Stopping it until Homebridge is restarted.";
+  const STOP_REJECTED = "10.0.0.1: Unable to finish stopping the Protect controller: %s.";
+
+  // Stand in for a working FFmpeg, so the launch reaches each controller's login with no process started. The mock is the row's own, and the row's end restores it.
+  function answerProbe(t: TestContext): void {
+
+    const ffmpegVersionParts = parseFfmpegVersionParts("8.0");
+    const state = { codecs: {}, cpuGeneration: 0, ffmpegExec: "ffmpeg", ffmpegVersion: "8.0", ffmpegVersionParts, gpuMem: 0, hostSystem: "macOS.Apple",
+      hwAccels: new Set<string>(), verbose: false };
+
+    t.mock.method(FfmpegCodecs, "probe", async (): Promise<FfmpegCodecs> => FfmpegCodecs.fromState(state));
+  }
+
+  /* A login that rejects floats out of the launch, where nothing awaits it, and a rejection that floats ends Homebridge, or a child bridge, for everyone. So the launch
+   * answers for each login at its own call: the line lands on the controller that rejected, under its prefix with its reason's whole chain, that controller stops, and
+   * the controller ahead of it, its own login still pending, is untouched...a launch that waited on the first login would never reach the second.
+   */
+  test("a rejected login is said on that controller's log and stops it, no rejection floats, and another controller's login still runs", async (t) => {
+
+    answerProbe(t);
+
+    const { api, lines, platform } = buildPlatform([], [ SECOND, FIRST ]);
+    const [ other, controller ] = configuredControllers(platform);
+
+    t.after(() => void api.emit(APIEvent.SHUTDOWN));
+
+    assert.ok(other && controller, "each entry carries an address and credentials, so a controller is constructed for each");
+
+    other.login = async (): Promise<void> => {
+
+      await once(other.signal, "abort");
+    };
+
+    controller.login = async (): Promise<void> => {
+
+      throw new TypeError("The record is gone.", { cause: new Error("A cause beneath it.") });
+    };
+
+    await assertNoUnhandledRejections(async (): Promise<void> => {
+
+      api.emit(APIEvent.DID_FINISH_LAUNCHING);
+
+      await settleUntil(() => controller.signal.aborted, { description: "the rejected login's stop" });
+    });
+
+    assert.deepEqual(lines, [{ level: "error", message: LOGIN_REJECTED, params: ["The record is gone: A cause beneath it"] }],
+      "the line is said once at error on the controller's own prefix, its reason keeping its chain");
+    assert.equal(controller.phase, "shuttingDown", "the controller that rejected is stopped");
+    assert.equal(other.signal.aborted, false, "and the other controller's signal holds");
+    assert.equal(other.phase, "connecting", "with its login still under way");
+  });
+
+  // The line has to reach the log whatever the stop goes on to do, so it comes ahead of the stop's first wait.
+  test("the line stands on the log while the stop's MQTT end is held", async (t) => {
+
+    answerProbe(t);
+
+    const { api, lines, platform } = buildPlatform([], [FIRST]);
+    const [controller] = configuredControllers(platform);
+    const mqtt = new TestMqttClient({ log: capturingLog() });
+    const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+
+    t.after(() => {
+
+      resolve();
+      api.emit(APIEvent.SHUTDOWN);
+    });
+
+    assert.ok(controller, "the entry carries an address and credentials, so a controller is constructed for it");
+
+    mqtt.onEnd(async (): Promise<void> => promise);
+    controller.mqtt = mqtt as unknown as ProtectNvr["mqtt"];
+
+    controller.login = async (): Promise<void> => {
+
+      throw new TypeError("The record is gone.");
+    };
+
+    await assertNoUnhandledRejections(async (): Promise<void> => {
+
+      api.emit(APIEvent.DID_FINISH_LAUNCHING);
+
+      await settleUntil(() => lines.length > 0, { description: "the line" });
+
+      assert.deepEqual(lines, [{ level: "error", message: LOGIN_REJECTED, params: ["The record is gone"] }]);
+      assert.equal(controller.signal.aborted, false, "the end holds the stop back");
+
+      resolve();
+
+      await settleUntil(() => controller.signal.aborted, { description: "the stop" });
+    });
+
+    assert.equal(controller.phase, "shuttingDown");
+  });
+
+  /* A stop that rejects is the last thing that could float out of the launch, so the controller says it on a line of its own and it costs that controller alone. The one
+   * run it holds cannot reject, so a later Homebridge shutdown reads it, and its listener, which voids what it is handed, has nothing to raise.
+   */
+  test("a stop that rejects writes its line, leaves the other controller's signal holding, and a later Homebridge shutdown floats nothing", async (t) => {
+
+    answerProbe(t);
+
+    const { api, lines, platform } = buildPlatform([], [ FIRST, SECOND ]);
+    const [ controller, other ] = configuredControllers(platform);
+
+    t.after(() => void api.emit(APIEvent.SHUTDOWN));
+
+    assert.ok(controller && other, "each entry carries an address and credentials, so a controller is constructed for each");
+
+    controller.client = { [Symbol.asyncDispose]: async (): Promise<void> => {
+
+      throw new Error("The disposal failed.", { cause: new Error("A cause beneath it.") });
+    } } as unknown as ProtectClient;
+
+    controller.login = async (): Promise<void> => {
+
+      throw new TypeError("The record is gone.");
+    };
+
+    other.login = async (): Promise<void> => {
+
+      await once(other.signal, "abort");
+    };
+
+    await assertNoUnhandledRejections(async (): Promise<void> => {
+
+      api.emit(APIEvent.DID_FINISH_LAUNCHING);
+
+      await settleUntil(() => lines.length > 1, { description: "the stop's line" });
+
+      assert.equal(other.signal.aborted, false, "the other controller's signal holds");
+      assert.equal(other.phase, "connecting", "with its login still under way");
+
+      api.emit(APIEvent.SHUTDOWN);
+
+      await settle();
+    });
+
+    assert.deepEqual(lines, [ { level: "error", message: LOGIN_REJECTED, params: ["The record is gone"] },
+      { level: "error", message: STOP_REJECTED, params: ["The disposal failed: A cause beneath it"] } ]);
+    assert.equal(controller.phase, "shuttingDown", "the sequence reached its transition ahead of the disposal");
+  });
+
+  // Homebridge's listener voids what it is handed, so a stop it asked for first has no caller to read a rejection, and the line has to stand for that stop on its own.
+  test("a stop that rejects after Homebridge asked first writes its line and floats nothing", async () => {
+
+    const { api, lines, platform } = buildPlatform([], [FIRST]);
+    const [controller] = configuredControllers(platform);
+
+    assert.ok(controller, "the entry carries an address and credentials, so a controller is constructed for it");
+
+    controller.client = { [Symbol.asyncDispose]: async (): Promise<void> => {
+
+      throw new Error("The disposal failed.", { cause: new Error("A cause beneath it.") });
+    } } as unknown as ProtectClient;
+
+    await assertNoUnhandledRejections(async (): Promise<void> => {
+
+      api.emit(APIEvent.SHUTDOWN);
+
+      await settle();
+    });
+
+    assert.deepEqual(lines, [{ level: "error", message: STOP_REJECTED, params: ["The disposal failed: A cause beneath it"] }]);
+    assert.equal(controller.phase, "shuttingDown", "the sequence reached its transition ahead of the disposal");
+  });
+
+  /* This row reaches a real login, past connect over a client double, with a liveview whose name cannot be read as text: the real rejection the catch exists for. The
+   * controller is up past the stability window, so its sweep is armed when the login rejects, and the restored orphan is what that sweep would remove.
+   */
+  test("a login that really rejects past connect stops its controller, and its sweep removes nothing", async (t) => {
+
+    answerProbe(t);
+
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: 1, version: "7.3.70" };
+    const liveview = { id: "liveview", isDefault: false, isGlobal: true, layout: 1, modelKey: "liveview", name: { toString: 7 }, owner: "user", slots: [] };
+    const store = new TestStateStore(makeProtectState({ liveviews: [liveview as unknown as ProtectNvrLiveviewConfig], nvr: nvrConfig }));
+    const client = makeConnectedClient({ nvrConfig, store });
+
+    t.mock.method(ProtectClient, "connect", async (): Promise<ProtectClient> => client);
+
+    const { api, lines, platform } = buildPlatform([], [FIRST]);
+    const [controller] = configuredControllers(platform);
+
+    t.after(() => void api.emit(APIEvent.SHUTDOWN));
+
+    assert.ok(controller, "the entry carries an address and credentials, so a controller is constructed for it");
+
+    const orphan = makeTestAccessory("Orphan", "AABBCCFFFFFF");
+
+    orphan.context = { mac: "AABBCCFFFFFF", nvr: nvrConfig.mac };
+    platform.configureAccessory(orphan);
+
+    await assertNoUnhandledRejections(async (): Promise<void> => {
+
+      api.emit(APIEvent.DID_FINISH_LAUNCHING);
+
+      await settleUntil(() => controller.signal.aborted, { description: "the stop" });
+      await settle();
+    });
+
+    const errors = lines.filter(({ level }) => level === "error");
+
+    assert.equal(errors.length, 1, "the line is said once at error");
+    assert.ok(errors[0]?.message.endsWith("Unable to finish starting the Protect controller: %s. Stopping it until Homebridge is restarted."));
+    assert.equal(controller.phase, "shuttingDown");
+    assert.equal(controller.isAvailable, false);
+    assert.ok(platform.accessories.includes(orphan), "the orphan stays, because the stop kept the sweep from running");
+    assert.equal(lines.some(({ message }) => [ "Delaying", "Removing" ].some((word) => message.includes(word))), false, "and nothing says the sweep ran");
+  });
+
+  // A shutdown that tears a login down is our own doing, so what it rejects with is no reason to report. An aborted signal means this controller is already stopping.
+  test("a login rejected once its controller's signal has aborted writes nothing", async (t) => {
+
+    answerProbe(t);
+
+    const { api, lines, platform } = buildPlatform([], [FIRST]);
+    const [controller] = configuredControllers(platform);
+
+    t.after(() => void api.emit(APIEvent.SHUTDOWN));
+
+    assert.ok(controller, "the entry carries an address and credentials, so a controller is constructed for it");
+
+    let started = false;
+
+    controller.login = async (): Promise<void> => {
+
+      started = true;
+
+      await once(controller.signal, "abort");
+
+      throw new TypeError("The record is gone.");
+    };
+
+    await assertNoUnhandledRejections(async (): Promise<void> => {
+
+      api.emit(APIEvent.DID_FINISH_LAUNCHING);
+
+      await settleUntil(() => started, { description: "the login to start" });
+
+      api.emit(APIEvent.SHUTDOWN);
+
+      await settle();
+    });
+
+    assert.deepEqual(lines, [], "the rejection is read, and nothing is said about it");
   });
 });
 

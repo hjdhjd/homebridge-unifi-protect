@@ -3,8 +3,8 @@
  * platform.ts: homebridge-unifi-protect platform class.
  */
 import type { API, DynamicPlatformPlugin, Logging } from "homebridge";
-import { APIEvent, AccessoryPersistence, FeatureOptions, FfmpegCodecs, Perms, RtpPortAllocator, addressListingForm, debugGatedLog, livestreamProcessFactory,
-  notResponding, recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
+import { APIEvent, AccessoryPersistence, FeatureOptions, FfmpegCodecs, Perms, RtpPortAllocator, addressListingForm, debugGatedLog, formatErrorMessage,
+  livestreamProcessFactory, notResponding, recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
 import type { Clock, HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.ts";
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
@@ -295,8 +295,23 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     // Iterate through all our controllers and startup.
     for(const controller of this.controllers) {
 
-      // Login to the Protect controller.
-      void controller.login();
+      /* Login to the Protect controller. A rejection that floats ends Homebridge, or a child bridge, for everyone, so each controller's login answers for itself here. A
+       * login rejected past connect stops this controller until a restart, because what login had already stood up would otherwise run on half-started: every loop, timer
+       * and connection ends through the sequence Homebridge's own shutdown runs, and the accessories stay and refuse. The line comes first, so it stands on the log
+       * however long the stop takes. A rejection once the controller's signal has aborted is our own teardown rather than something to report. The stop says its own
+       * failure and never rejects, so it costs this controller alone.
+       */
+      void controller.login().catch(async (error: unknown): Promise<void> => {
+
+        if(controller.signal.aborted) {
+
+          return;
+        }
+
+        controller.log.error("Unable to finish starting the Protect controller: %s. Stopping it until Homebridge is restarted.", formatErrorMessage(error));
+
+        await controller.shutdown();
+      });
     }
   }
 

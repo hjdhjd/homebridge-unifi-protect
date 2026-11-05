@@ -10,8 +10,8 @@ import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryExh
 import type { ConnectFailure, ConnectFailureType } from "./nvr-policy.ts";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, maskAddressCredentials, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, MqttAvailabilityPayload, MqttClient, Nullable } from "homebridge-plugin-utils";
-import { OVERRIDE_ADDRESS_ZONE_WARNING, canTransition, createConnectRetryPolicy, createLivestreamEpisodeLatch, deviceInventory, isDisruptionExpected,
-  resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+import { OVERRIDE_ADDRESS_ZONE_WARNING, UNREPORTED_CONTROLLER_RECORD, canTransition, createConnectRetryPolicy, createLivestreamEpisodeLatch, deviceInventory,
+  isDisruptionExpected, resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, ProtectDevices, ProtectProjectionMap } from "../types.ts";
 import { countActiveHksvRecordings, deviceEndpoints } from "./nvr-endpoints.ts";
@@ -56,8 +56,8 @@ import { servePlaylist } from "./nvr-playlist.ts";
  *   - `rebooting`: the plugin initiated a controller reboot. The disruption is induced (we know the controller is going away); health observation is suspended;
  *      consumers suppress noise about the disruption. The client logger's own lines hide on the reboot scheduler's gate rather than on this phase, so they show until the
  *      controller accepts the command and again once a reboot is overdue.
- *   - `shuttingDown`: terminal. The plugin or the host process is going away. Consumers suppress noise as in `rebooting` and the client logger's errors stay hidden, but
- *      no recovery is expected.
+ *   - `shuttingDown`: terminal. Homebridge is going away, or a login rejected past connect stopped this controller until a restart while Homebridge runs on. Consumers
+ *      suppress noise as in `rebooting` and the client logger's errors stay hidden, but no recovery is expected.
  *
  * Transitions are owned by `ProtectNvr.transition()`. Components consume via `nvr.phase`. `logApiErrors` is a getter over this phase and the reboot scheduler's gate,
  * whose pending timer is its one value, so phase is the lone lifecycle axis and neither needs telling when the other moves.
@@ -136,9 +136,11 @@ export class ProtectNvr {
   // Mutated only through `transition()`, never directly.
   private _phase: NvrPhase;
   public readonly platform: ProtectPlatform;
-  // The terminal plugin-shutdown abort. Aborted once, in transition("shuttingDown"); every NVR-level observe loop and every per-accessory controller composes against
-  // it, so plugin shutdown tears the whole tree down as one cascade. Initialized in the constructor so it exists before any device is constructed.
+  // The terminal shutdown abort. Aborted once, in transition("shuttingDown"); every NVR-level observe loop and every per-accessory controller composes against it, so a
+  // shutdown tears the whole tree down as one cascade. Initialized in the constructor so it exists before any device is constructed.
   readonly #shutdownController: AbortController;
+  // The one run of the shutdown sequence, null until something asks for it.
+  #shutdownRun: Nullable<Promise<void>>;
   public systemInfo: Nullable<ProtectNvrSystemInfo>;
   // The MACs of the devices removed while no broker session stood, each stated once at the next session unless something serves it by then. They live as long as this
   // root does, so a plugin restart ahead of that session loses them.
@@ -183,6 +185,7 @@ export class ProtectNvr {
     this._phase = "connecting";
     this.platform = platform;
     this.#shutdownController = new AbortController();
+    this.#shutdownRun = null;
     this.systemInfo = null;
     this.unsupportedDevices = {};
 
@@ -323,28 +326,46 @@ export class ProtectNvr {
     this.wireLivestreamNarration();
 
     // Cleanly shut down on Homebridge exit.
-    this.api.on(APIEvent.SHUTDOWN, () => void this.#shutdown());
+    this.api.on(APIEvent.SHUTDOWN, () => void this.shutdown());
   }
 
-  /* The shutdown sequence, in the order HBPU's graceful MQTT end asks for. Homebridge emits its shutdown without awaiting a listener and exits a few seconds later, so
-   * this runs inside that window. A controller with no MQTT client has no words to wait on, so it runs straight through in the shutdown event's own turn.
+  /**
+   * Stop this controller: every loop, timer and connection it stood up ends, and its accessories stay and refuse until a restart. Homebridge's shutdown asks for this,
+   * and so does the platform for a login rejected past connect, so the first call runs the sequence and every later call reads that one run and repeats nothing. A stop
+   * that itself rejects is said here, once, whichever caller asked first. So the run held here cannot reject, and the promise Homebridge's listener voids has nothing to
+   * float...a rejection that floats ends the process.
+   *
+   * @returns A promise that settles once the one run of the shutdown sequence has.
    */
-  async #shutdown(): Promise<void> {
+  public async shutdown(): Promise<void> {
+
+    await (this.#shutdownRun ??= this.#runShutdown().catch((error: unknown): void => {
+
+      this.log.error("Unable to finish stopping the Protect controller: %s.", formatErrorMessage(error));
+    }));
+  }
+
+  /* The shutdown sequence, in the order HBPU's graceful MQTT end asks for. Homebridge emits its shutdown without awaiting a listener and exits a few seconds later, so on
+   * that path this runs inside that window. A login rejected past connect runs the same sequence while the process runs on, so what it ends stays ended until a restart.
+   * A controller with no MQTT client has no words to wait on, so it runs straight through in its caller's own turn.
+   */
+  async #runShutdown(): Promise<void> {
 
     // Tear down the scheduled reboot's timers, each induced-lifecycle work that must not survive teardown - the cycle would command a controller we are disposing, and
     // the no-op confirmation and the expected return would narrate a reboot nobody is waiting on any more. Ending the expected return also lets a library warn show.
     this.reboot.reset();
 
-    // Tear down the device-removal timers unconditionally. The stability-sweep one-shot and every pending delayed removal are deferred destructive actions that must
-    // not fire against a disposed client; clearing them here - alongside the reboot timers - makes teardown the removal SSOT rather than leaving it contingent on the
-    // transition("shuttingDown") below also pushing good-state. Both clears land on the same state, so the belt-and-suspenders overlap is harmless. A third backstop
-    // is each companion's own lifetime binding: the transition's abort below disposes both timer registries, which drains anything still armed - and by then these
-    // resets have already emptied them, while the terminal shuttingDown phase means no push can ever ask a disposed registry to arm again.
+    // Tear down the device-removal timers unconditionally, ahead of the MQTT end below. The stability-sweep one-shot and every pending delayed removal are deferred
+    // destructive actions that must not fire against a controller going away, and a login rejected past connect on a long-up controller has a sweep armed and already
+    // due, so leaving this to the transition below would let that sweep run inside the end's hold. The transition's own push clears the same state once it lands, and
+    // each companion's lifetime binding is the last backstop: the transition's abort disposes its timer registry, which drains anything still armed - and by then
+    // these resets have already emptied them, while the terminal shuttingDown phase means no push can ever ask a disposed registry to arm again.
     this.removals.reset();
 
     // End the MQTT client gracefully, which states every registered final word, each device's retained offline and this controller's, while the broker session still
     // holds. It comes ahead of the transition below, because aborting the signal the client and those words live on leaves the words unsaid. The rest of the plugin is
-    // not quieted for this bounded grace: anything that publishes meanwhile is refused at debug, and a removal clock that re-arms is cancelled by the transition.
+    // not quieted for this bounded grace: anything that publishes meanwhile is refused at debug, and a removal clock that re-arms is cancelled by the transition. A login
+    // rejected past connect has had no turn in which to open a session, so there the client simply ends, and a retained value stands as the last run left it.
     if(this.mqtt) {
 
       await this.mqtt.end();
@@ -481,16 +502,16 @@ export class ProtectNvr {
   }
 
   /**
-   * The terminal plugin-shutdown abort signal. Aborted exactly once, in `transition("shuttingDown")`. Every NVR-level observe loop and every per-accessory abort
-   * controller composes against it, so plugin shutdown tears the whole tree down as one cascade. Pure read - the controller is private and aborted only through the
-   * transition chokepoint.
+   * The terminal shutdown abort signal. Aborted exactly once, in `transition("shuttingDown")`. Every NVR-level observe loop and every per-accessory abort controller
+   * composes against it, so a shutdown tears the whole tree down as one cascade. Pure read - the controller is private and aborted only through the transition
+   * chokepoint.
    */
   public get signal(): AbortSignal {
 
     return this.#shutdownController.signal;
   }
 
-  // Whether the terminal shutdown signal has fired - the plugin is tearing down and no deferred wake may act against a disposed client. The single predicate this
+  // Whether the terminal shutdown signal has fired - this controller is tearing down and no deferred wake may act against a disposed client. The single predicate this
   // root's post-await bails consult (connect()'s, after its retry and after a late-resolving client), read through a method so each caller re-reads the live signal
   // rather than a stale snapshot an earlier bail on the same path could have pinned.
   #isShuttingDown(): boolean {
@@ -526,10 +547,13 @@ export class ProtectNvr {
    * the connection lost, or while the controller is rebooting, each until recovery. It reads those facts and never isHealthy, which is false at the library's first
    * fault, while it re-bootstraps a controller it has already proven reachable and while its request breaker is open: none of those mean the values have gone stale, and
    * refusing on them would mark every accessory No Response for a blip the library is already handling. Only the owners a connected controller builds read this.
+   *
+   * A controller whose signal has aborted is unavailable until a restart. Its client is disposed, and a disposed client's connection reads neither lost nor rebooting, so
+   * its accessories would otherwise go on answering from a client with nothing left to tell them.
    */
   public get isAvailable(): boolean {
 
-    return !this.client.connection.isLost && !this.client.connection.isRebooting;
+    return !this.signal.aborted && !this.client.connection.isLost && !this.client.connection.isRebooting;
   }
 
   /**
@@ -607,7 +631,8 @@ export class ProtectNvr {
   }
 
   /* Establish a connection to the Protect controller. The unifi-protect library's ProtectClient.connect() is atomic - it logs in, fetches the initial bootstrap, seeds
-   * the reducer, and brings up the realtime events channel as one ready-or-throws operation, owning retry/backoff and the periodic refresh failsafe internally. We
+   * the reducer, and brings up the realtime events channel as one operation that throws when a step fails, owning retry/backoff and the periodic refresh failsafe
+   * internally. What it resolves with is what the controller answered, which the attempt below reads before the client counts as connected. We
    * wrap it in a startup-resilient retry that waits by the library's own recovery schedules: its slower refusal schedule while the controller refuses our sign-in,
    * the privilege it needs or the rate of our requests, and its recovery schedule for every other fault. The retry runs until the controller accepts us or we shut
    * down, so a sign-in the controller starts accepting again is picked up by a later attempt rather than by a restart. The waits run on the platform's clock, so a
@@ -654,11 +679,30 @@ export class ProtectNvr {
 
     try {
 
-      this.client = await retry((signal) => this.#connectClient({ host: this.config.address, log: this.clientLog, password: this.config.password,
-        recoveryPolicy: (context) => livestreamRecoveryDecision(context,
-          { healthState: this.health.state, isHealthy: this.client.connection.isHealthy, isThrottled: this.client.connection.isThrottled, phase: this.phase },
-          this.episodeCameraReachable(context.cameraId)), signal,
-        username: this.config.username }), { attempts: Infinity, backoff, clock: this.platform.clock, shouldRetry, signal: this.signal });
+      this.client = await retry(async (signal): Promise<ProtectClient> => {
+
+        const client = await this.#connectClient({ host: this.config.address, log: this.clientLog, password: this.config.password,
+          recoveryPolicy: (context) => livestreamRecoveryDecision(context,
+            { healthState: this.health.state, isHealthy: this.client.connection.isHealthy, isThrottled: this.client.connection.isThrottled, phase: this.phase },
+            this.episodeCameraReachable(context.cameraId)), signal,
+          username: this.config.username });
+
+        /* A controller can answer its bootstrap with no record, or a record with no version or a MAC that is no string, and the client resolves with what it was given. A
+         * MAC that is no string makes the debug gate throw from inside unifi-protect's own lines. The record is read here, inside the attempt, so that answer is a failed
+         * attempt like any other: the attempt disposes what it built, the policy reads and reports it, and the retry waits on the recovery schedule. Read after the
+         * retry, the same answer would reject the login and stop a controller that a later attempt could still connect.
+         */
+        const record = client.nvr.peek();
+
+        if((typeof record?.version !== "string") || (typeof record.mac !== "string")) {
+
+          await client[Symbol.asyncDispose]();
+
+          throw new Error(UNREPORTED_CONTROLLER_RECORD);
+        }
+
+        return client;
+      }, { attempts: Infinity, backoff, clock: this.platform.clock, shouldRetry, signal: this.signal });
     } catch(error) {
 
       /* The attempts are unbounded, so the retry rejects only on our own shutdown, which is an orderly teardown rather than a failure to report, or on the policy's
@@ -892,7 +936,7 @@ export class ProtectNvr {
 
     /* Initialize MQTT before building the accessory owners. The MQTT subscriptions they make as they are configured (system information, and liveviews on its initial
      * reconcile) bind through nvr.mqtt, so the client must exist first or those subscriptions would silently no-op against a not-yet-created client and never be
-     * retried. The client binds to the NVR's terminal shutdown signal, so it is an AsyncDisposable whose connection ends on plugin shutdown rather than leaking past it.
+     * retried. The client binds to the NVR's terminal shutdown signal, so it is an AsyncDisposable whose connection ends on a shutdown rather than leaking past it.
      * The resolution runs post-connect, where this.ufp is safe to read for the controller scope it resolves at.
      *
      * The library resolves both settings in one place, applying the rule that a configured option answers in every state it can be in: an option the user turned

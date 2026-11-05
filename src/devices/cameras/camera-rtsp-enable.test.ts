@@ -74,10 +74,11 @@ interface BuiltCamera {
 
 /* Build a REAL plain ProtectCamera against the doubles, exactly as the sibling camera suites assemble it, with the additions this net needs: an optional updateRejection
  * installed on the projection BEFORE construction so the construction-time enable write drives the failure arm, the feature-option strings that decide whether the
- * configuration needs RTSP at all, and the third-party marker, so a row can show that a third-party camera follows the same rule as every other camera. The casts are
- * confined to this constructor call - the instance is the production ProtectCamera and everything it runs is the production path.
+ * configuration needs RTSP at all, the third-party marker, so a row can show that a third-party camera follows the same rule as every other camera, and a gate that holds
+ * the write until a row opens it, so a stop can land while the write is in flight. The casts are confined to this constructor call - the instance is the production
+ * ProtectCamera and everything it runs is the production path.
  */
-async function buildCamera(options: { channels: ProtectCameraConfig["channels"]; isThirdPartyCamera?: boolean; updateRejection?: Error;
+async function buildCamera(options: { channels: ProtectCameraConfig["channels"]; isThirdPartyCamera?: boolean; updateGate?: Promise<void>; updateRejection?: Error;
   userOptions?: string[]; }): Promise<BuiltCamera> {
 
   const cameraConfig = makeCameraConfig({ channels: options.channels, isThirdPartyCamera: options.isThirdPartyCamera });
@@ -86,6 +87,19 @@ async function buildCamera(options: { channels: ProtectCameraConfig["channels"];
   const projection = new TestCameraProjection(cameraConfig.id, store);
 
   projection.updateRejection = options.updateRejection ?? null;
+
+  if(options.updateGate) {
+
+    const { updateGate } = options;
+    const answer = projection.update.bind(projection);
+
+    projection.update = async (payload: unknown): Promise<TestCameraProjection> => {
+
+      await updateGate;
+
+      return answer(payload);
+    };
+  }
 
   const accessory = makeTestAccessory("RTSP Enable Camera", cameraConfig.mac);
   const camera = configured(new ProtectCamera(nvr as unknown as ProtectNvr, accessory, projection as unknown as Camera));
@@ -385,6 +399,25 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
       "Unable to enable RTSP on all of the camera's channels: The controller rejected the request. Direct RTSP streaming can only use channels that already have RTSP " +
       "enabled."), "the generic-failure warn renders the cause as one clean sentence");
     assert.equal(factory.createCalls.length, 1, "the degraded arm stands the delegate up from the already-enabled channels");
+  });
+
+  // A stop disposes the client, which rejects a write still in flight. The controller declined nothing, so there is nothing to warn about, and deriving past it would say
+  // recordings use a stand-in format with nothing recording.
+  test("an enable write that rejects after the observe signal aborts writes no line and derives nothing", async () => {
+
+    const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+    const { controller, factory, logEntries, projection } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, updateGate: promise,
+      updateRejection: new Error("The client is destroyed."), userOptions: TOGGLE_OFF });
+    const lines = logEntries.length;
+
+    controller.abort();
+    resolve();
+
+    await settle();
+
+    assert.equal(projection.updateCalls.length, 1, "the write was in flight when the signal aborted");
+    assert.deepEqual(logEntries.slice(lines), [], "the rejection is read, and nothing is said about it");
+    assert.equal(factory.createCalls.length, 0, "and nothing derives past it");
   });
 
   test("a third-party camera with every channel RTSP-disabled stands its delegate up under default config, writing nothing and declining nothing", async () => {

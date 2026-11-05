@@ -259,7 +259,7 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
   /* Release the connection-dependent machinery this capability holds, for the controller-disconnect walk. Deliberately NOT the full teardown: this is a strict subset of
    * it - no HomeKit Secure Video recording-off, no controller removal - because the walk runs against a connection that is going away, not against a camera that is. What
    * has to happen before the client is disposed is exactly the release of the pooled livestream subscriptions the live and timeshift consumers hold, so that is all this
-   * does; the HomeKit surface stays registered for the reconnect that follows.
+   * does; the HomeKit surface stays registered with its accessory, refusing until a restart brings the controller back.
    */
   public releaseForShutdown(): void {
 

@@ -886,10 +886,11 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   // device.isOnline gates each device. This answers whether an operation is worth starting right now, the question the media paths ask, and isAvailable below answers
   // whether the plugin can vouch for the values HomeKit reads. Operation-initiation gates read this; HKSV composes its readiness gate (buffer >= 10s) at its call site,
   // never inside here. The library deliberately does NOT ship this composition (a deliberate design decision: isOnline is last-known device state) - the plugin is the
-  // consumer that composes per-operation reachability.
+  // consumer that composes per-operation reachability. A controller whose signal has aborted reaches nothing, because a disposed client's connection keeps reading
+  // healthy, so health alone would let a snapshot or a stream start against a client that is gone.
   public get isReachable(): boolean {
 
-    return this.nvr.client.connection.isHealthy && this.isOnline;
+    return !this.nvr.signal.aborted && this.nvr.client.connection.isHealthy && this.isOnline;
   }
 
   // Whether the plugin can vouch for this device's values, the verdict every handler's refusal and every MQTT availability statement read: the controller's verdict, and

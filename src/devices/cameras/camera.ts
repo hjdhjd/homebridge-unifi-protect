@@ -1470,9 +1470,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
         return null;
       } catch(error) {
 
-        // The camera can be removed while the write is in flight, and the observer-wake presence gate only covers the synchronous prefix ahead of the await. We re-check
-        // before touching the live record again...a vanished camera has nothing to narrate and nothing to derive.
-        if(!this.recordPresent) {
+        // The camera can be removed, or its controller stopped, while the write is in flight, and the observer-wake presence gate only covers the synchronous prefix
+        // ahead of the await. We re-check before touching the live record again...a vanished camera has nothing to narrate and nothing to derive. A stopped controller's
+        // disposal is what rejected the write, so a warning would be noise, and deriving on would falsely say recordings use a stand-in format with nothing recording.
+        if(!this.recordPresent || this.observeSignal.aborted) {
 
           return null;
         }

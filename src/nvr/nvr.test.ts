@@ -6,7 +6,7 @@
  * the NvrHealth connection-input mapping those drive, and the real controller root's disabled-controller path, its stability sweep's liveviews pass, its connect retry,
  * its address override, the accessory cache saves its adoption asks for, the name it adds a camera under when the camera's own name sanitizes to nothing or the user gave
  * it a custom name, its removal of a package camera whose parent is gone, its device-removal cascade: the guards that leave an accessory alone, the name each removal is
- * logged under, the package camera a removal takes with it, and what a removal releases, and the lines its client logger shows through a scheduled reboot.
+ * logged under, the package camera a removal takes with it, and what a removal releases, the lines its client logger shows through a scheduled reboot, and its stop.
  *
  * ProtectNvr itself is a composition root: its constructor stands up the event handler and the controller logging, and it transitively owns the entire device and
  * media graph. The response is to keep the *decisions* it makes in a pure leaf module (nvr-policy.ts) and assert those here, exercising the controller's real
@@ -32,9 +32,10 @@ import { PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_RECOVERY_BACKOFF_KNOWN_M
   PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError,
   ProtectConfigurationError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError, ProtectThrottledError, ProtectTimeoutError,
   channels as protectChannels } from "unifi-protect";
-import { REBOOT_EXPECTED_RETURN_MS, canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince, connectFailureReading, countActiveRecordingViews,
-  createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption, isRequestForController, isStabilityWindowElapsed,
-  isSuccessfulRequest, isWithinRebootRecency, resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+import { REBOOT_EXPECTED_RETURN_MS, UNREPORTED_CONTROLLER_RECORD, canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince,
+  connectFailureReading, countActiveRecordingViews, createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption,
+  isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest, isWithinRebootRecency, resolveOverrideAddress,
+  shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr,
   restoreAccessories } from "./testing.helpers.ts";
 import { TestClock, TestMqttClient, assertNoUnhandledRejections, capturingLog, formatLogEntry, linesAt, logCount, loggedAt, settle,
@@ -364,7 +365,7 @@ describe("the reading of a failed connect", () => {
     { error: new ProtectProtocolError(PROTOCOL_MESSAGE), level: "error", name: "a hand-spelled bare protocol error", type: "unreadable" },
     { error: parseFailed, level: "error", name: "a parse wrapper", type: "unreadable" },
     { error: applyFailed, level: "error", name: "an apply wrapper", type: "unreadable" },
-    { error: new Error("A value unifi-protect did not type."), level: "error", name: "a hand-spelled plain Error", type: "unreadable" },
+    { error: new Error(UNREPORTED_CONTROLLER_RECORD), level: "error", name: "the plain Error the attempt throws for an answer it cannot use", type: "unreadable" },
     { error: new TypeError("Cannot read properties of undefined (reading 'nvr')"), level: "error", name: "a hand-spelled bare TypeError", type: "unreadable" },
     { error: networkFailure("ECONNREFUSED", "connect ECONNREFUSED 10.0.0.1:443"), level: "warning", name: "ECONNREFUSED", type: "refused" },
     { error: networkFailure("ECONNRESET", "read ECONNRESET"), level: "warning", name: "ECONNRESET", type: "reset" },
@@ -911,7 +912,7 @@ describe("the controller root's disabled-controller path", () => {
       },
       connection: connection,
       controllerName: "Test Controller",
-      nvr: { config: nvrConfig },
+      nvr: { config: nvrConfig, peek: (): ProtectNvrConfig => nvrConfig },
       state: store
     };
 
@@ -1051,14 +1052,19 @@ describe("the controller root's connect retry", () => {
       throw refusalError;
     });
 
+    // The controller double's own removal gate arms a timer on the clock as the double is built, so the waits the retry asks for are read from here on.
+    let asked = clock.requested.length;
+
     try {
 
       const login = root.login();
 
-      await settleUntil(() => attempts.length === 1, { description: "the first sign-in attempt" });
-
       for(const [ index, wait ] of waits.entries()) {
 
+        // eslint-disable-next-line no-await-in-loop -- Each step reads the wait the attempt before it asked for, so the steps are serial by intent.
+        await settleUntil(() => clock.requested.length > asked, { description: "the wait after sign-in attempt " + (index + 1).toString() });
+
+        asked = clock.requested.length;
         clock.advance(wait - 1);
 
         // eslint-disable-next-line no-await-in-loop -- Each step reads the attempts the previous one let run, so the steps are serial by intent.
@@ -1436,6 +1442,251 @@ describe("the controller root's report of a startup failure by its kind", () => 
   test("a shutdown on a repeat, with debug logging on, writes nothing", async () => {
 
     assert.equal((await loginFailing([deadlineError], { userOptions: ["Enable.Log.Debug"] })).length, 1, "the deadline's own line alone");
+  });
+
+  // The controller record a connected root reads, with the fields its connect logs.
+  const connectedRecord = (overrides: Partial<ProtectNvrConfig> = {}): ProtectNvrConfig => ({ ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: TEST_CLOCK_EPOCH,
+    version: "6.1.79", ...overrides });
+
+  /* The real client resolves a bootstrap with no record, no version or a MAC that is no string, and its config getter throws on an absent record, so the attempt is what
+   * has to read the answer. Each shape is a failed attempt like any other: said once at error, its client disposed, and the next attempt on the recovery schedule. Two of
+   * them in a row show the repeat at debug and the schedule walked, and the client behind them is the one the root keeps, so the login resolves.
+   */
+  for(const { name, record } of [
+
+    { name: "no record", record: undefined },
+    { name: "a record with no version", record: { ...makeNvrConfig() } },
+    { name: "a record with a null version", record: { ...makeNvrConfig(), version: null } },
+    { name: "a record with a number for a version", record: { ...makeNvrConfig(), version: 6 } },
+    { name: "a record with a number for a MAC", record: { ...connectedRecord(), mac: 7 } },
+    { name: "a record with an object for a MAC", record: { ...connectedRecord(), mac: {} } },
+    { name: "a record with a null MAC", record: { ...connectedRecord(), mac: null } },
+    { name: "a record with no MAC", record: { ...connectedRecord(), mac: undefined } }
+  ]) {
+
+    test("an answer of " + name + " is said once at error, disposes its client, waits the recovery schedule and connects on a good answer", async () => {
+
+      const nvrConfig = connectedRecord();
+      const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
+      const { clock, controller, logEntries, nvr: double } = makeTestNvr({ clock: new TestClock(TEST_CLOCK_EPOCH), store });
+      const { platform, shutdown } = makeRootPlatform(double);
+      const good = makeConnectedClient({ nvrConfig, store });
+
+      let attempts = 0;
+      let disposals = 0;
+
+      const answer = {
+
+        [Symbol.asyncDispose]: async (): Promise<void> => {
+
+          disposals++;
+        },
+        nvr: {
+
+          get config(): unknown {
+
+            if(record === undefined) {
+
+              throw new ReferenceError("The NVR configuration is not available.");
+            }
+
+            return record;
+          },
+          peek: (): unknown => record
+        }
+      } as unknown as ProtectClient;
+
+      const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => (++attempts < 3) ? answer : good);
+
+      let asked = clock.requested.length;
+      let outcome = "pending";
+
+      const login = root.login().then((): void => {
+
+        outcome = "resolved";
+      }, (): void => {
+
+        outcome = "rejected";
+      });
+
+      try {
+
+        for(const wait of PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 2)) {
+
+          // eslint-disable-next-line no-await-in-loop -- Each step reads the wait the attempt before it asked for, so the steps are serial by intent.
+          await settleUntil(() => clock.requested.length > asked, { description: "the wait after a failed attempt" });
+
+          asked = clock.requested.length;
+
+          assert.equal(clock.requested.at(-1), wait, "the attempt waits the recovery schedule, because the policy reads it as no refusal");
+
+          clock.advance(wait);
+        }
+
+        await settleUntil(() => outcome !== "pending", { description: "the login settling" });
+        await login;
+
+        assert.equal(outcome, "resolved", "the login resolves, so nothing rejects where no one is waiting");
+        assert.equal(attempts, 3, "the attempt after the two answers connects");
+        assert.equal(disposals, 2, "and each answer's client was disposed by the attempt that built it");
+        assert.deepEqual(linesAt(logEntries, "error"), [PREFIX + failedLine("The controller did not report its configuration or version")],
+          "the answer is said once at error, and its repeat is not");
+        assert.equal(root.client, good, "the retry never assigned a client with no record");
+        assert.equal(root.phase, "running", "and the controller carries on from the good answer");
+      } finally {
+
+        shutdown();
+        controller.abort();
+
+        await settle();
+      }
+    });
+  }
+
+  // The next attempt could otherwise start with the client it replaces still releasing its connection, and a disposal that rejected would float rather than fail the
+  // attempt.
+  test("an attempt's disposal holds the wait for the next attempt, and nothing is said until it ends", async () => {
+
+    const store = new TestStateStore(makeProtectState({ nvr: connectedRecord() }));
+    const { clock, controller, logEntries, nvr: double } = makeTestNvr({ clock: new TestClock(TEST_CLOCK_EPOCH), store });
+    const { platform, shutdown } = makeRootPlatform(double);
+    const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+    const answer = { [Symbol.asyncDispose]: async (): Promise<void> => promise, nvr: { peek: (): undefined => undefined } } as unknown as ProtectClient;
+    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => answer);
+    const asked = clock.requested.length;
+    const login = root.login();
+
+    try {
+
+      await settle();
+
+      assert.equal(clock.requested.length, asked, "no wait is asked for while the disposal holds");
+      assert.deepEqual(linesAt(logEntries, "error"), [], "and nothing is said");
+
+      resolve();
+
+      await settleUntil(() => clock.requested.length > asked, { description: "the wait after the disposal" });
+
+      assert.deepEqual(linesAt(logEntries, "error"), [PREFIX + failedLine("The controller did not report its configuration or version")]);
+    } finally {
+
+      resolve();
+      shutdown();
+      controller.abort();
+
+      await login;
+      await settle();
+    }
+  });
+
+  /* The version gate reads a record that has a version, so it is the gate and no failed attempt that answers one it refuses: the run ends rather than retrying, the
+   * client is disposed, and an empty version string is among what it stops, because no controller is known to send one. The warning ahead of it holds that each level
+   * lands where it belongs in one run, and the wait past it that no attempt follows.
+   */
+  for(const version of [ "5.0.0", "" ]) {
+
+    test("a refused connection and then the version " + JSON.stringify(version) + " reads the warning and then the gate's error, with one disposal and no more attempts",
+      async () => {
+
+        const nvrConfig = connectedRecord({ version });
+        const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
+        const { clock, controller, logEntries, nvr: double } = makeTestNvr({ clock: new TestClock(TEST_CLOCK_EPOCH), store });
+        const { platform, shutdown } = makeRootPlatform(double);
+        const client = makeConnectedClient({ nvrConfig, store });
+
+        let attempts = 0;
+        let disposals = 0;
+
+        client[Symbol.asyncDispose] = async (): Promise<void> => {
+
+          disposals++;
+        };
+
+        const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => {
+
+          if(++attempts === 1) {
+
+            throw networkError;
+          }
+
+          return client;
+        });
+
+        const asked = clock.requested.length;
+
+        let returned = false;
+
+        const login = root.login().then((): void => {
+
+          returned = true;
+        });
+
+        try {
+
+          await settleUntil(() => clock.requested.length > asked, { description: "the wait after the refused connection" });
+
+          clock.advance(clock.requested.at(-1) ?? 0);
+
+          await settleUntil(() => returned, { description: "the login returning at the gate" });
+          await login;
+
+          clock.advance(PROTECT_RECOVERY_STEADY_INTERVAL_MS);
+
+          await settle();
+
+          assert.equal(attempts, 2, "the gate ends the run, so no attempt follows it");
+          assert.equal(disposals, 1, "and its client is disposed once");
+          assert.deepEqual(linesAt(logEntries, "warn"), [PREFIX + failedLine(NETWORK_REASON)]);
+          assert.deepEqual(linesAt(logEntries, "error"),
+            [PREFIX + "This version of HBUP requires running UniFi Protect v6.0 or above using the official Protect release channel only."]);
+          assert.equal(root.phase, "connecting", "and the controller never left its first phase");
+        } finally {
+
+          shutdown();
+          controller.abort();
+
+          await settle();
+        }
+      });
+  }
+
+  /* The MQTT client is built past a successful connect, which is why a retrying connect has no grace to wait out: nothing stands between the shutdown and the signal
+   * it aborts, so the guard ahead of each report reads that signal alone. The address is on the controller's configuration, as a user's is, and no client stands on the
+   * root.
+   */
+  test("a controller with MQTT configured, still retrying, reads its signal aborted in the shutdown's own turn and writes nothing", async () => {
+
+    const { clock, controller, logEntries, nvr: double } = makeTestNvr({ store: new TestStateStore(makeProtectState({ nvr: makeNvrConfig() })) });
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, { ...double.config, mqttUrl: "mqtt://127.0.0.1:1" }, async (): Promise<ProtectClient> => {
+
+      throw networkError;
+    });
+
+    const asked = clock.requested.length;
+
+    try {
+
+      const login = root.login();
+
+      await settleUntil(() => clock.requested.length > asked, { description: "the wait after the refused connection" });
+
+      const said = logEntries.length;
+
+      shutdown();
+
+      assert.equal(root.signal.aborted, true, "no MQTT client holds the shutdown back");
+
+      await login;
+
+      assert.deepEqual(logEntries.slice(said).map(formatLogEntry), [], "and the retry it ended writes nothing");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
   });
 });
 
@@ -3250,6 +3501,165 @@ describe("the controller root's client logger through a scheduled reboot", () =>
     } finally {
 
       await stop();
+    }
+  });
+});
+
+describe("stopping the controller", () => {
+
+  // A client whose disposals a row can count, as many as the sequence runs.
+  function countDisposals(root: ProtectNvr): () => number {
+
+    const dispose = root.client[Symbol.asyncDispose].bind(root.client);
+
+    let disposals = 0;
+
+    root.client[Symbol.asyncDispose] = async (): Promise<void> => {
+
+      disposals++;
+
+      await dispose();
+    };
+
+    return (): number => disposals;
+  }
+
+  /* The held end is the window a second caller can arrive in, because a controller with no MQTT client runs the whole sequence in its caller's own turn. Homebridge's own
+   * shutdown is the caller that always arrives later, after the stop has finished.
+   */
+  test("a second shutdown during a held MQTT end runs the sequence once, and a later Homebridge shutdown repeats nothing", async () => {
+
+    const mqtt = new TestMqttClient({ log: capturingLog() });
+
+    mqtt.connected = true;
+
+    const { double, root, stop } = await logIn({ mqtt });
+    const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+    const disposals = countDisposals(root);
+
+    mqtt.onEnd(async (): Promise<void> => promise);
+
+    try {
+
+      const first = root.shutdown();
+      const second = root.shutdown();
+
+      assert.equal(root.phase, "running", "the held end holds the terminal phase back");
+      assert.equal(root.signal.aborted, false, "and the signal with it");
+      assert.equal(root.isAvailable, true, "so the controller still answers");
+      assert.equal(mqtt.signal.aborted, false, "and the client's end has not finished");
+
+      resolve();
+
+      await Promise.all([ first, second ]);
+
+      assert.equal(root.phase, "shuttingDown");
+      assert.equal(root.signal.aborted, true);
+      assert.equal(mqtt.signal.aborted, true, "the client's end ran");
+      assert.equal(disposals(), 1, "the sequence ran once");
+
+      double.platform.api.emit(APIEvent.SHUTDOWN);
+
+      await settle();
+
+      assert.equal(disposals(), 1, "Homebridge's own shutdown repeats nothing");
+    } finally {
+
+      resolve();
+
+      await stop();
+    }
+  });
+
+  // A disposed client's connection goes on reading healthy, neither lost nor rebooting, so the signal is the one fact left telling an accessory its controller is gone.
+  test("a stopped controller and its device read unavailable and unreachable while another controller's still answer", async () => {
+
+    const stopped = await logIn({ cameras: [PORCH] });
+    const other = await logIn({ cameras: [PORCH] });
+    const camera = stopped.root.getDeviceById(PORCH.id);
+    const otherCamera = other.root.getDeviceById(PORCH.id);
+
+    try {
+
+      assert.ok(camera && otherCamera, "each root adopted the camera");
+      assert.equal(stopped.root.isAvailable, true, "a controller whose signal holds is available");
+      assert.equal(camera.isReachable, true, "and its camera is reachable");
+
+      await stopped.root.shutdown();
+
+      assert.equal(stopped.connection.isHealthy, true, "the connection levers have not moved");
+      assert.equal(stopped.root.isAvailable, false, "a controller whose signal has aborted is unavailable");
+      assert.equal(camera.isAvailable, false, "and so is its camera");
+      assert.equal(camera.isReachable, false, "and its camera is unreachable");
+      assert.equal(other.root.signal.aborted, false, "the other controller's signal holds");
+      assert.equal(other.root.isAvailable, true, "so it stays available");
+      assert.equal(otherCamera.isReachable, true, "and its camera stays reachable");
+    } finally {
+
+      await stopped.stop();
+      await other.stop();
+    }
+  });
+
+  /* A controller up past the stability window has its sweep armed and due the moment it reaches running, on a macrotask the held end gives it. Only the clear ahead of
+   * the end keeps it out, because the transition's own clear waits behind the same hold, and only the race between a yield and a one-millisecond timer would hide its
+   * loss on a real clock.
+   */
+  test("a long-up controller stopped with an orphan, its end held and the clock advanced, fires no sweep and removes nothing", async () => {
+
+    const clock = new TestClock(TEST_CLOCK_EPOCH);
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: 1, version: "7.3.70" };
+    const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
+    const { controller, logEntries, nvr: double } = makeTestNvr({ clock, store });
+    const orphan = makeTestAccessory("Orphan", "AABBCCFFFFFF");
+
+    orphan.context = { mac: "AABBCCFFFFFF", nvr: nvrConfig.mac };
+    restoreAccessories(double, [orphan]);
+
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => makeConnectedClient({ nvrConfig, store }));
+    const mqtt = new TestMqttClient({ log: capturingLog() });
+    const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+    // A sweep that finds the orphan opens by saying it is delaying the removal, so that line, ahead of any removal, is what shows the sweep ran.
+    const swept = (): boolean => logEntries.some(({ message }) => [ "Delaying", "Removing" ].some((word) => message.includes(word)));
+
+    mqtt.connected = true;
+    mqtt.onEnd(async (): Promise<void> => promise);
+    root.mqtt = mqtt as unknown as ProtectNvr["mqtt"];
+
+    try {
+
+      await root.login();
+
+      assert.equal(root.removals.removalStable, true, "the controller is past the window, so its sweep is armed and due");
+
+      const stopping = root.shutdown();
+
+      clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
+
+      await settle();
+
+      assert.equal(root.signal.aborted, false, "the end still holds");
+      assert.equal(swept(), false, "the sweep did not run inside the hold");
+      assert.ok(double.platform.accessories.includes(orphan), "and the orphan stays");
+
+      resolve();
+
+      await stopping;
+
+      clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
+
+      await settle();
+
+      assert.equal(swept(), false, "nor after the stop");
+      assert.ok(double.platform.accessories.includes(orphan), "and the orphan still stays");
+    } finally {
+
+      resolve();
+      shutdown();
+      controller.abort();
+
+      await settle();
     }
   });
 });

@@ -234,11 +234,13 @@ describe("real ProtectChime construction and play behavior", () => {
 
     assert.equal(await triggerGet(buzzerSwitch.getCharacteristic(Characteristic.On)), true, "the play-timer is armed after a play");
 
-    // The registry's lifetime signal is composed with the NVR controller, so a controller-wide abort - the shape plugin shutdown takes - drains the accessory's timers
-    // just as its own cleanup() does.
+    // The registry's lifetime signal is composed with the NVR controller, so a controller-wide abort - the shape a shutdown takes - drains the accessory's timers just as
+    // its own cleanup() does. The controller's verdict refuses a HomeKit read once its signal has aborted, so the row reads the registry the On getter answers from.
     controller.abort();
 
-    assert.equal(await triggerGet(buzzerSwitch.getCharacteristic(Characteristic.On)), false, "the NVR-side abort drained the registry, so no timer stays armed");
+    const { timers } = chime as unknown as { timers: { has: (key: string) => boolean } };
+
+    assert.equal(timers.has(ProtectReservedNames.SWITCH_DOORBELL_CHIME_BUZZER), false, "the NVR-side abort drained the registry, so no timer stays armed");
   });
 
   test("turning a ringtone speaker switch on joins the configured repeat/volume/ringtoneId into the speaker payload", async () => {

@@ -355,10 +355,10 @@ export class TestProtectNvr {
       windowMs: PROTECT_NVR_REBOOT_RECENCY_MS });
   }
 
-  // The verdict every owner starts from, read as the production root reads it, over the double's settable connection levers.
+  // The verdict every owner starts from, read as the production root reads it, over the double's signal and its settable connection levers.
   public get isAvailable(): boolean {
 
-    return !this.client.connection.isLost && !this.client.connection.isRebooting;
+    return !this.signal.aborted && !this.client.connection.isLost && !this.client.connection.isRebooting;
   }
 
   // Read-through to the controller record, mirroring the production getter.
@@ -825,7 +825,7 @@ export class TestConnection {
  * nothing.
  *
  * @param options           - Client inputs.
- * @param options.nvrConfig - The controller record the root reads through client.nvr.config.
+ * @param options.nvrConfig - The controller record the root reads through client.nvr.config and client.nvr.peek.
  * @param options.store     - The state-store double the root reads its devices and liveviews through.
  *
  * @returns The client, presented as the library's, for the connect port to answer with.
@@ -850,7 +850,7 @@ export function makeConnectedClient(options: { nvrConfig: ProtectNvrConfig; stor
 
       return [...store.snapshot().liveviews.values()];
     },
-    nvr: { config: nvrConfig },
+    nvr: { config: nvrConfig, peek: (): ProtectNvrConfig => nvrConfig },
     reboot: async (): Promise<void> => {
 
       // No-op: the double's controller accepts the command, and a row moves the connection levers for whatever follows.

@@ -45,12 +45,19 @@ export interface ConnectFailure {
 }
 
 /**
+ * The sentence a controller is refused in when its answer holds no record, or a record with no version or a MAC that is no string, none of which the plugin can run on.
+ * It lives beside the reading of that failure rather than at a place that refuses, so every caller says the one sentence.
+ */
+export const UNREPORTED_CONTROLLER_RECORD = "The controller did not report its configuration or version.";
+
+/**
  * Read a retried connect failure for the person reading the Homebridge log, from what unifi-protect exports and the homebridge-plugin-utils fault table. A refused
  * sign-in, a response nothing here can understand, a certificate nothing trusts and a host name that does not exist are errors, because each needs a person. Everything
  * else is a warning, because it should fix itself, a `quiet` answer included, since a retry that never ends always says why.
  *
  * What the table cannot see is read above it. Every error unifi-protect raises is a transport failure to the classifier, so a sign-in, a status and a response it could
- * not use all read as its codeless row. A value unifi-protect did not type carries no transport reading, so nothing fixes it by waiting.
+ * not use all read as its codeless row. A value unifi-protect did not type carries no transport reading, so nothing fixes it by waiting, and the one a connect meets is
+ * what the root's own attempt throws for a controller that did not report its configuration or version.
  *
  * @param error - The failure the attempt ended in.
  *
