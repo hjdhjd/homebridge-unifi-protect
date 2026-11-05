@@ -186,6 +186,29 @@ describe("the removal-stability gate: the one-shot sweep", () => {
       controller.abort();
     }
   });
+
+  // A real timer can come due a millisecond before the wall clock reads its deadline, which this test clock never does on its own, so the row holds its reads one
+  // millisecond short. The sweep never re-arms, so a controller read as unstable at its fire would hold every departure until the next good period.
+  test("a sweep whose timer fires a millisecond before the clock reads the window's end finds the controller stable", () => {
+
+    const { clock, controller, gate, pushGood, recorder } = buildGate();
+
+    try {
+
+      pushGood(200000);
+
+      const read = clock.now.bind(clock);
+
+      clock.now = (): number => read() - 1;
+      clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW - 200000);
+
+      assert.equal(recorder.sweeps, 1, "the sweep's timer fired");
+      assert.equal(gate.removalStable, true, "and the window it waited out reads as complete");
+    } finally {
+
+      controller.abort();
+    }
+  });
 });
 
 describe("the removal-stability gate: leaving good state drains everything", () => {

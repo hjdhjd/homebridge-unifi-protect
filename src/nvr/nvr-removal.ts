@@ -163,8 +163,15 @@ export class RemovalStabilityGate {
        * At startup a zero delay runs the sweep in a later macrotask, after the controller's initial device population - a benign double reconcile, since reconciling
        * is repeatable and the orphan pass reads the live adopted-mac projection rather than the configured set, so it cannot evict an adopted-but-not-yet-configured
        * accessory whatever the ordering.
+       *
+       * A timer can come due a millisecond before the clock reads its deadline, and the sweep reads the gate at its own fire and never re-arms, so a window read as
+       * unfinished there would hold every departure until the next good period. The timer firing is what says the window is over, so the clock is stamped to agree.
        */
-      this.#timers.schedule(() => this.#actions.runSweep(), delay);
+      this.#timers.schedule(() => {
+
+        this.#stableSince = this.#clock.now() - PROTECT_NVR_REMOVAL_STABILITY_WINDOW;
+        this.#actions.runSweep();
+      }, delay);
 
       return;
     }
