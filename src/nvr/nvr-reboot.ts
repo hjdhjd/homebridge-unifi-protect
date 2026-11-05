@@ -162,11 +162,11 @@ export class RebootScheduler {
    */
   public schedule(options: { requestedIntervalHours?: number; upSince: number }): void {
 
-    // An interval that is not a finite number of hours names no schedule, the same as the option being off, so we warn and arm nothing. The check runs ahead of the
-    // clamp, which would otherwise turn negative infinity into the minimum interval and reboot the controller every hour.
+    // An interval that is not a finite number of hours names no schedule, the same as the option being off, so we say so at error, because a person has to correct it,
+    // and arm nothing. The check runs ahead of the clamp, which would otherwise turn negative infinity into the minimum interval and reboot the controller every hour.
     if((options.requestedIntervalHours !== undefined) && !Number.isFinite(options.requestedIntervalHours)) {
 
-      this.#log.warn("The scheduled reboot interval is not a number of hours, so no scheduled controller reboot will be set.");
+      this.#log.error("The scheduled reboot interval is not a number of hours, so no scheduled controller reboot will be set.");
 
       return;
     }

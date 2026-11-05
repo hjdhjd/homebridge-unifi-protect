@@ -4,9 +4,10 @@
  */
 import type { API, HAP } from "homebridge";
 import { APIEvent, MQTT_AVAILABILITY_OFFLINE, MQTT_AVAILABILITY_ONLINE, createMqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter,
-  membershipDelta, mqttConnectionSettings, mqttTopic, prefixedLog, retry, superviseLoop } from "homebridge-plugin-utils";
+  membershipDelta, mqttConnectionSettings, mqttTopic, prefixedLog, repeatDemotedLog, retry, superviseLoop } from "homebridge-plugin-utils";
 import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
   ProtectDeviceConfig, ProtectLogging, ProtectNvrConfig, StateStore } from "unifi-protect";
+import type { ConnectFailure, ConnectFailureType } from "./nvr-policy.ts";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, maskAddressCredentials, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, MqttAvailabilityPayload, MqttClient, Nullable } from "homebridge-plugin-utils";
 import { OVERRIDE_ADDRESS_ZONE_WARNING, canTransition, createConnectRetryPolicy, createLivestreamEpisodeLatch, deviceInventory, isDisruptionExpected,
@@ -16,7 +17,6 @@ import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, Pro
 import { countActiveHksvRecordings, deviceEndpoints } from "./nvr-endpoints.ts";
 import { describeDevice, deviceDisplayName } from "../devices/device-descriptor.ts";
 import { AmbientLightCapability } from "../devices/cameras/ambient-light.ts";
-import type { ConnectFailure } from "./nvr-policy.ts";
 import { DeviceRemovalCascade } from "./nvr-removal-cascade.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
@@ -616,32 +616,39 @@ export class ProtectNvr {
    * The one exception is an address no URL can carry. The library refuses it before anything is sent, and refuses it the same way on every attempt, so the policy
    * vetoes it, the retry ends on the first attempt, and we say once that the address needs correcting. Nothing on the controller can change that answer.
    *
-   * The policy tells us why a retried attempt failed when a run of failures begins and whenever what it fails with changes, and we say so: an unbounded retry that
-   * reports nothing leaves a user with no way to tell a controller that is slow to appear from one that refuses us on every attempt. A run of rate limits is told
-   * once, whichever spelling each arrives in, any other failure whenever its reason changes, and a turn between a rate limit and any other failure is told again. A
-   * rate limit is said at warn level, in the library's own terms, because it is the controller asking to be asked less often and the retry already waits it out on
-   * the slower refusal schedule, so no person needs to act; every other failure is said at error level with its reason. An attempt torn down by our own shutdown is
-   * an orderly teardown rather than a reason to report.
+   * The policy tells us why every retried attempt failed, and we say so at the level the policy read: an unbounded retry that reports nothing leaves a user with no way
+   * to tell a controller that is slow to appear from one that refuses us on every attempt. Each report runs through one repeat-demoting log, so a type of failure is said
+   * in full the first time and again whenever the type changes, and an unchanged type goes to debug. A rate limit is said by its type alone, whichever spelling its 429
+   * arrives in, because it is the controller asking to be asked less often and the retry already waits it out on the slower refusal schedule. The attempt wraps the
+   * report rather than the failing call, because a rejection inside an attempt releases its lines at full level and remembers nothing. An attempt torn down by our own
+   * shutdown is an orderly teardown rather than a reason to report, which is why the shutdown is read ahead of the attempt...inside it, a teardown would write a line at
+   * its level for a new type and a debug line for a repeat.
    */
   private async connect(): Promise<boolean> {
 
+    const failures = repeatDemotedLog<ConnectFailureType>(this.log);
     const { backoff, shouldRetry } = createConnectRetryPolicy({
 
-      onFailure: ({ rateLimited, reason }: ConnectFailure): void => {
+      onFailure: ({ level, reason, type }: ConnectFailure): void => {
 
         if(this.#isShuttingDown()) {
 
           return;
         }
 
-        if(rateLimited) {
+        failures.attempt((log: HomebridgePluginLogging): void => {
 
-          this.log.warn("Unable to connect to the Protect controller because it is rate limiting requests, and will keep trying on the slower refusal schedule.");
+          const severity = (level === "error") ? "error" : "warn";
 
-          return;
-        }
+          if(type === "rate-limit") {
 
-        this.log.error("Unable to connect to the Protect controller, and will keep trying: %s.", reason);
+            log[severity]("Unable to connect to the Protect controller because it is rate limiting requests, and will keep trying on the slower refusal schedule.");
+
+            return;
+          }
+
+          log[severity]("Unable to connect to the Protect controller, and will keep trying: %s.", reason);
+        }, (): ConnectFailureType => type);
       }
     });
 

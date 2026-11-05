@@ -116,20 +116,20 @@ export class DiagnosticsHealthBridge {
     // Surface health transitions at the NVR level. Per-component logs (per-camera stalls, per-request errors) are demoted to debug under non-healthy state...the
     // user already has the explanatory NVR-level signal and does not need an N-camera fan-out of correlated noise.
     //
-    // Two direction-aware rules keep the narrative coherent for an operator scanning warn-level logs:
+    // Direction-aware rules keep the narrative coherent for an operator scanning the log:
     //
-    //   1. Recovery is logged at warn (not info) so the entry warn and the closing warn pair visibly. An operator grepping warn for "is anything currently
-    //      broken?" sees both the alert and its resolution at the same level.
-    //   2. The hysteresis step from `stressed` back to `degraded` is silent. That transition means recovery is in progress, not that things are getting worse,
-    //      and logging "responding slowly..." on the way down would read as a fresh alert. The next transition (`degraded` -> `healthy`) is the one worth
-    //      surfacing.
+    //   - Recovery is logged at info, because it is good news and asks nothing of anyone. An operator scanning warnings for "is anything currently broken?" reads
+    //     the alerts alone, and the line that closes them sits among the controller's other lifecycle lines.
+    //   - The hysteresis step from `stressed` back to `degraded` is silent. That transition means recovery is in progress, not that things are getting worse,
+    //     and logging "responding slowly..." on the way down would read as a fresh alert. The next transition (`degraded` -> `healthy`) is the one worth
+    //     surfacing.
     this.#health.on("stateChange", (next, previous) => {
 
       switch(next) {
 
         case "healthy":
 
-          this.#log.warn("The Protect controller is responsive again.");
+          this.#log.info("The Protect controller is responsive again.");
 
           break;
 
@@ -137,7 +137,7 @@ export class DiagnosticsHealthBridge {
 
           if(previous === "stressed") {
 
-            // Hysteresis step on the way down. The closing warn fires when we hit healthy.
+            // Hysteresis step on the way down. The closing line fires when we hit healthy.
             break;
           }
 

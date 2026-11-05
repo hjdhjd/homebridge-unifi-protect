@@ -39,8 +39,8 @@ const MINIMUM_INTERVAL_MS = PROTECT_NVR_REBOOT_MIN_INTERVAL * 60 * 60 * 1000;
 // have fired within it. The span is derived rather than written out, so a change to the default or the minimum carries the rows with it.
 const NO_SCHEDULE_SPAN_MS = Math.max(DEFAULT_INTERVAL_MS, MINIMUM_INTERVAL_MS) + 1;
 
-// The warning a requested interval that is not a finite number of hours logs in place of the enabled line.
-const NO_SCHEDULE_WARNING = "The scheduled reboot interval is not a number of hours, so no scheduled controller reboot will be set.";
+// The error a requested interval that is not a finite number of hours logs in place of the enabled line.
+const NO_SCHEDULE_ERROR = "The scheduled reboot interval is not a number of hours, so no scheduled controller reboot will be set.";
 
 // The cumulative deferral ceiling, in milliseconds, and how many re-checks at the check cadence it spans. The span is derived rather than written out, so a change to
 // either constant carries the arms with it.
@@ -60,6 +60,8 @@ interface SchedulerRecorder {
   available: boolean;
   // The connection-health fact the confirmation's guard pulls.
   healthy: boolean;
+  // The level of each line in logLines, in the same order.
+  logLevels: string[];
   logLines: string[];
   // The lifecycle phase the confirmation's guard pulls. The two phase actions move it, and an arm may move it directly to drive the guard's negatives.
   phase: NvrPhase;
@@ -86,10 +88,11 @@ function buildScheduler(options: { holdReboot?: boolean } = {}): { advance: (ms:
 
   const clock = new TestClock(TEST_CLOCK_EPOCH);
   const controller = new AbortController();
-  const recorder: SchedulerRecorder = { actions: [], available: true, healthy: true, logLines: [], pendingReboot: null, phase: "running", rebootCalls: 0,
+  const recorder: SchedulerRecorder = { actions: [], available: true, healthy: true, logLevels: [], logLines: [], pendingReboot: null, phase: "running", rebootCalls: 0,
     rebootError: null, recordings: 0 };
-  const sink = (message: string, ...parameters: unknown[]): void => {
+  const sink = (level: string) => (message: string, ...parameters: unknown[]): void => {
 
+    recorder.logLevels.push(level);
     recorder.logLines.push(util.format(message, ...parameters));
   };
 
@@ -137,7 +140,7 @@ function buildScheduler(options: { holdReboot?: boolean } = {}): { advance: (ms:
     clock,
     isConnectionHealthy: (): boolean => recorder.healthy,
     isControllerAvailable: (): boolean => recorder.available,
-    log: { debug: sink, error: sink, info: sink, warn: sink },
+    log: { debug: sink("debug"), error: sink("error"), info: sink("info"), warn: sink("warn") },
     phase: (): NvrPhase => recorder.phase,
     signal: controller.signal
   });
@@ -252,7 +255,7 @@ describe("the reboot scheduler: entering the schedule", () => {
     }
   });
 
-  test("an infinite interval arms no reboot and warns once in place of the enabled line", async () => {
+  test("an infinite interval arms no reboot and logs one error in place of the enabled line", async () => {
 
     const { advance, controller, recorder, scheduler } = buildScheduler();
 
@@ -260,7 +263,8 @@ describe("the reboot scheduler: entering the schedule", () => {
 
       scheduler.schedule({ requestedIntervalHours: Infinity, upSince: TEST_CLOCK_EPOCH });
 
-      assert.deepEqual(recorder.logLines, [NO_SCHEDULE_WARNING], "the user is told once that no reboot was set, and no enabled line claims a schedule");
+      assert.deepEqual(recorder.logLines, [NO_SCHEDULE_ERROR], "the user is told once that no reboot was set, and no enabled line claims a schedule");
+      assert.deepEqual(recorder.logLevels, ["error"], "at error, because a person has to correct the interval");
 
       await advance(NO_SCHEDULE_SPAN_MS);
 
@@ -271,7 +275,7 @@ describe("the reboot scheduler: entering the schedule", () => {
     }
   });
 
-  test("a negative infinite interval arms no reboot rather than clamping to the minimum, and warns once in place of the enabled line", async () => {
+  test("a negative infinite interval arms no reboot rather than clamping to the minimum, and logs one error in place of the enabled line", async () => {
 
     const { advance, controller, recorder, scheduler } = buildScheduler();
 
@@ -279,7 +283,8 @@ describe("the reboot scheduler: entering the schedule", () => {
 
       scheduler.schedule({ requestedIntervalHours: -Infinity, upSince: TEST_CLOCK_EPOCH });
 
-      assert.deepEqual(recorder.logLines, [NO_SCHEDULE_WARNING], "the user is told once that no reboot was set, and no enabled line claims the clamped minimum");
+      assert.deepEqual(recorder.logLines, [NO_SCHEDULE_ERROR], "the user is told once that no reboot was set, and no enabled line claims the clamped minimum");
+      assert.deepEqual(recorder.logLevels, ["error"], "at error, because a person has to correct the interval");
 
       await advance(NO_SCHEDULE_SPAN_MS);
 

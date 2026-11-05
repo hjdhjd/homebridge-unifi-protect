@@ -40,6 +40,8 @@ const CAMERA_ID = "camera-under-test";
 // moves recorder.owned or reads recorder.refreshes directly, and that is what the bridge's own predicate and action see on their next call.
 interface BridgeRecorder {
 
+  // The level of each line in logLines, in the same order.
+  logLevels: string[];
   logLines: string[];
   owned: boolean;
   refreshes: number;
@@ -52,9 +54,10 @@ function buildBridge(options: { address?: string; clock?: TestClock } = {}): { b
   recorder: BridgeRecorder; } {
 
   const controller = new AbortController();
-  const recorder: BridgeRecorder = { logLines: [], owned: true, refreshes: 0 };
-  const sink = (message: string, ...parameters: unknown[]): void => {
+  const recorder: BridgeRecorder = { logLevels: [], logLines: [], owned: true, refreshes: 0 };
+  const sink = (level: string) => (message: string, ...parameters: unknown[]): void => {
 
+    recorder.logLevels.push(level);
     recorder.logLines.push(util.format(message, ...parameters));
   };
 
@@ -63,7 +66,7 @@ function buildBridge(options: { address?: string; clock?: TestClock } = {}): { b
     actions: { refreshRemovalStability: (): void => { recorder.refreshes++; } },
     address: options.address ?? CONTROLLER_ADDRESS,
     clock: options.clock ?? new TestClock(),
-    log: { debug: sink, error: sink, info: sink, warn: sink },
+    log: { debug: sink("debug"), error: sink("error"), info: sink("info"), warn: sink("warn") },
     ownsCamera: (cameraId: string): boolean => recorder.owned && (cameraId === CAMERA_ID),
     signal: controller.signal
   });
@@ -186,11 +189,12 @@ describe("the health bridge: narration", () => {
       assert.equal(bridge.state, "degraded", "falling out of stressed lands in degraded");
       assert.equal(recorder.logLines.length, 2, "the stressed-to-degraded hysteresis step is silent");
 
-      // Five more brings the weight to two, under the degraded release bound, and the closing line pairs with the entry warns an operator already saw.
+      // Five more brings the weight to two, under the degraded release bound, and the closing line says at info that the trouble the alerts named has passed.
       publishRequests(5, { ok: true });
 
       assert.equal(bridge.state, "healthy", "the weight fell under the degraded release bound");
       assert.deepEqual(recorder.logLines.slice(2), ["The Protect controller is responsive again."], "the return to healthy narrates the recovery exactly once");
+      assert.deepEqual(recorder.logLevels, [ "warn", "warn", "info" ], "each alert is a warning, and the recovery is info, because it asks nothing of anyone");
     } finally {
 
       controller.abort();

@@ -3,35 +3,87 @@
  * nvr-policy.ts: Pure decision logic for the NVR controller root.
  *
  * This module is the home for all of the controller root's pure decision logic, separated from the ProtectNvr composition root that acts on it. It holds the
- * startup-resilient connect retry policy, the request-outcome classifier that feeds NvrHealth, induced-disruption and reboot-recency gating, the induced-reboot resume
- * decision, the per-episode livestream-recovery quiet latch, the scheduled-reboot deferral decision with its initial-delay arithmetic and its recording-count rule, the
- * span a scheduled reboot is expected to return within, the removal-stability arithmetic, the rule that resolves the address override the cameras' RTSP URLs are
- * composed against, and the reads of the controller's device inventory out of its state store. Each is a pure function of its inputs. They live here, in a
- * dependency-light leaf, rather than inside the ProtectNvr composition root, for the same reason the unifi-protect library keeps its reducer pure and apart from its
- * client and the plugin keeps the NvrHealth reducer apart from its event-sink wrapper: a decision separated from the effect it drives is independently testable, and the
- * test is the proof the separation is real. ProtectNvr transitively imports the entire device and media graph (cameras, streaming, snapshots); a pure predicate should
- * never have to stand that up to be exercised. This module imports only what its decisions read - the library's configuration error and its readings of a controller
- * refusal and of a refused sign-in, its recovery and refusal schedules, its reboot anticipation window and its device-collection keys, and HBPU's error and URL-host
- * formatters - so it loads and tests in isolation.
+ * startup-resilient connect retry policy and its reading of a failed connect, the request-outcome classifier that feeds NvrHealth, induced-disruption and reboot-recency
+ * gating, the induced-reboot resume decision, the per-episode livestream-recovery quiet latch, the scheduled-reboot deferral decision with its initial-delay arithmetic
+ * and its recording-count rule, the span a scheduled reboot is expected to return within, the removal-stability arithmetic, the rule that resolves the address override
+ * the cameras' RTSP URLs are composed against, and the reads of the controller's device inventory out of its state store. Each is a pure function of its inputs. They
+ * live here, in a dependency-light leaf, rather than inside the ProtectNvr composition root, for the same reason unifi-protect keeps its reducer pure and
+ * apart from its client and the plugin keeps the NvrHealth reducer apart from its event-sink wrapper: a decision separated from the effect it drives is independently
+ * testable, and the test is the proof the separation is real. ProtectNvr transitively imports the entire device and media graph (cameras, streaming, snapshots); a pure
+ * predicate should never have to stand that up to be exercised. This module imports only what its decisions read - unifi-protect's error classes and its readings of a
+ * controller refusal and of a refused sign-in, its recovery and refusal schedules, its reboot anticipation window and its device-collection keys, and
+ * homebridge-plugin-utils' transport fault table and its error and URL-host formatters - so it loads and tests in isolation.
  */
 import type { ConnectionState, ProtectDeviceConfig, StateStore } from "unifi-protect";
 import { DEVICE_COLLECTION_KEYS, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
-  PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectConfigurationError, isControllerRefusal, isSignInRefusal } from "unifi-protect";
-import type { Nullable, RetryBackoff } from "homebridge-plugin-utils";
-import { formatErrorMessage, formatUrlHost } from "homebridge-plugin-utils";
+  PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAuthorizationError, ProtectBootstrapError, ProtectConfigurationError, ProtectError,
+  ProtectProtocolError, ProtectRequestError, isControllerRefusal, isSignInRefusal } from "unifi-protect";
+import type { Nullable, RetryBackoff, TransportFailureKind } from "homebridge-plugin-utils";
+import { classifyTransportError, connectionFaultLevel, formatErrorMessage, formatUrlHost } from "homebridge-plugin-utils";
 import type { NvrPhase } from "./nvr.ts";
 
 /**
- * A retried connect attempt's failure, as the connect retry policy reports it to the caller. The policy reports a run's first failure and then each turn between a
- * rate limit and any other fault, and, outside a rate limit, each change of reason, so a run of rate limits is one report whichever spelling its 429 arrives in.
+ * Why a retried connect attempt failed, the tag a caller's repeat-demoting log compares with the one it remembers: every kind the transport classifier names, and what
+ * a connect reads above that classifier. A host name that does not exist has a type apart from a resolver that is struggling, because the two are logged at different
+ * levels, and a change of level is always a change of type. A refused identity and a refused privilege have a type each, because each asks a person for a different fix.
+ */
+export type ConnectFailureType = "no-such-host" | "rate-limit" | "refused-identity" | "refused-privilege" | "status" | "unreadable" | TransportFailureKind;
+
+/**
+ * A retried connect attempt's failure, as the connect retry policy reports it to the caller on every attempt.
  */
 export interface ConnectFailure {
 
-  /** Whether the controller was rate limiting requests: a refusal that is no refused sign-in, as the library's connection classes read one. */
-  readonly rateLimited: boolean;
+  /** The level a user reads it at: error when a person must act, and warning when it should fix itself. */
+  readonly level: "error" | "warning";
 
   /** The reason the attempt failed, formatted as the text a user reads. */
   readonly reason: string;
+
+  /** The tag the reason falls under, which a caller's repeat-demoting log compares. */
+  readonly type: ConnectFailureType;
+}
+
+/**
+ * Read a retried connect failure for the person reading the Homebridge log, from what unifi-protect exports and the homebridge-plugin-utils fault table. A refused
+ * sign-in, a response nothing here can understand, a certificate nothing trusts and a host name that does not exist are errors, because each needs a person. Everything
+ * else is a warning, because it should fix itself, a `quiet` answer included, since a retry that never ends always says why.
+ *
+ * What the table cannot see is read above it. Every error unifi-protect raises is a transport failure to the classifier, so a sign-in, a status and a response it could
+ * not use all read as its codeless row. A value unifi-protect did not type carries no transport reading, so nothing fixes it by waiting.
+ *
+ * @param error - The failure the attempt ended in.
+ *
+ * @returns The level and the type of the failure.
+ */
+export function connectFailureReading(error: unknown): Pick<ConnectFailure, "level" | "type"> {
+
+  const fault = (error instanceof ProtectBootstrapError) ? error.cause : error;
+
+  if(isSignInRefusal(error)) {
+
+    return { level: "error", type: (fault instanceof ProtectAuthorizationError) ? "refused-privilege" : "refused-identity" };
+  }
+
+  if(isControllerRefusal(error)) {
+
+    return { level: "warning", type: "rate-limit" };
+  }
+
+  if(!(error instanceof ProtectError) || (error instanceof ProtectProtocolError) || ((error instanceof ProtectBootstrapError) && (error.stage !== "fetch"))) {
+
+    return { level: "error", type: "unreadable" };
+  }
+
+  if(fault instanceof ProtectRequestError) {
+
+    return { level: "warning", type: "status" };
+  }
+
+  const failure = classifyTransportError(error);
+  const level = (connectionFaultLevel(failure, { open: false }) === "error") ? "error" : "warning";
+
+  return { level, type: ((failure.kind === "dns") && (level === "error")) ? "no-such-host" : failure.kind };
 }
 
 // The library's recovery schedule for a fault it cannot explain, its staged delays and its steady floor composed into the shape its refusal schedule is published in,
@@ -61,26 +113,19 @@ const RECOVERY_SCHEDULE_MS = { backoff: [...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS]
  * anything. The same address is refused the same way on every attempt, so asking again can only repeat the refusal, and the decision answers false for it. The
  * veto answers ahead of the report below and leaves the run's state alone, because the run ends on it and the caller says why in words of its own.
  *
- * The run also reports itself, because a retry without end is otherwise silent for as long as it lasts. A retried attempt hands its failure to `onFailure` when the
- * run's first failure arrives and again whenever what failed changes, so a caller hears why the connect is failing and when that changes rather than hearing every
- * attempt. Each report says whether the failure is a rate limit, read as the library's connection classes read one: a refusal that is no refused sign-in,
- * {@link isSignInRefusal} being the narrower reading the library chooses its own announcement by, so a caller can tell the controller asking to be asked less often
- * from one that waits on a person to correct the credentials. That reading is also what decides a change. A rate limit is the one failure a caller says by its
- * class rather than its reason, so a turn between a rate limit and any other fault is always reported, and a run of rate limits is one report however its 429 is
- * spelled, bare or as the cause a bootstrap error carries, which is the rule the library's own connection keeps when it announces a loss once per class and again
- * on a change of class. Every other fault is compared on its formatted reason, the text a user reads, so two faults that read identically are one reason and a
- * timeout giving way to a different fault is two.
+ * Every other failure is handed to `onFailure`, because a retry without end is otherwise silent for as long as it lasts, carrying what {@link connectFailureReading}
+ * reads. The policy remembers none of what it reports, because the caller's repeat-demoting log is that memory and a second would disagree with it, so which of those
+ * reports a user reads in full is that log's to decide.
  *
  * @param options - The callback that receives each failure the run reports, optional.
  *
- * @returns The `backoff` and `shouldRetry` pair for the retry options. They close over whether the last failure was a refusal, the run's rung on that class's
- * schedule, and the last failure reported.
+ * @returns The `backoff` and `shouldRetry` pair for the retry options. They close over whether the last failure was a refusal and the run's rung on that class's
+ * schedule.
  */
 export function createConnectRetryPolicy({ onFailure }: { onFailure?: (failure: ConnectFailure) => void } = {}): { backoff: RetryBackoff;
   shouldRetry: (error: unknown) => boolean; } {
 
   let refused = false;
-  let reported: ConnectFailure | undefined;
   let rung = 0;
 
   return {
@@ -115,16 +160,7 @@ export function createConnectRetryPolicy({ onFailure }: { onFailure?: (failure: 
 
       rung++;
 
-      const rateLimited = refusal && !isSignInRefusal(error);
-      const reason = formatErrorMessage(error);
-
-      // A failure earns a report when its rate-limit reading differs from the last report's, which a run's first failure always does, having no report to match.
-      // Within a run of rate limits nothing more earns one, whatever its reason reads, while any other fault earns one whenever its reason differs from the last.
-      if((rateLimited !== reported?.rateLimited) || (!rateLimited && (reason !== reported.reason))) {
-
-        reported = { rateLimited, reason };
-        onFailure?.(reported);
-      }
+      onFailure?.({ ...connectFailureReading(error), reason: formatErrorMessage(error) });
 
       return true;
     }
