@@ -1060,7 +1060,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
    *
    * The final word is stated inside the client's graceful end, so the broker holds the device offline while the plugin is not running. It publishes on the client under
    * the very signal the end hands it, the one signal the end admits, and it skips the change gate, because the broker has to hold offline whatever this device last
-   * stated. The registration lives as long as this device does, so a device removed mid-run, whose removal already said so, says nothing more.
+   * stated. The registration lives as long as this device does, so a device removed mid-run, whose removal states it or holds it for the next session, says nothing more.
    *
    * The observer follows the record's half of the verdict. Its selector reduces adoption and connection to one value, so it wakes on a change to either and on nothing
    * else in the record, and the change gate is what decides whether a wake says anything, which is how a family that ignores one of them stays quiet about it. A record

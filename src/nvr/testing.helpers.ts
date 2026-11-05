@@ -260,7 +260,11 @@ export class TestProtectNvr {
         },
         publishRemoval: (mac: string): void => {
 
-          this.mqtt?.publishGuarded(mqttTopic(mac, mqttTopics.availability.topic), MQTT_AVAILABILITY_OFFLINE, { ifChanged: true, retain: true });
+          // Production's disabled test, without its hold: the double restates nothing at a session, so a removal it meets with no session holds nothing for a later one.
+          if(init.platform.featureOptions.test("Device", mac, this.ufp.mac)) {
+
+            this.mqtt?.publishGuarded(mqttTopic(mac, mqttTopics.availability.topic), MQTT_AVAILABILITY_OFFLINE, { ifChanged: true, retain: true });
+          }
         },
         retireDevice: (device: ProtectDevice): void => this.events.retireDevice(device)
       },

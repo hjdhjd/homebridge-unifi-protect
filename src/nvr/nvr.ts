@@ -128,8 +128,6 @@ export class ProtectNvr {
   // accessories runs. Handed the controller's MAC and its state store as suppliers it pulls at use time; the acts the removal gate, the livestream-episode ledger and
   // the event dispatcher own run back here through its actions.
   readonly #removalCascade: DeviceRemovalCascade;
-  // The MAC of every device this run removed from HomeKit, which each later broker session states offline again, a removal that fell in a broker outage included.
-  readonly #removedMacs = new Set<string>();
   // The removal-stability decision: whether destructive removal is currently allowed, and the graced scheduling of the removals it permits. Fed the controller's
   // good-state through #pushRemovalStability; every act it decides on runs through the actions it was constructed with, a removal through the device-removal cascade
   // and the sweep back here.
@@ -142,6 +140,9 @@ export class ProtectNvr {
   // it, so plugin shutdown tears the whole tree down as one cascade. Initialized in the constructor so it exists before any device is constructed.
   readonly #shutdownController: AbortController;
   public systemInfo: Nullable<ProtectNvrSystemInfo>;
+  // The MACs of the devices removed while no broker session stood, each stated once at the next session unless something serves it by then. They live as long as this
+  // root does, so a plugin restart ahead of that session loses them.
+  readonly #unheardRemovals = new Set<string>();
   private unsupportedDevices: Record<string, boolean>;
   // The unifi-protect client logger. Shares the controller-log destination but hides warn and error output while a scheduled reboot is on time, so the outage we induced
   // stays quiet until it is overdue, and error output through shutdown. Typed as the unifi-protect library's own ProtectLogging contract, single-sourced with what
@@ -258,11 +259,7 @@ export class ProtectNvr {
 
         cancelPendingRemoval: (uuid: string): void => this.removals.cancelFor(uuid),
         forgetCamera: (cameraId: string): void => this.livestreamEpisodes.forgetCamera(cameraId),
-        publishRemoval: (mac: string): void => {
-
-          this.#removedMacs.add(mac);
-          this.#publishAvailability(mac, MQTT_AVAILABILITY_OFFLINE);
-        },
+        publishRemoval: (mac: string): void => this.#publishRemoval(mac),
         retireDevice: (device: ProtectDevice): void => this.events.retireDevice(device)
       },
       controllerMac: (): string => this.ufp.mac,
@@ -973,33 +970,62 @@ export class ProtectNvr {
     this.#publishAvailability(this.ufp.mac, this.isAvailable ? MQTT_AVAILABILITY_ONLINE : MQTT_AVAILABILITY_OFFLINE);
   }
 
-  /* What a new broker session is told about availability from here: this controller's statement, then a retained offline for each device of this controller nothing
-   * serves - each restored accessory no owner has claimed, and each device this run removed. A statement issued with no session is refused and never repeated, and login
-   * adopts its devices in the same run that builds the client, ahead of any session, so this is what reaches a subscriber for a device that is gone. A live device is
-   * subtracted, because it states its own on the same session and this must never contradict a device that is answering, one re-adopted after its removal among them.
+  // State the retained offline of a device of this controller that nothing serves. A device the user disabled has no MQTT surface, this statement included.
+  #publishUnserved(mac: string): void {
+
+    if(this.platform.featureOptions.test("Device", mac, this.ufp.mac)) {
+
+      this.#publishAvailability(mac, MQTT_AVAILABILITY_OFFLINE);
+    }
+  }
+
+  // State a removed device's retained offline, or with no broker session standing hold it for the next one, because a statement issued with no session is refused and
+  // never repeated, which would leave the online it last stated retained for good.
+  #publishRemoval(mac: string): void {
+
+    if(this.mqtt?.connected === false) {
+
+      this.#unheardRemovals.add(mac);
+
+      return;
+    }
+
+    this.#publishUnserved(mac);
+  }
+
+  /* What a new broker session is told about availability from here: this controller's statement, then a retained offline for each removal no session heard, then one for
+   * each restored accessory of this controller no owner has claimed, one whose setup threw among them. A statement issued with no session is refused and never repeated,
+   * and login adopts its devices ahead of any session, so this is what reaches a subscriber for an accessory that stands with nothing answering for it. A device claims
+   * its accessory ahead of the statement its configure makes, so every live device falls outside this and states its own on the same session.
+   *
+   * A held removal is said once and a removal a session heard is not said again. This is the one place that reads who serves a held MAC, rather than a delete where a
+   * device is adopted as well. The cascade takes a device out of configuredDevices ahead of its tail, so a removal that failed reads as unserved and is said, while a
+   * device adopted again reads as served and speaks for itself. An accessory standing under another controller is that controller's to state, and a word said over it
+   * would stand until that controller's next statement.
    */
   #restateAvailability(): void {
 
     this.#publishControllerAvailability();
 
-    const unserved = new Set(this.#removedMacs);
+    for(const mac of this.#unheardRemovals) {
+
+      const uuid = this.hap.uuid.generate(mac);
+      const controller = this.platform.accessories.find(x => x.UUID === uuid)?.context.nvr;
+
+      if(!this.configuredDevices.has(uuid) && (!controller || (controller === this.ufp.mac))) {
+
+        this.#publishUnserved(mac);
+      }
+    }
+
+    this.#unheardRemovals.clear();
 
     for(const accessory of this.platform.accessories) {
 
       if(accessory.context.mac && (accessory.context.nvr === this.ufp.mac) && !this.platform.isAccessoryClaimed(accessory)) {
 
-        unserved.add(accessory.context.mac);
+        this.#publishUnserved(accessory.context.mac);
       }
-    }
-
-    for(const device of this.configuredDevices.values()) {
-
-      unserved.delete(device.mac);
-    }
-
-    for(const mac of unserved) {
-
-      this.#publishAvailability(mac, MQTT_AVAILABILITY_OFFLINE);
     }
   }
 

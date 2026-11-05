@@ -1745,8 +1745,9 @@ describe("the controller root's MQTT availability", () => {
     }
   });
 
-  // A statement made with no session is refused and never repeated, so an accessory nothing serves would otherwise leave a stale online on the broker for good.
-  test("an unclaimed restored accessory and a removal before the first session are each stated offline once it starts, and a live device is not", async () => {
+  // A statement made with no session is refused and never repeated, so an accessory that stands with nothing serving it is told again at each session, and a removal no
+  // session heard is held for the next one and told once.
+  test("an unclaimed restored accessory is stated offline at each session, a removal before the first session once, and a live device only by itself", async () => {
 
     const unclaimed = makeTestAccessory("Old Camera", "74ACB9000103");
     const removed = adopted(makeCameraConfig({ channels: G2_PRO_CHANNELS, id: "camera-removed", mac: "74ACB9000104", name: "Removed Camera" }));
@@ -1771,22 +1772,26 @@ describe("the controller root's MQTT availability", () => {
 
       mqtt.connected = true;
 
+      assert.deepEqual(mqtt.published.slice(0, 2).map(({ topic }) => topic), [ "availability", CONTROLLER_MAC + "/availability" ],
+        "the controller's statement opens the session, ahead of the removal it holds");
       assert.deepEqual(statements(mqtt, unclaimed.context.mac ?? ""), ["offline retained"], "the accessory nothing serves reads offline");
-      assert.deepEqual(statements(mqtt, removed.mac), ["offline retained"], "and so does the removal");
+      assert.deepEqual(statements(mqtt, removed.mac), ["offline retained"], "a removal no session heard is stated at the first session");
       assert.deepEqual(statements(mqtt, PORCH.mac), ["online retained"], "and the live camera reads only what it says itself");
       assert.deepEqual(statements(mqtt, "74ACB9000107"), [], "and another controller's accessory is that controller's to state");
 
       mqtt.connected = false;
       mqtt.connected = true;
 
-      assert.deepEqual(statements(mqtt, removed.mac), [ "offline retained", "offline retained" ], "a later session is told again, since each starts from nothing");
+      assert.deepEqual(statements(mqtt, unclaimed.context.mac ?? ""), [ "offline retained", "offline retained" ],
+        "a later session is told again, since each starts from nothing");
+      assert.deepEqual(statements(mqtt, removed.mac), ["offline retained"], "and the removal is not stated again");
     } finally {
 
       await stop();
     }
   });
 
-  test("a removal during a session states the device offline at once, and a second session states it again", async () => {
+  test("a removal during a session states the device offline once, and a later session says nothing more", async () => {
 
     const { mqtt } = standMqtt({ connected: true });
     const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
@@ -1803,13 +1808,58 @@ describe("the controller root's MQTT availability", () => {
       root.removeHomeKitDevice(accessory);
 
       assert.equal(statements(mqtt, PORCH.mac).at(-1), "offline retained", "the removal's statement goes out with the session standing");
+
+      const heard = statements(mqtt, PORCH.mac).length;
+
+      mqtt.connected = false;
+      mqtt.connected = true;
+
+      assert.equal(statements(mqtt, PORCH.mac).length, heard, "and a later session is told nothing more");
     } finally {
 
       await stop();
     }
   });
 
-  // The removal is on the root's record for the rest of the run, so what comes back under the same MAC has to be taken off what a session is told.
+  // The hold and its drain read whether a session stands, never whether one ever stood, so an outage after earlier sessions holds a removal as a start with none does.
+  // The session that returns is what replaces the online this camera left retained.
+  test("a removal in a mid-run outage states one offline at the session that returns, and nothing at one more", async () => {
+
+    const { mqtt } = standMqtt({ connected: true });
+    const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+
+    try {
+
+      mqtt.connected = false;
+      mqtt.connected = true;
+
+      assert.equal(statements(mqtt, PORCH.mac).at(-1), "online retained", "the camera stated itself at an earlier session");
+
+      const accessory = double.platform.accessories.find(({ UUID }) => UUID === accessoryUuid(PORCH.mac));
+
+      assert.ok(accessory, "the root added the camera");
+
+      mqtt.connected = false;
+
+      root.removeHomeKitDevice(accessory);
+
+      mqtt.connected = true;
+
+      assert.equal(statements(mqtt, PORCH.mac).at(-1), "offline retained", "the returning session hears the removal");
+
+      const heard = statements(mqtt, PORCH.mac).length;
+
+      mqtt.connected = false;
+      mqtt.connected = true;
+
+      assert.equal(statements(mqtt, PORCH.mac).length, heard, "and one more session hears nothing");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // What comes back under the same MAC states its own availability, so a removal earlier in the run leaves nothing to contradict it.
   test("a device removed and adopted again in the same run is stated only by itself", async () => {
 
     const { mqtt } = standMqtt();
@@ -1827,6 +1877,222 @@ describe("the controller root's MQTT availability", () => {
       mqtt.connected = true;
 
       assert.deepEqual(statements(mqtt, PORCH.mac), ["online retained"], "the session hears the live device and nothing contradicting it");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // A session drops a held MAC whether it states it or passes it over. A passed-over MAC left held would have the session after the device's next removal say an offline
+  // a standing session already heard.
+  test("a MAC passed over at a session is dropped, so a later removal is not repeated", async () => {
+
+    const { mqtt } = standMqtt();
+    const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+
+    try {
+
+      const accessory = double.platform.accessories.find(({ UUID }) => UUID === accessoryUuid(PORCH.mac));
+
+      assert.ok(accessory, "the root added the camera");
+
+      root.removeHomeKitDevice(accessory);
+      root.addHomeKitDevice(PORCH);
+
+      mqtt.connected = true;
+
+      assert.deepEqual(statements(mqtt, PORCH.mac), ["online retained"], "the session passes over the MAC, the device adopted again stating itself");
+
+      const readopted = double.platform.accessories.find(({ UUID }) => UUID === accessoryUuid(PORCH.mac));
+
+      assert.ok(readopted, "the root added the camera again");
+
+      root.removeHomeKitDevice(readopted);
+
+      assert.deepEqual(statements(mqtt, PORCH.mac), [ "online retained", "offline retained" ], "the later removal is stated with the session standing");
+
+      mqtt.connected = false;
+      mqtt.connected = true;
+
+      assert.deepEqual(statements(mqtt, PORCH.mac), [ "online retained", "offline retained" ], "and a later session repeats nothing");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // What a held MAC is owed reads who serves it, never the controller's verdict, so a session starting through a lost controller states it as any other does.
+  test("a held MAC is stated at a session that starts through a lost controller", async () => {
+
+    const { mqtt } = standMqtt();
+    const { connection, double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+
+    try {
+
+      const accessory = double.platform.accessories.find(({ UUID }) => UUID === accessoryUuid(PORCH.mac));
+
+      assert.ok(accessory, "the root added the camera");
+
+      root.removeHomeKitDevice(accessory);
+
+      connection.isLost = true;
+      mqtt.connected = true;
+
+      assert.equal(statements(mqtt, CONTROLLER_MAC).at(-1), "offline retained", "the session opens on the controller reading lost");
+      assert.deepEqual(statements(mqtt, PORCH.mac), ["offline retained"], "and hears the removal all the same");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // A removal that fails leaves its accessory standing and claimed, which no session restates, with the device already let go, so the hold alone speaks for it.
+  test("a removal whose unregister throws with no session states one offline at the first session, none at the second, and online on re-adoption", async () => {
+
+    const { mqtt } = standMqtt();
+    const { api, double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+
+    try {
+
+      const accessory = double.platform.accessories.find(({ UUID }) => UUID === accessoryUuid(PORCH.mac));
+
+      assert.ok(accessory, "the root added the camera");
+
+      const unregister = api.unregisterPlatformAccessories.bind(api);
+
+      api.unregisterPlatformAccessories = (): void => {
+
+        throw new Error("HAP refused the removal.");
+      };
+
+      assert.throws(() => root.removeHomeKitDevice(accessory), /HAP refused the removal/);
+
+      api.unregisterPlatformAccessories = unregister;
+
+      assert.ok(double.platform.accessories.includes(accessory), "the failed removal left its accessory standing");
+
+      mqtt.connected = true;
+
+      assert.deepEqual(statements(mqtt, PORCH.mac), ["offline retained"], "the first session hears the removal");
+
+      mqtt.connected = false;
+      mqtt.connected = true;
+
+      assert.deepEqual(statements(mqtt, PORCH.mac), ["offline retained"], "a second session hears nothing more");
+
+      root.addHomeKitDevice(PORCH);
+
+      assert.deepEqual(statements(mqtt, PORCH.mac), [ "offline retained", "online retained" ], "and the device adopted again states itself");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // A setup that throws ahead of seeding its context leaves an accessory carrying no MAC, which no session restates, and no device in configuredDevices, so nothing
+  // serves the MAC and the hold alone says so.
+  test("a re-adoption whose setup throws states one offline at the first session", async (t) => {
+
+    const { mqtt } = standMqtt();
+    const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+
+    try {
+
+      const accessory = double.platform.accessories.find(({ UUID }) => UUID === accessoryUuid(PORCH.mac));
+
+      assert.ok(accessory, "the root added the camera");
+
+      root.removeHomeKitDevice(accessory);
+
+      t.mock.method(ProtectCamera.prototype as unknown as { configureHints: () => boolean }, "configureHints", (): boolean => {
+
+        throw new Error("The camera's setup could not start.");
+      });
+
+      assert.throws(() => root.addHomeKitDevice(PORCH), /could not start/);
+      assert.equal(root.configuredDevices.has(accessoryUuid(PORCH.mac)), false, "the device whose setup threw is not recorded");
+      assert.equal(double.platform.accessories.find(({ UUID }) => UUID === accessoryUuid(PORCH.mac))?.context.mac, undefined, "and its accessory carries no MAC");
+
+      mqtt.connected = true;
+
+      assert.deepEqual(statements(mqtt, PORCH.mac), ["offline retained"], "the session hears one offline");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // The device moved: another controller's accessory stands on the MAC this one holds, and that controller states it, so a word from here would speak over a live device.
+  test("a MAC held by this controller and standing under another controller's context is not stated by this one", async () => {
+
+    const moved = makeTestAccessory("Porch Camera", PORCH.mac);
+
+    moved.context = { mac: PORCH.mac, nvr: "AABBCCDDEEFF" };
+
+    const { mqtt } = standMqtt();
+    const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+
+    try {
+
+      const accessory = double.platform.accessories.find(({ UUID }) => UUID === accessoryUuid(PORCH.mac));
+
+      assert.ok(accessory, "the root added the camera");
+
+      root.removeHomeKitDevice(accessory);
+      double.platform.accessories.push(moved);
+
+      mqtt.connected = true;
+
+      assert.deepEqual(statements(mqtt, PORCH.mac), [], "the session states nothing on the other controller's device");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // A device the user disabled has no MQTT surface, so a removal held for lack of a session stays silent at the session that reads it.
+  test("a disabled device's removal with no session stays silent at the next session", async () => {
+
+    const restored = makeTestAccessory("Disabled Camera", "74ACB9000105");
+    const disabled = adopted(makeCameraConfig({ channels: G2_PRO_CHANNELS, id: "camera-disabled", mac: "74ACB9000105", name: "Disabled Camera" }));
+
+    restored.context = { mac: disabled.mac, nvr: CONTROLLER_MAC };
+
+    const { mqtt } = standMqtt();
+    const { double, stop } = await logIn({ accessories: [restored], cameras: [disabled], mqtt, userOptions: ["Disable.Device." + disabled.mac] });
+
+    try {
+
+      assert.equal(double.platform.accessories.includes(restored), false, "the restored accessory left HomeKit with no session standing");
+
+      mqtt.connected = true;
+
+      assert.deepEqual(mqtt.published.filter(({ topic }) => topic.startsWith(disabled.mac)), [], "the session says nothing of it");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // A device's availability topic is its MAC's, so an accessory carrying no MAC has none to be stated on, whatever left it standing.
+  test("a standing unclaimed accessory with no MAC is stated on no topic at a session", async () => {
+
+    const stray = makeTestAccessory("Stray Accessory", "74ACB9000109.Stray");
+
+    stray.context = { nvr: CONTROLLER_MAC };
+
+    const { mqtt } = standMqtt();
+    const { double, stop } = await logIn({ accessories: [stray], mqtt });
+
+    try {
+
+      assert.ok(double.platform.accessories.includes(stray), "the accessory stands");
+      assert.equal(double.platform.isAccessoryClaimed(stray), false, "with no owner claiming it");
+
+      mqtt.connected = true;
+
+      assert.deepEqual(mqtt.published.filter(({ topic }) => topic.endsWith("/availability")).map(({ topic }) => topic), [CONTROLLER_MAC + "/availability"],
+        "the session states the controller alone");
     } finally {
 
       await stop();
@@ -1861,8 +2127,9 @@ describe("the controller root's MQTT availability", () => {
     }
   });
 
-  // A device the user disabled has no MQTT surface while it stands, and leaves the one statement every removal leaves.
-  test("a disabled device states nothing standing, and its restored accessory's removal states offline", async () => {
+  // A device the user disabled has no MQTT surface, so its restored accessory's removal says nothing with a session standing, and neither does a later session. An
+  // accessory of its that a failed removal left standing is the same device, so it is not stated as an unserved one either.
+  test("a disabled device states nothing, on its restored accessory's removal or at a later session", async () => {
 
     const restored = makeTestAccessory("Disabled Camera", "74ACB9000105");
     const disabled = adopted(makeCameraConfig({ channels: G2_PRO_CHANNELS, id: "camera-disabled", mac: "74ACB9000105", name: "Disabled Camera" }));
@@ -1870,19 +2137,25 @@ describe("the controller root's MQTT availability", () => {
 
     restored.context = { mac: disabled.mac, nvr: CONTROLLER_MAC };
 
-    const { mqtt } = standMqtt();
+    const { mqtt } = standMqtt({ connected: true });
     const { double, stop } = await logIn({ accessories: [restored], cameras: [ disabled, neverAdded ], mqtt,
       userOptions: [ "Disable.Device." + disabled.mac, "Disable.Device." + neverAdded.mac ] });
 
     try {
 
       assert.equal(double.platform.accessories.includes(restored), false, "the restored accessory left HomeKit");
+      assert.deepEqual(statements(mqtt, disabled.mac), [], "its removal said nothing with a session standing");
 
+      double.platform.accessories.push(restored);
+
+      mqtt.connected = false;
       mqtt.connected = true;
 
-      assert.deepEqual(statements(mqtt, disabled.mac), ["offline retained"], "its removal left the one statement every removal leaves");
+      assert.deepEqual(mqtt.published.filter(({ topic }) => topic.startsWith(disabled.mac)), [], "a later session says nothing of it, standing or not");
       assert.deepEqual(mqtt.published.filter(({ topic }) => topic.startsWith(neverAdded.mac)), [], "and a disabled device with no accessory has no MQTT surface at all");
     } finally {
+
+      double.platform.accessories.splice(double.platform.accessories.indexOf(restored), 1);
 
       await stop();
     }

@@ -35,6 +35,7 @@ export interface DeviceRemovalCascadeActions {
   forgetCamera: (cameraId: string) => void;
 
   // State the retained offline a removed device leaves on the broker, by its MAC, so a subscriber attaching later does not read the online its last live statement left.
+  // The controller decides whether and when it is said, since a device the user disabled says nothing and a removal with no broker session waits for the next one.
   publishRemoval: (mac: string) => void;
 
   // Settle and reclaim the event dispatcher's timers and enrichment marks for a removed device.
