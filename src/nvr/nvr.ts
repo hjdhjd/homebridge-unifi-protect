@@ -87,6 +87,31 @@ export type ProtectNvrConnect = (options: ConnectOptions) => Promise<ProtectClie
 // The default port: the real client. Wrapped rather than referenced so the static's own this binding stays with its class.
 const defaultConnect: ProtectNvrConnect = async (options) => ProtectClient.connect(options);
 
+/* The user-readable reason carried by a line of unifi-protect's in its structured context, or undefined where it carries none. Everything else a context holds is a raw
+ * object or a value that means nothing outside a debug transcript, so a reason is the one member lifted out of one: unifi-protect composes it from the failure's own
+ * cause chain, which makes it a sentence fragment already addressed to the user. The search walks every trailing parameter rather than the first alone, because a line is
+ * free to attach its context behind parameters of its own.
+ */
+const contextReason = (parameters: readonly unknown[]): string | undefined => {
+
+  for(const parameter of parameters) {
+
+    if((typeof parameter !== "object") || (parameter === null) || !("reason" in parameter)) {
+
+      continue;
+    }
+
+    const reason = parameter.reason;
+
+    if((typeof reason === "string") && (reason.length > 0)) {
+
+      return reason;
+    }
+  }
+
+  return undefined;
+};
+
 export class ProtectNvr {
 
   private api: API;
@@ -146,9 +171,9 @@ export class ProtectNvr {
   // root does, so a plugin restart ahead of that session loses them.
   readonly #unheardRemovals = new Set<string>();
   private unsupportedDevices: Record<string, boolean>;
-  // The unifi-protect client logger. Shares the controller-log destination but hides warn and error output while a scheduled reboot is on time, so the outage we induced
-  // stays quiet until it is overdue, and error output through shutdown. Typed as the unifi-protect library's own ProtectLogging contract, single-sourced with what
-  // ProtectClient.connect() expects.
+  // The unifi-protect client logger. Writes through this controller's own log, so every line unifi-protect writes names its controller, and hides warn and error output
+  // while a scheduled reboot is on time, so the outage we induced stays quiet until it is overdue, and error output through shutdown. Typed as unifi-protect's own
+  // ProtectLogging contract, single-sourced with what ProtectClient.connect() expects.
   private readonly clientLog: ProtectLogging;
   // The one place the device-category vocabulary is wired to its projections and constructors: adoption resolves the live unifi-protect projection through
   // `.projection` and builds the HomeKit device through `.construct`. Membership reads the client's own selector catalog through the same key: the membership observe
@@ -189,54 +214,62 @@ export class ProtectNvr {
     this.systemInfo = null;
     this.unsupportedDevices = {};
 
-    /* The unifi-protect client logger. The library logs complete sentences with structured context attached as trailing parameters, and rendering that context inline
+    /* The controller half of this logger's per-call debug scope. The client field is definite-assigned at connect, so the unconnected state is real even though
+     * the field's type says otherwise; the confined widening makes that state readable here without weakening the post-connect typing anywhere else. An
+     * unconnected controller resolves its debug lines at global scope - the only scope that can name it before its identity is known. The record is peeked rather than
+     * read through its config, because unifi-protect's own debug lines reach this gate from inside unifi-protect, where a throw on an absent record would land.
+     */
+    const controllerMac = (): string | undefined => (this.client as ProtectClient | undefined)?.nvr.peek()?.mac;
+
+    // Derive our controller logger from the plugin logging root, prefixing every line with this.name so controller output is attributable at a glance. Debug lines
+    // resolve at this controller's own scope, so a controller-suffixed Log.Debug entry turns on this controller alone.
+    this.log = debugGatedLog(prefixedLog(this.platform.pluginLog, () => this.name), () => this.platform.testDebug({ controller: controllerMac() }));
+
+    /* The unifi-protect client logger. unifi-protect logs complete sentences with structured context attached as trailing parameters, and rendering that context inline
      * would put raw object dumps in front of the user - so each non-debug level emits the sentence alone at its level and echoes the full line, context included, to
-     * debug, where the forensic detail belongs. Warn and error output each read the reboot scheduler's one gate, so a line is hidden only while a reboot is on time and
-     * nothing is held or replayed, with no match on the library's wording, and logApiErrors adds the terminal phase for errors; the debug echo stays ungated, so debug
-     * logging captures the full record even while the user-facing line is suppressed. Debug passes through untouched.
+     * debug, where the forensic detail belongs. A string reason is the one member that comes out of the context and into the user's line, because it is the only one
+     * that is already words for them: unifi-protect composes it from the failure's cause chain, so it joins the sentence in the same colon-then-reason form our own
+     * connect-failure line uses. Every level goes through this controller's own logger, so a line of unifi-protect's is attributable to the controller that produced it
+     * exactly as the lines we write ourselves are, and its debug lines and the echo answer to this controller's debug gate. Warn and error output each read the reboot
+     * scheduler's one gate, so a line is hidden only while a reboot is on time and nothing is held or replayed, with no match on unifi-protect's wording, and
+     * logApiErrors adds the terminal phase for errors; the echo stays outside those gates, so debug logging captures the full record even while the line is hidden.
+     *
+     * The composed line reaches write() as one finished string with no format parameters, so a percent sign inside a reason is text rather than a format directive.
      */
     const routeClientContext = (write: (message: string) => void): ((message: string, ...parameters: unknown[]) => void) => {
 
       return (message: string, ...parameters: unknown[]): void => {
 
-        write(message);
+        const reason = contextReason(parameters);
+
+        write((reason === undefined) ? message : (message.replace(/\.$/, "") + ": " + reason + "."));
 
         if(parameters.length) {
 
-          this.platform.pluginLog.debug(message, ...parameters);
+          this.log.debug(message, ...parameters);
         }
       };
     };
 
     this.clientLog = {
 
-      debug: (message: string, ...parameters: unknown[]): void => this.platform.pluginLog.debug(message, ...parameters),
+      debug: (message: string, ...parameters: unknown[]): void => this.log.debug(message, ...parameters),
       error: routeClientContext((message: string): void => {
 
         if(this.logApiErrors) {
 
-          this.platform.pluginLog.error(message);
+          this.log.error(message);
         }
       }),
-      info: routeClientContext((message: string): void => this.platform.pluginLog.info(message)),
+      info: routeClientContext((message: string): void => this.log.info(message)),
       warn: routeClientContext((message: string): void => {
 
         if(!this.reboot.isRebootOnTime) {
 
-          this.platform.pluginLog.warn(message);
+          this.log.warn(message);
         }
       })
     };
-
-    /* The controller half of this logger's per-call debug scope. The client field is definite-assigned at connect, so the unconnected state is real even though
-     * the field's type says otherwise; the confined widening makes that state readable here without weakening the post-connect typing anywhere else. An
-     * unconnected controller resolves its debug lines at global scope - the only scope that can name it before its identity is known.
-     */
-    const controllerMac = (): string | undefined => (this.client as ProtectClient | undefined)?.nvr.config.mac;
-
-    // Derive our controller logger from the plugin logging root, prefixing every line with this.name so controller output is attributable at a glance. Debug lines
-    // resolve at this controller's own scope, so a controller-suffixed Log.Debug entry turns on this controller alone.
-    this.log = debugGatedLog(prefixedLog(this.platform.pluginLog, () => this.name), () => this.platform.testDebug({ controller: controllerMac() }));
 
     // Initialize the health bridge. It owns the whole diagnostics-to-health translation - the observer, the channel subscriptions that feed it, and the user-facing
     // narration of every state it moves through - while the one act that reaches back into controller territory, re-evaluating the removal-stability clock, runs here

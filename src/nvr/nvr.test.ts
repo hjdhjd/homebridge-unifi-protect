@@ -3119,6 +3119,222 @@ describe("the device-removal cascade", () => {
   });
 });
 
+describe("the controller root's client logger", () => {
+
+  // The prefix a connected root's lines carry, unifi-protect's sentence for a lost connection, the reason it attaches to that line, and the line the two join into.
+  const PREFIX = "Test Controller [UniFi Dream Machine SE]: ";
+  const SENTENCE = "The UniFi Protect controller appears unreachable; the connection is lost and recovery is polling";
+  const LOST = SENTENCE + ".";
+  const REASON = "The UniFi Protect controller answered the request with HTTP status 503";
+  const JOINED = SENTENCE + ": " + REASON + ".";
+
+  test("every level carries the controller's prefix", async () => {
+
+    const { clientLog, logEntries, stop } = await logIn({ userOptions: ["Enable.Log.Debug"] });
+
+    try {
+
+      const said = logEntries.length;
+
+      clientLog.error("An error line.");
+      clientLog.warn("A warn line.");
+      clientLog.info("An info line.");
+      clientLog.debug("A debug line.");
+
+      // The debug gate routes an open debug line through warn, so the line's level is what tells this row's gate from a bare write through the plugin's root.
+      assert.deepEqual(logEntries.slice(said), [ { level: "error", message: PREFIX + "An error line.", params: [] },
+        { level: "warn", message: PREFIX + "A warn line.", params: [] }, { level: "info", message: PREFIX + "An info line.", params: [] },
+        { level: "warn", message: PREFIX + "A debug line.", params: [] } ]);
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a reason joins its sentence with one period, at each level that writes one", async () => {
+
+    const { clientLog, logEntries, stop } = await logIn();
+
+    try {
+
+      const said = logEntries.length;
+
+      clientLog.error(LOST, { reason: REASON });
+      clientLog.warn(LOST, { reason: REASON });
+      clientLog.info(LOST, { reason: REASON });
+
+      assert.deepEqual(logEntries.slice(said), [ { level: "error", message: PREFIX + JOINED, params: [] }, { level: "warn", message: PREFIX + JOINED, params: [] },
+        { level: "info", message: PREFIX + JOINED, params: [] } ]);
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a reason behind another parameter is still found", async () => {
+
+    const { clientLog, logEntries, stop } = await logIn();
+
+    try {
+
+      const said = logEntries.length;
+
+      clientLog.warn(LOST, "another parameter", { attempts: 3 }, { reason: REASON });
+
+      assert.deepEqual(logEntries.slice(said), [{ level: "warn", message: PREFIX + JOINED, params: [] }]);
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // A rendered read cannot tell a format parameter from a finished string, so this reads the entry the sink was handed: one string, and nothing left to format.
+  test("a percent sign in a reason is text, because the line reaches its sink as one finished string", async () => {
+
+    const { clientLog, logEntries, stop } = await logIn();
+
+    try {
+
+      const said = logEntries.length;
+
+      clientLog.warn(LOST, { reason: "100%s of %d" });
+
+      assert.deepEqual(logEntries.slice(said), [{ level: "warn", message: PREFIX + SENTENCE + ": 100%s of %d.", params: [] }]);
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("no reason, an empty reason and a reason that is no string each leave the sentence alone", async () => {
+
+    const { clientLog, logEntries, stop } = await logIn();
+
+    try {
+
+      for(const parameters of [ [], [{ attempts: 3 }], [{ reason: "" }], [{ reason: new Error("An error rather than words.") }], [null], ["a string"] ]) {
+
+        const said = logEntries.length;
+
+        clientLog.warn(LOST, ...parameters);
+
+        assert.deepEqual(logEntries.slice(said), [{ level: "warn", message: PREFIX + LOST, params: [] }], JSON.stringify(parameters));
+      }
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("with debug logging on, the echo carries the sentence and the whole context behind the joined line", async () => {
+
+    const { clientLog, logEntries, stop } = await logIn({ userOptions: ["Enable.Log.Debug"] });
+
+    try {
+
+      const said = logEntries.length;
+
+      clientLog.warn(LOST, { reason: REASON });
+
+      assert.deepEqual(logEntries.slice(said), [ { level: "warn", message: PREFIX + JOINED, params: [] },
+        { level: "warn", message: PREFIX + LOST, params: [{ reason: REASON }] } ]);
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // The double's plugin log is ungated, so a line that went around the controller's gate would still arrive. The level and the prefix show it came through the gate.
+  test("a controller-scoped debug entry answers once connected, on the gate's warn channel and under the prefix", async () => {
+
+    const { clientLog, logEntries, stop } = await logIn({ userOptions: ["Enable.Log.Debug." + makeNvrConfig().mac] });
+
+    try {
+
+      const said = logEntries.length;
+
+      clientLog.debug("A debug line.");
+
+      assert.deepEqual(logEntries.slice(said), [{ level: "warn", message: PREFIX + "A debug line.", params: [] }]);
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // Ahead of the first connect there is no controller identity for a scoped entry to match, so a scoped entry stays silent there as every debug line of the root's does.
+  test("a line ahead of the first connect answers a global debug entry and stays silent under a controller-scoped one", async () => {
+
+    const line = "A debug line ahead of the connect.";
+
+    for(const { answered, option } of [ { answered: 1, option: "Enable.Log.Debug" }, { answered: 0, option: "Enable.Log.Debug." + makeNvrConfig().mac } ]) {
+
+      const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: TEST_CLOCK_EPOCH, version: "6.1.79" };
+      const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
+      const { controller, logEntries, nvr: double } = makeTestNvr({ clock: new TestClock(TEST_CLOCK_EPOCH), store, userOptions: [option] });
+      const { platform, shutdown } = makeRootPlatform(double);
+      const client = makeConnectedClient({ nvrConfig, store });
+      const root = new ProtectNvr(platform, double.config, async ({ log }): Promise<ProtectClient> => {
+
+        log?.debug(line);
+
+        return client;
+      });
+
+      // eslint-disable-next-line no-await-in-loop -- Each entry logs a root in of its own, and one at a time keeps each assertion's message its own entry's.
+      await root.login();
+
+      assert.equal(logCount(logEntries, "warn", line), answered, option);
+
+      shutdown();
+      controller.abort();
+
+      // eslint-disable-next-line no-await-in-loop -- Each root is torn down before the next is built, so no process-global subscription outlives its row.
+      await settle();
+    }
+  });
+
+  /* unifi-protect's debug lines reach the gate from inside unifi-protect, so a read that throws on an absent record would land there. The line drops to global scope, so
+   * a global entry still answers it and a controller-scoped one goes silent. Each entry says a line first while the record holds, so a MAC cached from that line would
+   * keep the scoped entry answering.
+   */
+  test("a debug line with the record gone does not throw, answers a global entry and stays silent under a controller-scoped one", async () => {
+
+    const held = "A debug line while the record holds.";
+
+    for(const { answer, option } of [ { answer: [{ level: "warn", message: PREFIX + "A debug line.", params: [] }], option: "Enable.Log.Debug" },
+      { answer: [], option: "Enable.Log.Debug." + makeNvrConfig().mac } ]) {
+
+      // eslint-disable-next-line no-await-in-loop -- Each entry logs a root in of its own, and one at a time keeps each assertion's message its own entry's.
+      const { clientLog, logEntries, root, stop } = await logIn({ userOptions: [option] });
+      const { nvr } = root.client;
+
+      try {
+
+        clientLog.debug(held);
+
+        assert.equal(logCount(logEntries, "warn", held), 1, option + " answers while the record holds");
+
+        Object.defineProperty(root.client, "nvr", { configurable: true, value: { get config(): never {
+
+          throw new ReferenceError("The NVR configuration is not available.");
+        }, peek: (): undefined => undefined } });
+
+        const said = logEntries.length;
+
+        assert.doesNotThrow(() => clientLog.debug("A debug line."));
+        assert.deepEqual(logEntries.slice(said), answer, option + " with the record gone");
+      } finally {
+
+        Object.defineProperty(root.client, "nvr", { configurable: true, value: nvr });
+
+        // eslint-disable-next-line no-await-in-loop -- Each root is torn down before the next is built, so no process-global subscription outlives its row.
+        await stop();
+      }
+    }
+  });
+});
+
 describe("the controller root's client logger through a scheduled reboot", () => {
 
   // The cadence an enabled-without-a-value schedule waits, and the lines these rows drive the root's client logger with, each with the context the library attaches.
@@ -3168,9 +3384,13 @@ describe("the controller root's client logger through a scheduled reboot", () =>
     }
   });
 
-  test("a reboot on time shows neither level and logs no line of the plugin's, and each still echoes to debug", async () => {
+  /* With debug logging on, a hidden line's echo arrives on the warn channel through the debug gate holding the same words, so a count of the sentence at warn would read
+   * both. They are told apart by what they carry: the line reaches its sink as one finished string with no parameters, and the echo carries the context it was said with.
+   */
+  test("a reboot on time shows neither level and logs no line of the plugin's, and each still echoes through the debug gate", async () => {
 
-    const { clientLog, clock, connection, logEntries, stop } = await acceptReboot();
+    const { clientLog, clock, connection, logEntries, stop } = await acceptReboot({ userOptions: ["Enable.Log.Debug"] });
+    const carrying = (text: string, params: number): number => logEntries.filter((entry) => entry.message.includes(text) && (entry.params.length === params)).length;
 
     try {
 
@@ -3178,11 +3398,32 @@ describe("the controller root's client logger through a scheduled reboot", () =>
       sayBoth(clientLog);
       clock.advance(REBOOT_EXPECTED_RETURN_MS - 1);
 
-      assert.equal(logCount(logEntries, "warn", LIBRARY_WARN), 0, "the warn is hidden");
-      assert.equal(logCount(logEntries, "error", LIBRARY_ERROR), 0, "and so is the error");
+      assert.equal(carrying(LIBRARY_WARN, 0), 0, "the warn is hidden");
+      assert.equal(carrying(LIBRARY_ERROR, 0), 0, "and so is the error");
       assert.equal(logCount(logEntries, "warn", OVERDUE_LINE), 0, "and the plugin has nothing to say yet");
-      assert.equal(logCount(logEntries, "debug", LIBRARY_WARN), 1, "the warn still reaches debug");
-      assert.equal(logCount(logEntries, "debug", LIBRARY_ERROR), 1, "and so does the error");
+      assert.equal(carrying(LIBRARY_WARN, 1), 1, "the warn still echoes");
+      assert.equal(carrying(LIBRARY_ERROR, 1), 1, "and so does the error");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a reboot on time hides a line carrying a reason whole, and its echo stays", async () => {
+
+    const { clientLog, connection, logEntries, stop } = await acceptReboot({ userOptions: ["Enable.Log.Debug"] });
+    const reason = "The UniFi Protect controller answered the request with HTTP status 503";
+
+    try {
+
+      connection.isRebooting = true;
+
+      clientLog.warn(LIBRARY_WARN, { reason });
+      clientLog.error(LIBRARY_ERROR, { reason });
+
+      assert.deepEqual(logEntries.filter(({ message }) => message.includes(reason)), [], "neither joined line reaches a sink");
+      assert.equal(logEntries.filter(({ message, params }) => [ LIBRARY_WARN, LIBRARY_ERROR ].some((line) => message.includes(line)) && (params.length === 1)).length, 2,
+        "and each echo does, with its context");
     } finally {
 
       await stop();
@@ -3437,6 +3678,25 @@ describe("the controller root's client logger through a scheduled reboot", () =>
     } finally {
 
       resolve();
+
+      await stop();
+    }
+  });
+
+  // Warn and error output alone read the gate, so an info line shows however the reboot stands.
+  test("an info line during an on-time reboot is shown", async () => {
+
+    const line = "A line unifi-protect logs at the info level.";
+    const { clientLog, logEntries, root, stop } = await acceptReboot();
+
+    try {
+
+      assert.equal(root.reboot.isRebootOnTime, true, "the accepted command closed the gate");
+
+      clientLog.info(line);
+
+      assert.equal(logCount(logEntries, "info", line), 1, "and the info line shows through it");
+    } finally {
 
       await stop();
     }
