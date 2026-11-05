@@ -13,7 +13,7 @@
  *
  * The pure arithmetic these decisions rest on (computeStableSince, isStabilityWindowElapsed) is pinned as arithmetic in nvr.test.ts; this suite pins the stateful class
  * those functions serve, and deliberately does not restate them. Honest coverage note: what runSweep DOES in production - the controller's sweepRemovableDevices - is
- * the root's territory and stays untested; the recorder here proves only that the gate calls it, and at which instants.
+ * the root's territory and stays untested; the recorder here proves only that the gate calls it, at which instants, and what the gate reads at each.
  */
 import { accessoryUuid, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
@@ -32,6 +32,7 @@ interface GateRecorder {
   grace: number;
   logLines: string[];
   removals: ProtectAccessory[];
+  stableAtSweep: boolean;
   sweeps: number;
 }
 
@@ -45,7 +46,7 @@ function buildGate(options: { graceSeconds?: number } = {}): { accessory: Return
   // rather than backdating - and a clock seeded at zero lands a test's "up for N milliseconds" fact on that value the moment it has advanced exactly N.
   const clock = new TestClock(TEST_CLOCK_EPOCH);
   const controller = new AbortController();
-  const recorder: GateRecorder = { grace: options.graceSeconds ?? 60, logLines: [], removals: [], sweeps: 0 };
+  const recorder: GateRecorder = { grace: options.graceSeconds ?? 60, logLines: [], removals: [], stableAtSweep: false, sweeps: 0 };
   const sink = (message: string, ...parameters: unknown[]): void => {
 
     recorder.logLines.push(util.format(message, ...parameters));
@@ -56,7 +57,11 @@ function buildGate(options: { graceSeconds?: number } = {}): { accessory: Return
     actions: {
 
       removeDevice: (accessory: ProtectAccessory): void => { recorder.removals.push(accessory); },
-      runSweep: (): void => { recorder.sweeps++; }
+      runSweep: (): void => {
+
+        recorder.stableAtSweep = gate.removalStable;
+        recorder.sweeps++;
+      }
     },
     clock,
     graceSeconds: (): number => recorder.grace,
@@ -191,7 +196,7 @@ describe("the removal-stability gate: the one-shot sweep", () => {
   // millisecond short. The sweep never re-arms, so a controller read as unstable at its fire would hold every departure until the next good period.
   test("a sweep whose timer fires a millisecond before the clock reads the window's end finds the controller stable", () => {
 
-    const { clock, controller, gate, pushGood, recorder } = buildGate();
+    const { clock, controller, pushGood, recorder } = buildGate();
 
     try {
 
@@ -203,7 +208,7 @@ describe("the removal-stability gate: the one-shot sweep", () => {
       clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW - 200000);
 
       assert.equal(recorder.sweeps, 1, "the sweep's timer fired");
-      assert.equal(gate.removalStable, true, "and the window it waited out reads as complete");
+      assert.equal(recorder.stableAtSweep, true, "and the sweep, reading the gate at its own fire, finds the window complete");
     } finally {
 
       controller.abort();
