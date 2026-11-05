@@ -531,6 +531,51 @@ describe("real ProtectLiveviews construction and controller-owner wiring", () =>
     assert.ok(loggedAt(built.logEntries, "error", "Invalid JSON."), "malformed MQTT JSON logs the invalid-JSON error");
   });
 
+  // An entry's name is read only with a switch standing to compare it to, so a malformed entry with none standing has nothing to fault on.
+  test("a malformed entry with no switch standing moves on", async () => {
+
+    const built = buildLiveviews({ liveviews: [] });
+
+    activeController = built.controller;
+
+    await assert.doesNotReject(built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ state: true }])), "the entry with no name moves on");
+  });
+
+  // A view with no cameras gives a set nothing to move, which the body's own early return reads as well, so it logs no scene update and its switch stays where it
+  // reads. A view whose cameras are all unresolved still has cameras, and only the body's loop knows nothing moved there, so it logs its update line and moves its On.
+  // Each switch starts off so a set to on is a genuine change.
+  test("a set on a liveview with no cameras moves nothing and logs no scene update, while one whose cameras are all unresolved logs it and moves its On", async () => {
+
+    const built = buildLiveviews({ liveviews: [ makeLiveviewConfig({ id: "lv-empty", name: "Protect-Empty" }),
+      makeLiveviewConfig({ cameras: ["camera-missing"], id: "lv-missing", name: "Protect-Missing" }) ] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const onOf = (viewName: string): Characteristic | undefined => built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid(viewName))?.
+      getService(Service.Switch)?.getCharacteristic(Characteristic.On);
+    const on = onOf("Empty");
+    const missingOn = onOf("Missing");
+
+    assert.ok(on && missingOn, "each liveview's switch stands");
+
+    on.updateValue(false);
+    missingOn.updateValue(false);
+
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "Empty", state: true }]));
+    await settle();
+
+    assert.equal(on.value, false, "the set on the view with no cameras moves nothing");
+    assert.equal(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT"), false, "and logs no scene update");
+
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "Missing", state: true }]));
+    await settle();
+
+    assert.equal(missingOn.value, true, "the set on the view whose cameras are all unresolved moves its On");
+    assert.ok(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT: Missing."), "and its update line");
+  });
+
   test("the single nvr.liveviews observer reconciles a new switch on a pushLiveviews, and teardown deregisters it", async () => {
 
     const built = buildLiveviews({ liveviews: [makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })] });
@@ -659,9 +704,9 @@ describe("the liveviews reconcile through the membership delta and the removal g
     activeController = undefined;
   });
 
-  // A switch whose liveview is removed leaves through the removal gate rather than at once: it stays through the user's removal delay with its MQTT get and set still
-  // answering, and leaves when the delay ends with its liveview still gone. Its name leaves with it, so the liveview's return builds the switch anew.
-  test("a switch whose liveview is removed keeps answering MQTT through the removal delay and leaves when it ends", async () => {
+  // A switch whose liveview is removed leaves through the removal gate rather than at once: it stays through the user's removal delay with its MQTT get still answering
+  // and its MQTT set skipping it, and leaves when the delay ends with its liveview still gone. Its name leaves with it, so the liveview's return builds the switch anew.
+  test("a switch whose liveview is removed keeps answering its MQTT get through the removal delay, skips its set, and leaves when it ends", async () => {
 
     const built = buildLiveviews({ liveviews: [makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" })] });
 
@@ -670,8 +715,9 @@ describe("the liveviews reconcile through the membership delta and the removal g
     await settle();
 
     const sceneSwitch = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"));
+    const on = sceneSwitch?.getService(Service.Switch)?.getCharacteristic(Characteristic.On);
 
-    assert.ok(sceneSwitch, "the Scene switch exists");
+    assert.ok(sceneSwitch && on, "the Scene switch exists");
 
     built.store.pushLiveviews([makeLiveviewConfig({ id: "lv-garden", name: "Protect-Garden" })]);
 
@@ -684,10 +730,13 @@ describe("the liveviews reconcile through the membership delta and the removal g
 
     assert.ok(payload.some((entry) => entry.name === "Scene"), "the MQTT get still answers for the switch through the removal delay");
 
-    await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "Scene", state: true }]));
+    const held = on.value;
+
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "Scene", state: !held }]));
     await settle();
 
-    assert.ok(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT: Scene."), "the MQTT set still reaches the switch through the removal delay");
+    assert.equal(on.value, held, "the MQTT set moves nothing through the removal delay");
+    assert.equal(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT"), false, "and logs no scene update");
 
     built.nvr.platform.clock.advance(REMOVAL_GRACE_MS);
 
@@ -733,20 +782,23 @@ describe("the liveviews reconcile through the membership delta and the removal g
     }
   }
 
-  // One owner holds many switches, so the refusal reads each switch's own liveview: the one whose liveview is gone refuses and the one beside it answers. MQTT keeps
-  // answering for the accessory that stays, and the verdict is read on each call, so a liveview's return clears the refusal with nothing rebound.
+  // One owner holds many switches, so the refusal reads each switch's own liveview: the one whose liveview is gone refuses and the one beside it answers. An MQTT get
+  // keeps answering for the accessory that stays and an MQTT set claims nothing for it, and the verdict is read on each call, so a liveview's return clears the refusal
+  // and the skip with nothing rebound. The Scene view carries a camera so the set on its return has something to move.
   for(const posture of GATE_POSTURES) {
 
-    test("a switch whose liveview is deleted refuses a read and a write " + posture.title + ", its MQTT get and set answer, and its return answers each", async () => {
+    test("a switch whose liveview is deleted refuses a read and a write " + posture.title + ", its MQTT get answers, its MQTT set claims nothing, and its return " +
+      "answers each", async () => {
 
       const garden = makeLiveviewConfig({ id: "lv-garden", name: "Protect-Garden" });
-      const scene = makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" });
+      const scene = makeLiveviewConfig({ cameras: ["camera-scene"], id: "lv-scene", name: "Protect-Scene" });
       const built = buildLiveviews({ liveviews: [ garden, scene ] });
 
       activeController = built.controller;
 
       await settle();
 
+      const member = seedMember(built.nvr, { detectMotion: true, id: "camera-scene", mac: "74ACB9000303", name: "Scene Camera" });
       const sceneSwitch = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"));
       const on = sceneSwitch?.getService(Service.Switch)?.getCharacteristic(Characteristic.On);
       const gardenOn = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Garden"))?.getService(Service.Switch)?.
@@ -769,10 +821,13 @@ describe("the liveviews reconcile through the membership delta and the removal g
 
       assert.ok(payload.some((entry) => entry.name === "Scene"), "the MQTT get answers for the switch");
 
-      await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "Scene", state: true }]));
+      const held = on.value;
+
+      await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "Scene", state: !held }]));
       await settle();
 
-      assert.ok(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT: Scene."), "and the MQTT set reaches it");
+      assert.equal(on.value, held, "the MQTT set moves nothing");
+      assert.equal(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT"), false, "and logs no scene update");
 
       built.store.pushLiveviews([ garden, scene ]);
 
@@ -780,10 +835,48 @@ describe("the liveviews reconcile through the membership delta and the removal g
 
       assert.equal(built.nvr.removals.isPending(sceneSwitch.UUID), false, "the liveview's return leaves no removal pending");
 
+      await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "scene", state: !held }]));
+      await settle();
+
+      assert.equal(on.value, !held, "the liveview's return applies a set, whatever case it names the liveview in");
+      assert.ok(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT: Scene."), "and logs the scene update");
+      assert.equal(member.accessory.context.detectMotion, false, "and the scene reaches its member camera");
+
       await assert.doesNotReject(triggerGet(on), "and a read answers again");
       await assert.doesNotReject(triggerSet(on, true), "and so does a write");
     });
   }
+
+  // A payload's entries are read one at a time, so the entry naming a deleted liveview's switch costs the ones behind it nothing.
+  test("a payload naming a deleted liveview's switch ahead of a live one applies the live entry alone", async () => {
+
+    const garden = makeLiveviewConfig({ cameras: ["camera-garden"], id: "lv-garden", name: "Protect-Garden" });
+    const built = buildLiveviews({ liveviews: [ garden, makeLiveviewConfig({ id: "lv-scene", name: "Protect-Scene" }) ] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const member = seedMember(built.nvr, { detectMotion: false, id: "camera-garden", mac: "74ACB9000302", name: "Garden Camera" });
+    const on = built.nvr.platform.accessories.find((accessory) => accessory.UUID === liveviewUuid("Scene"))?.getService(Service.Switch)?.
+      getCharacteristic(Characteristic.On);
+
+    assert.ok(on, "the Scene switch stands");
+
+    built.store.pushLiveviews([garden]);
+
+    await settle();
+
+    const held = on.value;
+
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([ { name: "Scene", state: !held }, { name: "Garden", state: true } ]));
+    await settle();
+
+    assert.equal(on.value, held, "the deleted liveview's switch moves nothing");
+    assert.equal(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT: Scene."), false, "and logs no scene update");
+    assert.equal(member.accessory.context.detectMotion, true, "the live entry behind it applies its scene to its member camera");
+    assert.ok(loggedAt(built.logEntries, "info", "Liveview scene updated via MQTT: Garden."), "and logs its scene update");
+  });
 
   // The security system's half of the refusal is its own verdict, whose suite reads it against the store directly. These rows read it through the reconcile, with an
   // ordinary liveview standing so the list reads non-empty, and through each posture the gate can hold while the accessory stays.

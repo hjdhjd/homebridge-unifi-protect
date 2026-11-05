@@ -1153,6 +1153,12 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       (this.device.peek()?.name ?? "Unknown");
   }
 
+  // A refused MQTT set names this device by the name its accessory carries, so a custom name reads as the user set it.
+  protected override get mqttSetSubject(): string {
+
+    return this.accessoryName;
+  }
+
   // Build the write-through command that sets this device's status indicator light. The command is returned as a thunk so the update is issued against a narrowed
   // projection: cameras, sensors, and relays all carry ledSettings.isEnabled, so the base serves them by narrowing this.device through its modelKey tag; the
   // light projection has no ledSettings and overrides this with its lightDeviceSettings command. Returning the thunk (rather than a bare payload) is what lets each

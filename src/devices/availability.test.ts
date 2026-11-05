@@ -10,8 +10,8 @@
  * deliver, which shows in no diff the same way. The characteristics outside the rule are named once, in the exemptions below, so a service a family gains is read without
  * anyone listing it here.
  *
- * The rows after the census hold the verdict to what it reads, and the paths that go past the refusal to what they keep: an MQTT set and the plugin's own writes reach
- * the device through an outage exactly as they always have, while the same characteristic refuses a HomeKit write.
+ * The rows after the census hold the verdict to what it reads, an MQTT set to the same verdict a HomeKit write reads, and the plugin's own writes to the device through
+ * an outage, past the refusal the same characteristic gives a HomeKit write.
  *
  * StatusActive stands on a camera's motion, occupancy and ambient light sensors and nowhere else, and it never reads from what the plugin can reach. Those rows run over
  * HAP's own camera controller, which holds the value on a recording camera's motion and occupancy sensors, and they read it through HAP's read path and from what the
@@ -31,6 +31,7 @@ import { afterEach, describe, test } from "node:test";
 import { hapStatus, loggedAt, settle, triggerGet, triggerSet } from "homebridge-plugin-utils/testing";
 import { makeNvrConfig, makeTestNvr } from "../nvr/testing.helpers.ts";
 import type { CharacteristicValue } from "homebridge";
+import type { MqttSetHandler } from "homebridge-plugin-utils";
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL } from "../settings.ts";
 import { ProtectCamera } from "./cameras/camera.ts";
 import { ProtectChime } from "./chime.ts";
@@ -698,13 +699,128 @@ class DrivingDevice extends TestBaseDevice {
   }
 }
 
-describe("the paths that go past the refusal", () => {
+// What a refused MQTT set throws, which HBPU's client logs on its set failure line: for a device, a reason closing on its controller, anchored at the end because a regex
+// reads the error's rendering, and for an owner with only its controller to name, that exact message.
+const SET_REFUSED = / or its controller cannot be reached\.$/;
+const CONTROLLER_SET_REFUSED = { message: "The controller cannot be reached." };
+
+describe("an MQTT set reads the verdict a HomeKit write reads, and the plugin's own writes go past it", () => {
 
   afterEach(abortControllers);
 
-  // One set route and the HomeKit write on the same characteristic, the controller lost for both. The route's command reaches the projection and fails as it always has,
-  // through the failure line, and its characteristic states the value set. A route left on the characteristic's own set entry point records no command at all.
-  test("a light's /set routes each reach the controller and log their failure through an outage, while a HomeKit write refuses and records no command", async () => {
+  // Every set topic a fully dressed doorbell registers, read from what it registered so a topic it gains is held to the rule without anyone listing it here. Refused
+  // while the controller is lost, while it is rebooting and while the doorbell itself reads offline; a brief blip reads none of those facts, so none refuses through it.
+  test("every set topic on a doorbell refuses while the controller is lost or rebooting and while the doorbell is offline, and none refuses through a blip", async () => {
+
+    const { mqtt, nvr, store } = await standCamera({ config: { channels: G2_PRO_CHANNELS, featureFlags: { isDoorbell: true } },
+      userOptions: [ "Enable.Doorbell.Messages", "Enable.Doorbell.Volume.Dimmer" ] });
+    const topics = mqtt.subscriptions.filter(({ kind }) => kind === "set").map(({ topic }) => topic);
+
+    assert.ok([ "/chime/set", "/doorbell/set", "/message/set", "/motion/set", "/snapshot/set" ].every(tail => topics.some(topic => topic.endsWith(tail))),
+      "the doorbell registered each set topic this row exists to hold");
+
+    const refusesAll = async (state: string): Promise<void> => {
+
+      await Promise.all(topics.map(async (topic) => assert.rejects(mqtt.invokeSet(topic, "true"), SET_REFUSED, topic + " refuses while " + state)));
+    };
+
+    nvr.client.connection.isLost = true;
+    await refusesAll("the controller is lost");
+
+    nvr.client.connection.isLost = false;
+    nvr.client.connection.isRebooting = true;
+    await refusesAll("the controller is rebooting");
+
+    nvr.client.connection.isRebooting = false;
+    store.pushCameraPatch("test-camera-1", { state: "DISCONNECTED" });
+    await settle();
+    await refusesAll("the doorbell is offline");
+
+    store.pushCameraPatch("test-camera-1", { state: "CONNECTED" });
+    await settle();
+
+    nvr.client.connection.isHealthy = false;
+
+    await Promise.all(topics.map(async (topic) => mqtt.invokeSet(topic, "true")));
+    await settle();
+  });
+
+  // The reason is what tells one refusal from another on HBPU's set failure line, so it names the owner: a device by the name its accessory carries, a capability by its
+  // host's, and an owner with only its controller to name by that alone.
+  test("a refused set names the light, the doorbell's camera for its chime, and the controller alone for a liveviews set", async () => {
+
+    const lightConfig = makeLightConfig();
+    const lightStore = new TestStateStore(makeProtectState({ lights: [lightConfig] }));
+    const lightHarness = standNvr(lightStore);
+
+    configured(new ProtectLight(lightHarness.nvr as unknown as ProtectNvr, makeTestAccessory("Test Light", lightConfig.mac),
+      new TestLightProjection(lightConfig.id, lightStore) as unknown as Light));
+
+    lightHarness.nvr.client.connection.isLost = true;
+
+    await assert.rejects(lightHarness.mqtt.invokeSet(lightConfig.mac + "/light/set", "true"), { message: "Test Light or its controller cannot be reached." });
+
+    const doorbell = await standCamera({ chimes: [makeChimeConfig({ cameraIds: ["test-camera-1"], ringSettings: [{ cameraId: "test-camera-1", volume: 50 }] })],
+      config: { channels: G2_PRO_CHANNELS, featureFlags: { isDoorbell: true } }, userOptions: ["Enable.Doorbell.Volume.Dimmer"] });
+
+    doorbell.nvr.client.connection.isLost = true;
+
+    await assert.rejects(doorbell.mqtt.invokeSet("74ACB9000001/chime/set", "70"), { message: "Test Camera or its controller cannot be reached." });
+
+    const liveviews = standLiveviews();
+
+    liveviews.nvr.client.connection.isLost = true;
+
+    await assert.rejects(liveviews.mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "Scene", state: false }])), CONTROLLER_SET_REFUSED);
+  });
+
+  // The record's projection throws once the record has gone, so a subject reading it would log that throw as the refusal's reason in place of the device's name.
+  test("a refused set on a device whose record has gone still names it", async () => {
+
+    const { camera, mqtt, store } = await standCamera();
+    const mac = camera.mac;
+
+    store.removeCameraRecord("test-camera-1");
+    await settle();
+
+    await assert.rejects(mqtt.invokeSet(mac + "/motion/set", "true"), { message: "Test Camera or its controller cannot be reached." });
+  });
+
+  // The record keeps the device's name on the controller, so only the accessory's name reads as the user set it.
+  test("a refused set names a device by the custom name its accessory carries", async () => {
+
+    const { camera, mqtt, nvr } = await standCamera({ userOptions: ["Enable.Device.Name.74ACB9000001=Front Porch"] });
+
+    nvr.client.connection.isLost = true;
+
+    await assert.rejects(mqtt.invokeSet(camera.mac + "/motion/set", "true"), { message: "Front Porch or its controller cannot be reached." });
+  });
+
+  // A package camera's topics sit under its parent's MAC, with the parent's registration first on each, and the double's set driver runs only the first...so this row
+  // runs the package camera's own from the registrations. Only the package camera is leaving, so its parent's set on the same topic answers.
+  test("a package camera's own set refuses under its own name while its detach is pending, and its parent's on the same topic answers", async () => {
+
+    const { camera, mqtt, store } = await standCamera({ config: { channels: G6_PRO_ENTRY_CHANNELS, featureFlags: { hasMic: true, hasPackageCamera: true,
+      isDoorbell: true } } });
+    const packageCamera = camera.doorbell?.packageCamera;
+    const [ parentSet, packageSet ] = mqtt.subscriptions.filter(({ kind, topic }) => (kind === "set") && (topic === camera.mac + "/motion/set"))
+      .map(({ handler }) => handler as MqttSetHandler);
+
+    assert.ok(packageCamera && parentSet && packageSet, "the camera and the package camera it stood up each registered on the shared topic");
+
+    await assert.doesNotReject(async () => packageSet("true", "true", mqtt.signal), "a package camera with no detach pending answers");
+
+    store.pushCameraFeatureFlags("test-camera-1", { hasPackageCamera: false });
+
+    await settle();
+
+    await assert.rejects(async () => packageSet("true", "true", mqtt.signal), { message: packageCamera.accessoryName + " or its controller cannot be reached." });
+    await assert.doesNotReject(async () => parentSet("true", "true", mqtt.signal), "and its parent answers, since nothing about the parent is leaving");
+  });
+
+  // One set route and the HomeKit write on the same characteristic. Lost, both refuse and nothing moves. Through a blip, the route's command reaches the projection and
+  // fails through the failure line, and its characteristic states the value set. A route left on the characteristic's own set entry point records no command at all.
+  test("a light's /set routes refuse while the controller is lost, and through a blip each reaches the controller and logs its failure", async () => {
 
     const config = makeLightConfig({ ledLevel: 1 });
     const store = new TestStateStore(makeProtectState({ lights: [config] }));
@@ -721,11 +837,21 @@ describe("the paths that go past the refusal", () => {
     nvr.client.connection.isLost = true;
     projection.updateRejection = new Error("The controller cannot be reached.");
 
+    await assert.rejects(mqtt.invokeSet(config.mac + "/light/set", "true"), SET_REFUSED);
+    await assert.rejects(mqtt.invokeSet(config.mac + "/light/brightness/set", "75"), SET_REFUSED);
+    await assert.rejects(triggerSet(lightbulb.getCharacteristic(Characteristic.On), false), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+    await assert.rejects(triggerSet(lightbulb.getCharacteristic(Characteristic.Brightness), 20), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+
+    assert.deepEqual(projection.updateCalls, [], "neither path recorded a command");
+
+    nvr.client.connection.isLost = false;
+    nvr.client.connection.isHealthy = false;
+
     await mqtt.invokeSet(config.mac + "/light/set", "true");
     await settle();
 
     assert.deepEqual(projection.updateCalls, [{ payload: { lightOnSettings: { isLedForceOn: true } } }], "the /set reached its command");
-    assert.ok(loggedAt(logEntries, "error", "Unable to turn the light on"), "and logged its failure as it always has");
+    assert.ok(loggedAt(logEntries, "error", "Unable to turn the light on"), "and logged its failure");
     assert.equal(lightbulb.getCharacteristic(Characteristic.On).value, true, "the characteristic states the value set");
 
     await mqtt.invokeSet(config.mac + "/light/brightness/set", "75");
@@ -734,14 +860,9 @@ describe("the paths that go past the refusal", () => {
     assert.deepEqual(projection.updateCalls[1], { payload: { lightDeviceSettings: { ledLevel: 5 } } }, "the brightness /set reached its command too");
     assert.ok(loggedAt(logEntries, "error", "Unable to adjust the brightness to 75%"), "and logged its failure");
     assert.equal(lightbulb.getCharacteristic(Characteristic.Brightness).value, 75, "the characteristic states the value set");
-
-    await assert.rejects(triggerSet(lightbulb.getCharacteristic(Characteristic.On), false), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
-    await assert.rejects(triggerSet(lightbulb.getCharacteristic(Characteristic.Brightness), 20), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
-
-    assert.equal(projection.updateCalls.length, 2, "the HomeKit writes recorded no command");
   });
 
-  test("a relay output whose state differs reaches its toggle and logs its failure through an outage, while a HomeKit write refuses and records no toggle", async () => {
+  test("a relay output's /set refuses while the controller is lost, and through a blip reaches its toggle and logs its failure", async () => {
 
     const { accessory, logEntries, mqtt, nvr, projection } = standRelay(makeRelayConfig());
     const output = accessory.getServiceById(Service.Switch, ProtectReservedNames.SWITCH_RELAY_OUTPUT + ".0")?.getCharacteristic(Characteristic.On);
@@ -751,16 +872,20 @@ describe("the paths that go past the refusal", () => {
     nvr.client.connection.isLost = true;
     projection.toggleRejection = new Error("The controller cannot be reached.");
 
+    await assert.rejects(mqtt.invokeSet("74ACB9000501/relay/1/set", "true"), SET_REFUSED);
+    await assert.rejects(triggerSet(output, true), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+
+    assert.deepEqual(projection.toggleCalls, [], "neither path recorded a toggle");
+
+    nvr.client.connection.isLost = false;
+    nvr.client.connection.isHealthy = false;
+
     await mqtt.invokeSet("74ACB9000501/relay/1/set", "true");
     await settle();
 
     assert.deepEqual(projection.toggleCalls, [{ outputId: 0 }], "the /set reached its toggle");
-    assert.ok(loggedAt(logEntries, "error", "Unable to turn Output 1 on"), "and logged its failure as it always has");
+    assert.ok(loggedAt(logEntries, "error", "Unable to turn Output 1 on"), "and logged its failure");
     assert.equal(output.value, true, "the characteristic states the value set");
-
-    await assert.rejects(triggerSet(output, true), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
-
-    assert.equal(projection.toggleCalls.length, 1, "the HomeKit write recorded no toggle");
   });
 
   // A HomeKit write and the /set share one body, so they share one label: the one the switch was set up under. A label read live on the route would name the rename.
@@ -778,7 +903,7 @@ describe("the paths that go past the refusal", () => {
     assert.equal(loggedAt(logEntries, "error", "Unable to turn Renamed on"), false, "not the name the controller moved it to");
   });
 
-  test("a doorbell's chime /set reaches the chime that carries its ring through an outage, while a HomeKit write refuses and records no command", async () => {
+  test("a doorbell's chime /set refuses while the controller is lost, and through a blip reaches the chime that carries its ring", async () => {
 
     const { accessory, chimeProjections, logEntries, mqtt, nvr } = await standCamera({
 
@@ -794,21 +919,25 @@ describe("the paths that go past the refusal", () => {
     nvr.client.connection.isLost = true;
     chime.updateRejection = new Error("The controller cannot be reached.");
 
+    await assert.rejects(mqtt.invokeSet("74ACB9000001/chime/set", "70"), SET_REFUSED);
+    await assert.rejects(triggerSet(dimmer.getCharacteristic(Characteristic.Brightness), 20), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+
+    assert.equal(chime.updateCalls.length, 0, "neither path recorded a command");
+
+    nvr.client.connection.isLost = false;
+    nvr.client.connection.isHealthy = false;
+
     await mqtt.invokeSet("74ACB9000001/chime/set", "70");
     await settle();
 
     assert.equal(chime.updateCalls.length, 1, "the /set reached the chime that carries this doorbell's ring");
-    assert.ok(loggedAt(logEntries, "error", "Unable to set the chime volume"), "and logged its failure as it always has");
+    assert.ok(loggedAt(logEntries, "error", "Unable to set the chime volume"), "and logged its failure");
     assert.equal(dimmer.getCharacteristic(Characteristic.Brightness).value, 70, "the dimmer states the volume set");
     assert.equal(dimmer.getCharacteristic(Characteristic.On).value, true, "and that it is on");
-
-    await assert.rejects(triggerSet(dimmer.getCharacteristic(Characteristic.Brightness), 20), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
-
-    assert.equal(chime.updateCalls.length, 1, "the HomeKit write recorded no command");
   });
 
-  // A tone was never on the characteristic's set path, so this row holds it there: it reaches the chime through an outage untouched.
-  test("a chime's tone /set reaches the chime and logs its failure through an outage", async () => {
+  // A tone has no set path on a characteristic, so the refusal it meets is the set's own.
+  test("a chime's tone /set refuses while the controller is lost, and through a blip reaches the chime and logs its failure", async () => {
 
     const config = makeChimeConfig();
     const store = new TestStateStore(makeProtectState({ chimes: [config] }));
@@ -820,15 +949,22 @@ describe("the paths that go past the refusal", () => {
     nvr.client.connection.isLost = true;
     projection.playRejection = new Error("The controller cannot be reached.");
 
+    await assert.rejects(mqtt.invokeSet(config.mac + "/tone/set", "buzzer"), SET_REFUSED);
+
+    assert.equal(projection.playBuzzerCalls.length, 0, "the /set recorded no command");
+
+    nvr.client.connection.isLost = false;
+    nvr.client.connection.isHealthy = false;
+
     await mqtt.invokeSet(config.mac + "/tone/set", "buzzer");
     await settle();
 
     assert.equal(projection.playBuzzerCalls.length, 1, "the /set reached its command");
-    assert.ok(loggedAt(logEntries, "error", "Unable to play buzzer"), "and logged its failure as it always has");
+    assert.ok(loggedAt(logEntries, "error", "Unable to play buzzer"), "and logged its failure");
   });
 
-  // A scene issues no command, so what a set moves is the member camera's motion detection. The HomeKit write on the same switch moves nothing.
-  test("a liveview /set moves the member camera's motion detection and states the value through an outage, while a HomeKit write refuses", async () => {
+  // A scene issues no command, so what a set moves is the member camera's motion detection.
+  test("a liveview /set refuses while the controller is lost as a HomeKit write does, and through a blip moves the member camera's motion detection", async () => {
 
     const { accessories, mqtt, nvr } = standLiveviews([{ cameras: ["member"], id: "member-view", name: "Protect-Member" }]);
     const member = makeTestAccessory("Member", "74ACB9000099");
@@ -841,15 +977,19 @@ describe("the paths that go past the refusal", () => {
     nvr.configuredDevices.set(member.UUID, { accessory: member, accessoryName: "Member", protectId: "member" } as unknown as ProtectDevices);
     nvr.client.connection.isLost = true;
 
+    await assert.rejects(mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "Member", state: false }])), CONTROLLER_SET_REFUSED);
+    await assert.rejects(triggerSet(on, false), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+
+    assert.equal(member.context.detectMotion, true, "neither path moved the member camera");
+
+    nvr.client.connection.isLost = false;
+    nvr.client.connection.isHealthy = false;
+
     await mqtt.invokeSet(CONTROLLER_MAC + "/liveviews/set", JSON.stringify([{ name: "Member", state: false }]));
     await settle();
 
     assert.equal(member.context.detectMotion, false, "the /set applied the scene to the member camera");
     assert.equal(on.value, false, "the switch states the value set");
-
-    await assert.rejects(triggerSet(on, true), hapStatus(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
-
-    assert.equal(member.context.detectMotion, false, "the HomeKit write moved nothing");
   });
 
   // A body running with no one waiting on it has no one to report to, so its fault is said where it runs, and the route's loop goes on to its next entry.

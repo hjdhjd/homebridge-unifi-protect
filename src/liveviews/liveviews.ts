@@ -212,9 +212,9 @@ export class ProtectLiveviews extends ProtectBase {
 
     /* The membership delta over the switch identities: a switch this controller owns that no liveview calls for any longer - its liveview was removed or renamed on the
      * controller, whether this session or while Homebridge was down - is removed through the controller's removal gate, which waits for the controller to be stable and
-     * for the user's removal delay, then re-reads the liveviews before it acts. Until then the accessory stays and its MQTT get and set answer, and HomeKit shows No
-     * Response. We diff a filtered SNAPSHOT of this controller's own switches (the scoping predicate keys on the context MAC), so the reconcile never disturbs another
-     * controller's switches and a removal splice never races an iterator walking the live list.
+     * for the user's removal delay, then re-reads the liveviews before it acts. Until then the accessory stays, its MQTT get answers, its MQTT set skips it, and HomeKit
+     * shows No Response. We diff a filtered SNAPSHOT of this controller's own switches (the scoping predicate keys on the context MAC), so the reconcile never disturbs
+     * another controller's switches and a removal splice never races an iterator walking the live list.
      */
     const owned = this.platform.accessories.filter(x => this.isOwnedLiveviewSwitch(x));
     const toRemove = new Set(membershipDelta([...names.keys()], owned.map(identity)).toRemove);
@@ -381,15 +381,16 @@ export class ProtectLiveviews extends ProtectBase {
         // Lookup this controller's liveview matching the requested name.
         const accessory = this.platform.accessories.find(x => this.isOwnedLiveviewSwitch(x) && ((x.context.liveview ?? "").toUpperCase() === entry.name.toUpperCase()));
 
-        // If we can't find it, move on.
-        if(!accessory) {
+        // A switch with no cameras behind it, its liveview deleted or empty, gives the set nothing to move, and moving on keeps it from logging a scene update that
+        // moved nothing.
+        if(!accessory || !this.getLiveviewCameras(accessory.context.liveview ?? "").length) {
 
           continue;
         }
 
         // Run the switch's own set body with the coerced state so the scene actually applies to the member cameras, as a HomeKit tap would - a status-only
-        // updateCharacteristic never runs the body and cannot apply a scene. It runs directly so a set reaches the cameras whatever HomeKit is being told, and a body
-        // that throws costs this entry alone.
+        // updateCharacteristic never runs the body and cannot apply a scene. It runs through driveSet, so the value is stated once the body resolves and a body that
+        // throws costs this entry alone.
         void this.driveSet({ characteristic: this.hap.Characteristic.On, service: accessory.getService(this.hap.Service.Switch),
           set: (state) => this.setSwitchState(accessory, state), value: !!entry.state });
         this.log.info("Liveview scene updated via MQTT: %s.", accessory.context.liveview);

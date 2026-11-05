@@ -157,6 +157,8 @@ The topics that `homebridge-unifi-protect` subscribes to are:
 
 Some messages, such as those for the liveviews and securitysystem topics, are controller-specific. To use these topics, make sure you use the controller MAC address when you create your topic strings.
 
+While a device or its controller reads `offline` on its `availability` topic, `homebridge-unifi-protect` refuses a `set` message and logs the refusal as an error, or at the debug level when the last failure logged was this same refusal. A brief interruption in the connection to the controller doesn't count...`set` messages are still attempted through one, and a command that fails logs its own error.
+
 ### <A NAME="doorbell-messages"></A>Doorbell Messages
 Doorbell messages are a fun feature available in UniFi Protect doorbells. You can read the [doorbell documentation](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/Doorbell.md) for more information about what the feature is and how it works.
 

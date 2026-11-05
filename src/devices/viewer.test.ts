@@ -26,6 +26,7 @@ import type { ObserverWakePayload } from "../diagnostics.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectViewer } from "./viewer.ts";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
+import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { configured } from "./device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
@@ -45,8 +46,8 @@ const controllers: AbortController[] = [];
 // when supplied, runs against the fresh accessory before construction, standing in for the services a Homebridge restart restores from the accessory cache.
 function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {}, harnessOptions: { disconnected?: boolean; liveviews?: ProtectNvrLiveviewConfig[];
   seedAccessory?: (accessory: TestProtectAccessory) => void; userOptions?: string[]; } = {}): {
-  accessory: TestProtectAccessory; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; projection: TestViewerProjection; store: TestStateStore;
-  viewer: ProtectViewer;
+  accessory: TestProtectAccessory; logEntries: readonly TestLogEntry[]; mqtt: TestMqttClient; nvr: TestProtectNvr; projection: TestViewerProjection;
+  store: TestStateStore; viewer: ProtectViewer;
 } {
 
   const viewerConfig = makeViewerConfig(configOptions);
@@ -75,7 +76,7 @@ function buildViewer(configOptions: Parameters<typeof makeViewerConfig>[0] = {},
     throw new Error("The MQTT recording double was not installed despite mqtt: true.");
   }
 
-  return { accessory, logEntries, mqtt, projection, store, viewer };
+  return { accessory, logEntries, mqtt, nvr, projection, store, viewer };
 }
 
 describe("real ProtectViewer construction and set-liveview behavior", () => {
@@ -90,6 +91,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
   let constructionWakes = 0;
   let logEntries: readonly TestLogEntry[];
   let mqtt: TestMqttClient;
+  let nvr: TestProtectNvr;
   let projection: TestViewerProjection;
   let store: TestStateStore;
   let viewer: ProtectViewer | undefined;
@@ -107,7 +109,7 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
   beforeEach(async () => {
 
     // The default fixture: two liveviews, with the viewer's active liveview set to the first, so the matching switch reads On true and a clear/set has a target.
-    ({ accessory, logEntries, mqtt, projection, store, viewer } = buildViewer(
+    ({ accessory, logEntries, mqtt, nvr, projection, store, viewer } = buildViewer(
       { liveview: "liveview-1" },
       { liveviews: [ makeLiveviewConfig({ id: "liveview-1", name: "Front Door" }), makeLiveviewConfig({ id: "liveview-2", name: "Backyard" }) ] }));
 
@@ -377,6 +379,16 @@ describe("real ProtectViewer construction and set-liveview behavior", () => {
 
     assert.equal(projection.updateCalls.length, 1, "an unknown liveview name dispatches no update");
     assert.ok(loggedAt(logEntries, "error", "Unable to locate a liveview named nonexistent."), "an unknown liveview name logs the error");
+  });
+
+  test("the MQTT liveview set refuses under the viewer's name while the controller is lost, dispatching nothing and logging no confirmation", async () => {
+
+    nvr.client.connection.isLost = true;
+
+    await assert.rejects(mqtt.invokeSet(projection.config.mac + "/liveview/set", "backyard"), { message: "Test Viewer or its controller cannot be reached." });
+
+    assert.deepEqual(projection.updateCalls, [], "the refused set dispatched no update");
+    assert.equal(loggedAt(logEntries, "info", "Liveview set via MQTT"), false, "and logged no confirmation");
   });
 
   test("the MQTT subscriptions compose the device-MAC-scoped liveview topic tail", () => {

@@ -132,6 +132,12 @@ export abstract class ProtectDeviceCapability<H extends ProtectCapabilityHost = 
     return this.host.accessoryName;
   }
 
+  // A refused MQTT set names the host, whose verdict a capability answers.
+  protected override get mqttSetSubject(): string {
+
+    return this.accessoryName;
+  }
+
   // Feature-option reads resolve through the host, which scopes them against its own device MAC and the controller MAC.
   protected hasFeature(option: string): boolean {
 

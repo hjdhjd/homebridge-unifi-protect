@@ -651,7 +651,7 @@ export class DoorbellCapability extends ProtectDeviceCapability<ProtectCamera> {
         return;
       }
 
-      // The dimmer's own set bodies complete this action, and they run directly so a set reaches the chime whatever HomeKit is being told. Each begins in this turn.
+      // The dimmer's own set bodies complete this action, and they run directly rather than through the refusing handlers. Each begins in this turn.
       const service = this.accessory.getServiceById(this.hap.Service.Lightbulb, ProtectReservedNames.LIGHTBULB_DOORBELL_VOLUME);
 
       void this.driveSet({ characteristic: this.hap.Characteristic.Brightness, service, set: (level) => this.setChimeVolume(level as number), value: volume });

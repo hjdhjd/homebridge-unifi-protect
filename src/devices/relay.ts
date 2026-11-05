@@ -174,8 +174,7 @@ export class ProtectRelay extends ProtectDevice<Relay> {
   }
 
   // Configure MQTT capabilities of this relay. Each output whose Switch stands exposes a get (the live output state) and a set (which runs the single set-to-toggle path
-  // directly, under the label the output's switch carries, whatever HomeKit is being told). An output the user left out of Relay.Outputs has no switch and no MQTT topic,
-  // so it registers neither.
+  // directly, under the label the output's switch carries). An output the user left out of Relay.Outputs has no switch and no MQTT topic, so it registers neither.
   private configureMqtt(): void {
 
     for(const output of this.ufp.outputs) {

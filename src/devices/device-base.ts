@@ -6,7 +6,7 @@
  * that signal drains - so a device leaf, a controller-scoped accessory, and a capability composed onto a hosting device all inherit one lifecycle mechanism.
  */
 import type { API, CharacteristicValue, HAP, Service } from "homebridge";
-import type { CharacteristicTarget, HomebridgePluginLogging } from "homebridge-plugin-utils";
+import type { CharacteristicTarget, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import type { ProtectDeviceConfig, ProtectNvrConfig, ProtectState } from "unifi-protect";
 import { TimerRegistry, composeSignals, debugGatedLog, formatErrorMessage, loopFaultReporter, mqttTopic, notResponding, prefixedLog,
   superviseLoop } from "homebridge-plugin-utils";
@@ -196,6 +196,21 @@ export abstract class ProtectBase {
     return this.nvr.isAvailable;
   }
 
+  // Whether this owner takes an MQTT set, the verdict a HomeKit write reads, so the two follow one rule. An owner whose verdict reads more than the controller and the
+  // device can answer a set past that part of it.
+  protected get acceptsMqttSet(): boolean {
+
+    return this.isAvailable;
+  }
+
+  // What a refused MQTT set names as beyond reach. A controller-scoped owner has only its controller to name, so the base answers null, and a device and a capability
+  // answer the name their accessory carries.
+  // eslint-disable-next-line @typescript-eslint/class-literal-property-style -- Overridden by getters on devices and capabilities; the base cannot be a readonly field.
+  protected get mqttSetSubject(): Nullable<string> {
+
+    return null;
+  }
+
   // The single narrow-selector state-observe primitive, shared by every HomeKit-projection owner - device leaves and controller-scoped owners alike. The loop wakes only
   // when its reduced slice changes by reference (the store's Object.is dedup is upstream of the yield), the handler re-reads through the owner's live projection rather
   // than trusting the yielded value so a multi-read reaction always sees a coherent snapshot, and what an owner supplies for itself it supplies through the protected
@@ -273,10 +288,23 @@ export abstract class ProtectBase {
     this.nvr.mqtt?.subscribeGet(mqttTopic(this.mqttId, topic), type, getValue, { signal: this.observeSignal });
   }
 
-  // Configure an MQTT set subscription under this owner's scope, bound to the owner-lifetime signal exactly as subscribeGet is.
+  // Configure an MQTT set subscription under this owner's scope, bound to the owner-lifetime signal exactly as subscribeGet is. The refusal lives here rather than in
+  // each topic's handler so no topic can drift from the rule. It is thrown because HBPU's client logs a failing set with its reason and does not report it as received.
+  // HBPU weighs a failure against the last failure alone, logging it at debug when its reason repeats that one and as an error otherwise, so the reason names the
+  // owner...one device refused again goes to debug, and another device refused after it is an error.
   protected subscribeSet(topic: string, type: string, setValue: (value: string, rawValue: string) => Promise<void> | void): void {
 
-    this.nvr.mqtt?.subscribeSet(mqttTopic(this.mqttId, topic), type, setValue, { signal: this.observeSignal });
+    this.nvr.mqtt?.subscribeSet(mqttTopic(this.mqttId, topic), type, (value: string, rawValue: string): Promise<void> | void => {
+
+      if(!this.acceptsMqttSet) {
+
+        const subject = this.mqttSetSubject;
+
+        throw new Error(subject ? (subject + " or its controller cannot be reached.") : "The controller cannot be reached.");
+      }
+
+      return setValue(value, rawValue);
+    }, { signal: this.observeSignal });
   }
 
   /* Register this owner's restatement of its held state, run at the start of every broker session that begins after the owner is built. The client forgets what
@@ -351,11 +379,11 @@ export abstract class ProtectBase {
     held.onGet(this.answering(() => held.value));
   }
 
-  /* Run a set handler's body on the plugin's own behalf and state the value it set, the path an MQTT set and the plugin's own writes take past the refusal a HomeKit
-   * write meets. A characteristic's own set entry point would run the wrapped handler and drop its refusal, so a command would silently go nowhere through an outage;
-   * calling the body directly reaches the device and lets the command fail the way it fails with the controller away, through the same failure log. The value is stated
-   * only once the body resolves, the moment a HomeKit write takes effect, so a reflection the body arms still lands after it. The caller resolves the service ahead of
-   * the call, and a service that is gone runs nothing.
+  /* Run a set handler's body on the plugin's own behalf and state the value it set, the path the plugin's own writes take past the refusal a HomeKit write meets, and
+   * the path an MQTT set takes once subscribeSet has let it through. A characteristic's own set entry point would run the wrapped handler and drop its refusal, so a
+   * command would silently go nowhere; calling the body directly reaches the device and lets the command fail through the same failure log. The value is stated only
+   * once the body resolves, the moment a HomeKit write takes effect, so a reflection the body arms still lands after it. The caller resolves the service ahead of the
+   * call, and a service that is gone runs nothing.
    *
    * A caller never waits on this: the body begins in the caller's turn and finishes on its own. So a body that rejects or throws has no one to report to, which is why
    * the fault is said here and stays here, states nothing, and costs the caller's own loop nothing.

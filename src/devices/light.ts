@@ -131,7 +131,7 @@ export class ProtectLight extends ProtectDevice<Light> {
       return this.ledBrightness.toString();
     });
 
-    // Control the light. A set reaches the controller whatever HomeKit is being told, so each runs its body directly rather than through the refusing handler.
+    // Control the light. subscribeSet has already refused a set the light cannot take, so each runs its body directly rather than through the refusing handler.
     this.subscribeSet(mqttTopics.light.topic, mqttTopics.light.label, (value: string) => {
 
       void this.driveSet({ characteristic: this.hap.Characteristic.On, service: this.accessory.getService(this.hap.Service.Lightbulb),

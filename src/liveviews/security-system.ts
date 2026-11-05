@@ -46,6 +46,12 @@ export class ProtectSecuritySystem extends ProtectBase {
     return super.isAvailable && isSecuritySystemCalledFor(this.nvr.client.liveviews);
   }
 
+  // An MQTT set answers through the time no liveview calls for the security system, so only the controller's own verdict refuses one.
+  protected override get acceptsMqttSet(): boolean {
+
+    return this.nvr.isAvailable;
+  }
+
   // Set the security system up for HomeKit.
   public override configure(): void {
 

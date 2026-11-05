@@ -660,6 +660,26 @@ describe("real ProtectSecuritySystem construction and controller-owner behavior"
     assert.equal(built.mqtt.published.length, publishedBefore, "the no-liveviews early return published nothing");
   });
 
+  // The liveviews that call for the security system are part of what a HomeKit write reads and no part of what an MQTT set reads, so only the controller refuses a set.
+  test("an MQTT set answers with no liveview calling for the security system and through a blip, and refuses only once the controller is lost", async () => {
+
+    const built = buildSecuritySystem({ liveviews: [] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    await built.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "away");
+
+    built.nvr.client.connection.isHealthy = false;
+
+    await assert.doesNotReject(built.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "away"), "a blip the verdict does not read refuses nothing");
+
+    built.nvr.client.connection.isLost = true;
+
+    await assert.rejects(built.mqtt.invokeSet(CONTROLLER_MAC + "/securitysystem/set", "away"), { message: "The controller cannot be reached." });
+  });
+
   test("setSecurityState with a liveview but no member cameras for the target takes the no-target branch (state updates, the guidance logs)", async () => {
 
     // A Protect-Home liveview with NO member cameras: arming STAY_ARM finds no target cameras, so the no-target branch updates and publishes the state, as every other
