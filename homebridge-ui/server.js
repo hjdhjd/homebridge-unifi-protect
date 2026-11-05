@@ -8,6 +8,7 @@
 "use strict";
 
 import { ProtectClient, isDeviceAdopted, noopLog } from "unifi-protect";
+import { UNREPORTED_CONTROLLER_RECORD, UNSUPPORTED_PROTECT_VERSION, isSupportedProtectVersion } from "../dist/nvr/nvr-policy.js";
 import { featureOptionCategories, featureOptions } from "../dist/options.js";
 import { HomebridgePluginUiServer } from "@homebridge/plugin-ui-utils";
 import { composeMigrationPatch } from "../dist/options-legacy.js";
@@ -66,6 +67,22 @@ class PluginUiServer extends HomebridgePluginUiServer {
           username: controller.username });
 
         try {
+
+          /* A controller the plugin cannot start on is refused here too, in the plugin's own sentences. A record with no version has a sentence of its own, because
+           * telling someone to upgrade a version nobody reported is false. The catch below says what is thrown and answers it as it does any failure of this probe, and
+           * the finally still releases the client.
+           */
+          const { version } = client.nvr.config;
+
+          if(typeof version !== "string") {
+
+            throw new Error(UNREPORTED_CONTROLLER_RECORD);
+          }
+
+          if(!isSupportedProtectVersion(version)) {
+
+            throw new Error(UNSUPPORTED_PROTECT_VERSION);
+          }
 
           /* Project each live device collection to its raw config record, keep only the devices adopted by this controller, name each as HomeKit names its accessory
            * with no custom name applied, and sort by that name. We read the config records rather than the command-bearing projections because the webUI consumes

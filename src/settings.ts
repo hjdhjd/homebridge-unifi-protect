@@ -106,6 +106,10 @@ export const PROTECT_MAX_SOURCE_WIDTH = 3840;
 // Default port to use to publish an M3U playlist for use in other apps that can consume one to make camera livestreams available, such as Channels DVR.
 export const PROTECT_M3U_PLAYLIST_PORT = 10110;
 
+// The oldest major version of UniFi Protect the plugin supports. A controller below it is refused at connect, and there is no upper limit, so a later major version needs
+// no change here.
+export const PROTECT_MINIMUM_MAJOR_VERSION = 7;
+
 // Default duration, in seconds, of motion events. Setting this too low will potentially cause a lot of notification spam.
 export const PROTECT_MOTION_DURATION = 10;
 

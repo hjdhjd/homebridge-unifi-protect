@@ -95,7 +95,7 @@ I hope to continue to work on this one to get AEC working for two-way audio. [Yo
 >     * Click ***Add Admin*** located near the top right of the ***OS Settings*** page.
 >     * Click ***Restrict to local access only*** and then enter in a username and password for the new local user.
 >     * Optionally customize the role of the user to adjust the roles. HBUP requires the ***Full Management*** role for all of it's capabilities to work, although it will work in a more limited form without administrative privileges.
->   * **UniFi Protect v6 or later is required.** Earlier versions of Protect are no longer supported.
+>   * **UniFi Protect v7 or later is required.** Earlier versions of Protect are no longer supported.
 >
 > ### Getting Started
 > To install `homebridge-unifi-protect`:

@@ -10,8 +10,8 @@ import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryExh
 import type { ConnectFailure, ConnectFailureType } from "./nvr-policy.ts";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, maskAddressCredentials, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, MqttAvailabilityPayload, MqttClient, Nullable } from "homebridge-plugin-utils";
-import { OVERRIDE_ADDRESS_ZONE_WARNING, UNREPORTED_CONTROLLER_RECORD, canTransition, createConnectRetryPolicy, createLivestreamEpisodeLatch, deviceInventory,
-  isDisruptionExpected, resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
+import { OVERRIDE_ADDRESS_ZONE_WARNING, UNREPORTED_CONTROLLER_RECORD, UNSUPPORTED_PROTECT_VERSION, canTransition, createConnectRetryPolicy, createLivestreamEpisodeLatch,
+  deviceInventory, isDisruptionExpected, isSupportedProtectVersion, resolveOverrideAddress, shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS } from "../settings.ts";
 import type { ProtectAccessory, ProtectAccessoryContext, ProtectDeviceTypes, ProtectDevices, ProtectProjectionMap } from "../types.ts";
 import { countActiveHksvRecordings, deviceEndpoints } from "./nvr-endpoints.ts";
@@ -765,9 +765,9 @@ export class ProtectNvr {
     const version = this.client.nvr.config.version;
 
     // If we are running an unsupported version of UniFi Protect, we're done. The version gate stays plugin-side, reading the live projection post-connect.
-    if(![ "6.", "7." ].some(v => version.startsWith(v))) {
+    if(!isSupportedProtectVersion(version)) {
 
-      this.log.error("This version of HBUP requires running UniFi Protect v6.0 or above using the official Protect release channel only.");
+      this.log.error(UNSUPPORTED_PROTECT_VERSION);
       await this.client[Symbol.asyncDispose]();
 
       return false;

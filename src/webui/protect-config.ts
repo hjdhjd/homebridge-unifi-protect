@@ -179,8 +179,8 @@ export interface ProtectControllerList {
 }
 
 /**
- * One reading of the UI server's device-list answer: the list itself, the controller the server could not reach with the reason it captured, the UI server's own
- * failure, or a sidebar entry whose controller left the configuration. Every failure carries no devices and the headline its surfaces render it under.
+ * One reading of the UI server's device-list answer: the list itself, the controller the server could not reach or refused with the reason it captured, the UI server's
+ * own failure, or a sidebar entry whose controller left the configuration. Every failure carries no devices and the headline its surfaces render it under.
  */
 export type DeviceListVerdict = { devices: Record<string, unknown>[]; kind: "list"; message: string } |
   { devices: Record<string, unknown>[]; headline: string; kind: "unreachable"; message: string } |
@@ -195,7 +195,7 @@ export interface DeviceListResult {
   headline?: string;
 }
 
-// The headline for a controller the plugin could not reach, rendered as the framework's error-view headline above the controller's own reason.
+// The headline for a controller the plugin could not reach or refused, rendered as the framework's error-view headline above the reason.
 const CONNECTION_FAILURE_HEADLINE = "Unable to connect to the UniFi Protect controller.";
 
 // The headline for a UI server that failed to answer or answered in a shape it never writes, rendered as the framework's error-view headline.
@@ -228,11 +228,12 @@ const isDeviceListAnswer = (answer: unknown): answer is { devices: Record<string
 /* Read the UI server's answer to a device-list request, which is the one place that answer is interpreted, so the device view, the login check, and the
  * migration's probes cannot read one answer differently.
  *
- * The server answers a device list with an empty error when it reached the controller, and an empty list with the reason it captured when it did not, which is
- * empty when it captured none. Anything else is an answer in a shape the server never writes, and reads as the UI server's own failure rather than as an empty
- * controller, because guessing at it is how a malformed answer becomes a silently empty page. A request the bridge rejected is the UI server's failure too,
- * carrying the rejection's own message, or the unrecognized-shape sentence when it carried none. A failure verdict carries the headline its surfaces render it
- * under, and a guidance line only where the page's own standing guidance would send the user after the wrong thing.
+ * The server answers a device list with an empty error when it reached a controller the plugin supports. It answers an empty list with the reason it captured when it
+ * could not reach one, which is empty when it captured none, and with the plugin's own refusal for a controller that reports no version or one below the plugin's
+ * version floor, which shares the connection failure's headline. Anything else is an answer in a shape the server never writes, and reads as the UI server's own failure
+ * rather than as an empty controller, because guessing at it is how a malformed answer becomes a silently empty page. A request the bridge rejected is the UI server's
+ * failure too, carrying the rejection's own message, or the unrecognized-shape sentence when it carried none. A failure verdict carries the headline its surfaces render
+ * it under, and a guidance line only where the page's own standing guidance would send the user after the wrong thing.
  *
  * @param settlement - The request's settlement, in the shape Promise.allSettled answers: fulfilled with the server's answer, or rejected with what it threw.
  *
@@ -259,8 +260,8 @@ export const readDeviceListAnswer = (settlement: PromiseSettledResult<unknown>):
     return serverFailure();
   }
 
-  // The controller could not be reached. The page's own guidance line already sends the user to the connection editor beneath the error, so the verdict carries
-  // none of its own.
+  // The controller could not be reached, or it reports no version or one the plugin refuses. The page's own guidance line already sends the user to the connection
+  // editor beneath the error, so the verdict carries none of its own.
   if(!answer.devices.length) {
 
     return { devices: [], headline: CONNECTION_FAILURE_HEADLINE, kind: "unreachable", message: answer.error };

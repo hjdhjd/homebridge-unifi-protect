@@ -34,7 +34,7 @@ import { PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_RECOVERY_BACKOFF_KNOWN_M
   channels as protectChannels } from "unifi-protect";
 import { REBOOT_EXPECTED_RETURN_MS, UNREPORTED_CONTROLLER_RECORD, canTransition, classifyRebootAttempt, computeInitialRebootDelay, computeStableSince,
   connectFailureReading, countActiveRecordingViews, createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption,
-  isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest, isWithinRebootRecency, resolveOverrideAddress,
+  isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest, isSupportedProtectVersion, isWithinRebootRecency, resolveOverrideAddress,
   shouldResumeFromInducedReboot } from "./nvr-policy.ts";
 import { TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr,
   restoreAccessories } from "./testing.helpers.ts";
@@ -410,6 +410,46 @@ describe("the reading of a failed connect", () => {
 
     assert.deepEqual([...levels].filter(([ , read ]) => read.size > 1), []);
   });
+});
+
+describe("the Protect version floor", () => {
+
+  /* The comparison reads the major number alone, so a high minor number leaves a version below the floor where it is, and a later major version passes with no code
+   * change, one with more digits than the floor's among them. An empty string has no number to read, so it stays refused.
+   */
+  for(const version of [ "5.0.0", "6.0.0", "6.2.1", "6.99.1", "" ]) {
+
+    test("the version " + JSON.stringify(version) + " reads as unsupported", () => {
+
+      assert.equal(isSupportedProtectVersion(version), false);
+    });
+  }
+
+  // A leading v has no number to open on, so it stays refused whatever follows it, even at the floor. No controller is known to send one.
+  for(const version of [ "v7.3.70", "v6.2.1" ]) {
+
+    test("the version " + JSON.stringify(version) + " reads as unsupported", () => {
+
+      assert.equal(isSupportedProtectVersion(version), false);
+    });
+  }
+
+  // The major number is all the comparison reads, so a pre-release tag after it passes, and so does whitespace ahead of it. No controller is known to send one.
+  for(const version of [ "7.3.70-beta.1", "7-beta", " 7.3.70" ]) {
+
+    test("the version " + JSON.stringify(version) + " reads as supported", () => {
+
+      assert.equal(isSupportedProtectVersion(version), true);
+    });
+  }
+
+  for(const version of [ "7.0.0", "7.3.70", "8.0.0", "10.1.2" ]) {
+
+    test("the version " + JSON.stringify(version) + " reads as supported", () => {
+
+      assert.equal(isSupportedProtectVersion(version), true);
+    });
+  }
 });
 
 describe("the address override rule", () => {
@@ -890,7 +930,7 @@ describe("the controller root's disabled-controller path", () => {
    */
   test("a controller disabled in HomeKit disconnects from the Protect controller after removing its accessories", async () => {
 
-    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", version: "6.1.79" };
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", version: "7.3.70" };
     const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
     const { controller, logEntries, nvr: double } = makeTestNvr({ store, userOptions: ["Disable.Device." + nvrConfig.mac] });
     const connection = new TestConnection();
@@ -956,7 +996,7 @@ describe("the controller root's stability sweep", () => {
   test("a security system left by liveviews deleted while the plugin was down is removed by the stability sweep's liveviews pass", async () => {
 
     const clock = new TestClock(TEST_CLOCK_EPOCH);
-    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "7.3.70" };
     const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
     const { api, controller, logEntries, nvr: double } = makeTestNvr({ clock, store });
     const ghost = makeTestAccessory("Security System", nvrConfig.mac + ".Security");
@@ -975,7 +1015,7 @@ describe("the controller root's stability sweep", () => {
       await root.login();
       await settle();
 
-      assert.ok(loggedAt(logEntries, "info", "Connected to nvr.test (UniFi Protect 6.1.79 running on UniFi OS 4.3.6)."),
+      assert.ok(loggedAt(logEntries, "info", "Connected to nvr.test (UniFi Protect 7.3.70 running on UniFi OS 4.3.6)."),
         "the controller connected and took its enabled path");
 
       clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW - 1);
@@ -1446,7 +1486,7 @@ describe("the controller root's report of a startup failure by its kind", () => 
 
   // The controller record a connected root reads, with the fields its connect logs.
   const connectedRecord = (overrides: Partial<ProtectNvrConfig> = {}): ProtectNvrConfig => ({ ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: TEST_CLOCK_EPOCH,
-    version: "6.1.79", ...overrides });
+    version: "7.3.70", ...overrides });
 
   /* The real client resolves a bootstrap with no record, no version or a MAC that is no string, and its config getter throws on an absent record, so the attempt is what
    * has to read the answer. Each shape is a failed attempt like any other: said once at error, its client disposed, and the next attempt on the recovery schedule. Two of
@@ -1583,7 +1623,7 @@ describe("the controller root's report of a startup failure by its kind", () => 
    * client is disposed, and an empty version string is among what it stops, because no controller is known to send one. The warning ahead of it holds that each level
    * lands where it belongs in one run, and the wait past it that no attempt follows.
    */
-  for(const version of [ "5.0.0", "" ]) {
+  for(const version of [ "5.0.0", "6.2.1", "" ]) {
 
     test("a refused connection and then the version " + JSON.stringify(version) + " reads the warning and then the gate's error, with one disposal and no more attempts",
       async () => {
@@ -1638,7 +1678,7 @@ describe("the controller root's report of a startup failure by its kind", () => 
           assert.equal(disposals, 1, "and its client is disposed once");
           assert.deepEqual(linesAt(logEntries, "warn"), [PREFIX + failedLine(NETWORK_REASON)]);
           assert.deepEqual(linesAt(logEntries, "error"),
-            [PREFIX + "This version of HBUP requires running UniFi Protect v6.0 or above using the official Protect release channel only."]);
+            [PREFIX + "This version of HBUP requires running UniFi Protect v7.0 or above using the official Protect release channel only."]);
           assert.equal(root.phase, "connecting", "and the controller never left its first phase");
         } finally {
 
@@ -1648,6 +1688,37 @@ describe("the controller root's report of a startup failure by its kind", () => 
           await settle();
         }
       });
+  }
+
+  // The floor has no upper limit, so a later major version passes the gate as any supported one does, and the controller carries on into its running phase.
+  for(const version of [ "8.0.0", "10.1.2" ]) {
+
+    test("the version " + JSON.stringify(version) + " logs the controller in to running", async () => {
+
+      const nvrConfig = connectedRecord({ version });
+      const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
+      const { controller, logEntries, nvr: double } = makeTestNvr({ clock: new TestClock(TEST_CLOCK_EPOCH), store });
+      const { platform, shutdown } = makeRootPlatform(double);
+      const client = makeConnectedClient({ nvrConfig, store });
+      const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => client);
+
+      try {
+
+        await root.login();
+        await settle();
+
+        assert.ok(loggedAt(logEntries, "info", "Connected to nvr.test (UniFi Protect " + version + " running on UniFi OS 4.3.6)."), "the connect line names the version");
+        assert.deepEqual(linesAt(logEntries, "error"), [], "and the gate refuses nothing");
+        assert.equal(root.client, client, "the root keeps the client it connected");
+        assert.equal(root.phase, "running", "and the controller reaches its running phase");
+      } finally {
+
+        shutdown();
+        controller.abort();
+
+        await settle();
+      }
+    });
   }
 
   /* The MQTT client is built past a successful connect, which is why a retrying connect has no grace to wait out: nothing stands between the shutdown and the signal
@@ -1716,7 +1787,7 @@ describe("the controller root's address override", () => {
 
       const label = "option " + (option ?? "absent") + ", legacy property " + (legacy ?? "absent");
       const clock = new TestClock(TEST_CLOCK_EPOCH);
-      const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+      const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "7.3.70" };
       const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
       const { controller, logEntries, nvr: double } = makeTestNvr({ clock, ...((legacy !== undefined) ? { overrideAddress: legacy } : {}), store,
         userOptions: (option !== undefined) ? ["Enable.Nvr.OverrideAddress." + nvrConfig.mac + "=" + option] : [] });
@@ -1758,7 +1829,7 @@ describe("the controller root's address override", () => {
   test("the override address is resolved before the cameras are adopted, so a camera's channel profiles compose against it", async () => {
 
     const clock = new TestClock(TEST_CLOCK_EPOCH);
-    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "7.3.70" };
 
     // The camera record carries what the root's membership reconcile reads before it constructs a camera, its category and its adoption by this controller, on top of
     // the construction read set makeCameraConfig builds.
@@ -1804,7 +1875,7 @@ describe("the controller root's accessory cache saves", () => {
   test("a standalone camera is never handed to the cache, while the bridged camera marked in the same window is saved in one update", async () => {
 
     const clock = new TestClock(TEST_CLOCK_EPOCH);
-    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "7.3.70" };
 
     // Each camera record carries what the root's membership reconcile reads before it constructs a camera, its category and its adoption by this controller.
     const adopted = (options: { id: string; mac: string; name: string }): ProtectCameraConfig => ({ ...makeCameraConfig({ channels: G2_PRO_CHANNELS, ...options }),
@@ -1881,7 +1952,7 @@ describe("the controller root's device names", () => {
     test(title, async () => {
 
       const clock = new TestClock(TEST_CLOCK_EPOCH);
-      const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+      const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "7.3.70" };
 
       // The camera record carries what the root's membership reconcile reads before it constructs a camera, with its name set after the builder, whose own default
       // would otherwise stand in for an absent one.
@@ -1930,7 +2001,7 @@ describe("the controller root's device names", () => {
     test(title, async () => {
 
       const clock = new TestClock(TEST_CLOCK_EPOCH);
-      const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+      const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "7.3.70" };
       const cameraConfig: ProtectCameraConfig = { ...makeCameraConfig({ channels: G2_PRO_CHANNELS, name: "Front Door" }), isAdopted: true, isAdoptedByOther: false,
         modelKey: "camera" };
       const store = new TestStateStore(makeProtectState({ cameras: [cameraConfig], nvr: nvrConfig }));
@@ -1968,7 +2039,7 @@ describe("the controller root's orphan package camera removal", () => {
   test("removing a package camera whose parent is gone removes that accessory alone", async () => {
 
     const clock = new TestClock(TEST_CLOCK_EPOCH);
-    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "7.3.70" };
     const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
     const { api, controller, logEntries, nvr: double } = makeTestNvr({ clock, store });
     const orphan = makeTestAccessory("Front Door Package Camera", "74ACB9000001.PackageCamera");
@@ -2043,7 +2114,7 @@ async function logIn(options: { accessories?: ProtectAccessory[]; cameras?: Prot
 Promise<LoggedInRoot> {
 
   const clock = new TestClock(TEST_CLOCK_EPOCH);
-  const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "6.1.79" };
+  const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "7.3.70" };
   const store = new TestStateStore(makeProtectState({ cameras: options.cameras ?? [], nvr: nvrConfig }));
   const { api, controller, logEntries, nvr: double } = makeTestNvr({ clock, store, userOptions: options.userOptions });
 
@@ -3269,7 +3340,7 @@ describe("the controller root's client logger", () => {
 
     for(const { answered, option } of [ { answered: 1, option: "Enable.Log.Debug" }, { answered: 0, option: "Enable.Log.Debug." + makeNvrConfig().mac } ]) {
 
-      const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: TEST_CLOCK_EPOCH, version: "6.1.79" };
+      const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: TEST_CLOCK_EPOCH, version: "7.3.70" };
       const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
       const { controller, logEntries, nvr: double } = makeTestNvr({ clock: new TestClock(TEST_CLOCK_EPOCH), store, userOptions: [option] });
       const { platform, shutdown } = makeRootPlatform(double);
@@ -3930,7 +4001,7 @@ describe("the controller root's availability verdict", () => {
   // real root over the double's platform, its connection levers moved directly.
   test("the verdict reads the connection's loss and reboot facts, never its health, and the removal tail releases a claim", async () => {
 
-    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: TEST_CLOCK_EPOCH, version: "6.1.79" };
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: TEST_CLOCK_EPOCH, version: "7.3.70" };
     const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
     const { controller, nvr: double } = makeTestNvr({ store });
     const client = makeConnectedClient({ nvrConfig, store });

@@ -57,7 +57,7 @@ function makeRoot(t: TestContext, options: { cameras?: ProtectCameraConfig[]; li
 
   const clock = new TestClock(TEST_CLOCK_EPOCH);
   const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig({ hardwareRevision: "1.0.0" }), firmwareVersion: "4.3.6",
-    upSince: clock.now() - PROTECT_NVR_REMOVAL_STABILITY_WINDOW, version: "6.1.79" };
+    upSince: clock.now() - PROTECT_NVR_REMOVAL_STABILITY_WINDOW, version: "7.3.70" };
   const store = new TestStateStore(makeProtectState({ cameras: options.cameras ?? [], liveviews: options.liveviews ?? [], nvr: nvrConfig }));
   const { api, controller, logEntries, nvr: double } = makeTestNvr({ clock, store, userOptions: options.userOptions ?? [] });
   const client = makeConnectedClient({ nvrConfig, store });

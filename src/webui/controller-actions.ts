@@ -495,9 +495,10 @@ export interface ControllerLoginDependencies {
  * apart. The browser cannot reach the Protect controller directly, so the request bridges through the plugin's UI server.
  *
  * It answers an outcome and reports nothing itself: passed with the controller's device list, failed with the sentences and the detail that a missing field, a
- * rejected login, or a request that threw calls for, or retired when the signal it was handed aborted before the answer arrived. Each caller delivers the outcome
- * under its own rule: the validate control and the first-run submit through the action they started, which paints while the card presents it and drops it
- * otherwise, and a Save through its press's delivery, which still reaches the user through the host's toast once the card no longer presents the press.
+ * rejected login, a controller reporting no version or one below the plugin's version floor, or a request that threw calls for, or retired when the signal it was handed
+ * aborted before the answer arrived. Each caller delivers the outcome under its own rule: the validate control and the first-run submit through the action they started,
+ * which paints while the card presents it and drops it otherwise, and a Save through its press's delivery, which still reaches the user through the host's toast once
+ * the card no longer presents the press.
  *
  * The signal is the caller's action's own, so an edit to the card's fields or a newer act on the card retires the request. Starting that action is the caller's
  * act, because the caller speaks through it once this answers, and because a Save and the first-run submit each ask whether the address is already listed before
@@ -541,8 +542,8 @@ export const makeControllerLogin = ({ deadline, readDeviceListAnswer, request, w
       return { devices: verdict.devices, kind: "passed" };
     }
 
-    // Couldn't connect to the Protect controller. The guidance sentences frame the failure and the controller-sourced error detail arrives with the device-list
-    // response, rendered as text so it is never interpreted as markup.
+    // Couldn't connect to the Protect controller, or it reports no version or one the plugin refuses. The guidance sentences frame the failure and the detail, which
+    // says which, arrives with the device-list response, rendered as text so it is never interpreted as markup.
     case "unreachable": {
 
       return { kind: "failed", outcome: { detail: verdict.message, lines: [ "Unable to login to the UniFi Protect controller.",

@@ -3,16 +3,17 @@
  * nvr-policy.ts: Pure decision logic for the NVR controller root.
  *
  * This module is the home for all of the controller root's pure decision logic, separated from the ProtectNvr composition root that acts on it. It holds the
- * startup-resilient connect retry policy and its reading of a failed connect, the request-outcome classifier that feeds NvrHealth, induced-disruption and reboot-recency
- * gating, the induced-reboot resume decision, the per-episode livestream-recovery quiet latch, the scheduled-reboot deferral decision with its initial-delay arithmetic
- * and its recording-count rule, the span a scheduled reboot is expected to return within, the removal-stability arithmetic, the rule that resolves the address override
- * the cameras' RTSP URLs are composed against, and the reads of the controller's device inventory out of its state store. Each is a pure function of its inputs. They
- * live here, in a dependency-light leaf, rather than inside the ProtectNvr composition root, for the same reason unifi-protect keeps its reducer pure and
- * apart from its client and the plugin keeps the NvrHealth reducer apart from its event-sink wrapper: a decision separated from the effect it drives is independently
- * testable, and the test is the proof the separation is real. ProtectNvr transitively imports the entire device and media graph (cameras, streaming, snapshots); a pure
- * predicate should never have to stand that up to be exercised. This module imports only what its decisions read - unifi-protect's error classes and its readings of a
- * controller refusal and of a refused sign-in, its recovery and refusal schedules, its reboot anticipation window and its device-collection keys, and
- * homebridge-plugin-utils' transport fault table and its error and URL-host formatters - so it loads and tests in isolation.
+ * startup-resilient connect retry policy and its reading of a failed connect, the version floor's comparison, the request-outcome classifier that feeds NvrHealth,
+ * induced-disruption and reboot-recency gating, the induced-reboot resume decision, the per-episode livestream-recovery quiet latch, the scheduled-reboot deferral
+ * decision with its initial-delay arithmetic and its recording-count rule, the span a scheduled reboot is expected to return within, the removal-stability arithmetic,
+ * the rule that resolves the address override the cameras' RTSP URLs are composed against, and the reads of the controller's device inventory out of its state store.
+ * Each is a pure function of its inputs. They live here, in a dependency-light leaf, rather than inside the ProtectNvr composition root, for the same reason
+ * unifi-protect keeps its reducer pure and apart from its client and the plugin keeps the NvrHealth reducer apart from its event-sink wrapper: a decision separated from
+ * the effect it drives is independently testable, and the test is the proof the separation is real. ProtectNvr transitively imports the entire device and media graph
+ * (cameras, streaming, snapshots); a pure predicate should never have to stand that up to be exercised. This module imports only what its decisions read -
+ * unifi-protect's error classes and its readings of a controller refusal and of a refused sign-in, its recovery and refusal schedules, its reboot anticipation window
+ * and its device-collection keys, homebridge-plugin-utils' transport fault table and its error and URL-host formatters, and the plugin's own minimum Protect version -
+ * so it loads and tests in isolation.
  */
 import type { ConnectionState, ProtectDeviceConfig, StateStore } from "unifi-protect";
 import { DEVICE_COLLECTION_KEYS, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
@@ -21,6 +22,7 @@ import { DEVICE_COLLECTION_KEYS, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_
 import type { Nullable, RetryBackoff, TransportFailureKind } from "homebridge-plugin-utils";
 import { classifyTransportError, connectionFaultLevel, formatErrorMessage, formatUrlHost } from "homebridge-plugin-utils";
 import type { NvrPhase } from "./nvr.ts";
+import { PROTECT_MINIMUM_MAJOR_VERSION } from "../settings.ts";
 
 /**
  * Why a retried connect attempt failed, the tag a caller's repeat-demoting log compares with the one it remembers: every kind the transport classifier names, and what
@@ -172,6 +174,27 @@ export function createConnectRetryPolicy({ onFailure }: { onFailure?: (failure: 
       return true;
     }
   };
+}
+
+/**
+ * The sentence a controller below the floor is refused in, composed from {@link PROTECT_MINIMUM_MAJOR_VERSION}. It lives beside the rule rather than at a place that
+ * refuses, so the controller root and the settings server say the one sentence.
+ */
+export const UNSUPPORTED_PROTECT_VERSION = "This version of HBUP requires running UniFi Protect v" + PROTECT_MINIMUM_MAJOR_VERSION.toString() +
+  ".0 or above using the official Protect release channel only.";
+
+/**
+ * Whether a controller's reported version is one the plugin supports. This compares the major number and nothing else, so every release of the floor's major version
+ * passes and a later major version passes with no code change. A version that opens with no number reads as `NaN`, which compares false, so an empty string stays
+ * refused.
+ *
+ * @param version - The version string the controller reports.
+ *
+ * @returns `true` when the version's major number is at or above {@link PROTECT_MINIMUM_MAJOR_VERSION}.
+ */
+export function isSupportedProtectVersion(version: string): boolean {
+
+  return Number.parseInt(version, 10) >= PROTECT_MINIMUM_MAJOR_VERSION;
 }
 
 /**
