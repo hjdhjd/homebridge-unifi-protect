@@ -76,13 +76,15 @@ interface BuiltCamera<C extends ProtectCamera = ProtectCamera> {
   recording: TestRecordingDispatch;
 }
 
-// One characteristic the camera details gate: the hardware flag its hint follows, the label a row names it by, and the device command its set handler issues for a
-// true set.
+// One characteristic the camera details gate: the hardware flag its hint follows, the label a row names it by, what HAP holds for the control off and on, which follows
+// the characteristic's format, and the device command its set handler issues for a true set.
 interface CameraDetail {
 
   readonly characteristic: CharacteristicKind;
   readonly featureFlags: Partial<ProtectCameraConfig["featureFlags"]>;
   readonly label: string;
+  readonly off: boolean | number;
+  readonly on: boolean | number;
   readonly payload: unknown;
 }
 
@@ -329,12 +331,14 @@ describe("camera-family observer reactions and bound read handlers (camera-react
     });
   });
 
-  // Each characteristic the camera details gate, with the hardware flag its hint follows and the device command its set handler issues for a true set.
+  // Each characteristic the camera details gate, with the hardware flag its hint follows, what HAP holds for it off and on, and the device command its set handler
+  // issues for a true set. The status indicator's format is uint8 and night vision's is bool, so HAP holds the same two states differently.
   const cameraDetails: CameraDetail[] = [
 
-    { characteristic: Characteristic.CameraOperatingModeIndicator, featureFlags: { hasLedStatus: true }, label: "status indicator",
+    { characteristic: Characteristic.CameraOperatingModeIndicator, featureFlags: { hasLedStatus: true }, label: "status indicator", off: 0, on: 1,
       payload: { ledSettings: { isEnabled: true } } },
-    { characteristic: Characteristic.NightVision, featureFlags: { hasInfrared: true }, label: "night vision", payload: { ispSettings: { irLedMode: "auto" } } }
+    { characteristic: Characteristic.NightVision, featureFlags: { hasInfrared: true }, label: "night vision", off: false, on: true,
+      payload: { ispSettings: { irLedMode: "auto" } } }
   ];
 
   /* The camera details: configureCameraDetails gates the status indicator and night vision characteristics on the CameraOperatingMode service, each on HKSV capability
@@ -355,7 +359,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       }
     };
 
-    for(const { characteristic, featureFlags, label, payload } of cameraDetails) {
+    for(const { characteristic, featureFlags, label, off, on, payload } of cameraDetails) {
 
       for(const seeded of [ true, false ]) {
 
@@ -372,13 +376,13 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
           const detail = operatingMode.getCharacteristic(characteristic);
 
-          assert.deepEqual(writesTo(built.accessory, detail), seeded ? [ true, false ] : [false],
+          assert.deepEqual(writesTo(built.accessory, detail), seeded ? [ on, off ] : [off],
             "the configure wrote the live " + label + " state as the initial value");
 
           // Plant the stale cached value again, so only a bound handler can answer the live state.
           detail.updateValue(true);
 
-          assert.equal(await triggerGet(detail), false, "a pull answers the live " + label + " state rather than the stale cached value");
+          assert.equal(await triggerGet(detail), off, "a pull answers the live " + label + " state rather than the stale cached value");
 
           await triggerSet(detail, true);
 
@@ -445,7 +449,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
     // Assert that the service carries one camera detail with its handlers bound: a pull answers the live state over a stale cached value, and a set issues the device
     // command.
-    const assertDetailBound = async (current: BuiltCamera, operatingMode: Service, { characteristic, label, payload }: CameraDetail): Promise<void> => {
+    const assertDetailBound = async (current: BuiltCamera, operatingMode: Service, { characteristic, label, off, payload }: CameraDetail): Promise<void> => {
 
       assert.equal(operatingMode.testCharacteristic(characteristic), true, "the " + label + " characteristic is present");
 
@@ -454,7 +458,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
       // Plant a stale cached value, so only a bound handler can answer the live state.
       detail.updateValue(true);
 
-      assert.equal(await triggerGet(detail), false, "a pull answers the live " + label + " state rather than the stale cached value");
+      assert.equal(await triggerGet(detail), off, "a pull answers the live " + label + " state rather than the stale cached value");
 
       await triggerSet(detail, true);
 
@@ -597,9 +601,9 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       await settle();
 
-      for(const { characteristic, label } of cameraDetails) {
+      for(const { characteristic, label, off, on } of cameraDetails) {
 
-        assert.deepEqual(writesTo(built.accessory, operatingMode.getCharacteristic(characteristic)), [ false, true ],
+        assert.deepEqual(writesTo(built.accessory, operatingMode.getCharacteristic(characteristic)), [ off, on ],
           "the registration wrote the " + label + " initial value once, and the push wrote the live state");
       }
     });
