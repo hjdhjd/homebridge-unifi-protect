@@ -10,7 +10,9 @@
  * the removal it runs, and a reboot attempt alike travel the production path. makeTestNvr is the composition root of the harness: it wires a store, a platform, a
  * dispatch, and the streaming-delegate factory into a controller a real device class can be constructed against end to end, with no FFmpeg, over HBPU's Homebridge
  * API double and the real HAP the root harness loads. A row that runs the real controller root itself builds it over the same double's platform through
- * makeRootPlatform, with a client double answering its connect port, makeConnectedClient's for a connected controller, and TestConnection as its connection monitor.
+ * makeRootPlatform, with a client double answering its connect port, makeConnectedClient's for a connected controller, and TestConnection as its connection monitor,
+ * and a row naming a broker has the root build its MQTT client through the platform double's factory, a TestMqttClientFactory of the row's own for a row that drives
+ * the double it built.
  *
  * Fidelity to the cited contracts, not invention, is the line these doubles hold: the removal decision IS ProtectNvr's own gate class and the removal it runs IS
  * ProtectNvr's own cascade class, the MQTT surface is homebridge-plugin-utils', and the API double is HBPU's own, running Homebridge's bridge bookkeeping over the
@@ -20,13 +22,14 @@
 import { APIEvent, AccessoryPersistence, FeatureOptions, MQTT_AVAILABILITY_OFFLINE, mqttTopic, onAbort, prefixedLog } from "homebridge-plugin-utils";
 import type { Camera, Chime, ProtectCameraConfig, ProtectClient, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig,
   ProtectRingtoneConfig } from "unifi-protect";
-import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory, RetiredTranslation } from "homebridge-plugin-utils";
+import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory, RetiredTranslation, createMqttClient } from "homebridge-plugin-utils";
 import type { NvrPhase, ProtectNvr } from "./nvr.ts";
 import { OVERRIDE_ADDRESS_ZONE_WARNING, isDisruptionExpected, resolveOverrideAddress } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "../options.ts";
-import { TestClock, TestLivestreamProcessFactory, TestMqttClient, TestRecordingProcessFactory, capturingLog } from "homebridge-plugin-utils/testing";
+import { TestClock, TestLivestreamProcessFactory, TestMqttClient, TestMqttClientFactory, TestRecordingProcessFactory,
+  capturingLog } from "homebridge-plugin-utils/testing";
 import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectAccessory, TestStateStore } from "../testing.helpers.ts";
 import { TestStreamingDelegateFactory, makeTestAccessory, makeTestApi } from "../testing.helpers.ts";
@@ -57,7 +60,7 @@ import { translateRetiredOptions } from "../options-retired.ts";
 // concrete object with a non-raspbian hostSystem keeps the recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions
 // engine, the log sinks, the REAL accessory persistence built over the API double and the test clock, the scoped debug gate every owner's logger asks before it
 // speaks, the livestream-process and recording-process factory interfaces (the RTSP debug adapter and the recording delegate construct their FFmpeg processes through
-// them), and the streaming-delegate factory interface.
+// them), the MQTT client factory a real controller root builds its client through, and the streaming-delegate factory interface.
 export interface TestProtectPlatform {
 
   readonly accessories: ProtectAccessory[];
@@ -79,6 +82,7 @@ export interface TestProtectPlatform {
     info: (message: string, ...params: unknown[]) => void;
     warn: (message: string, ...params: unknown[]) => void;
   };
+  readonly mqttFactory: typeof createMqttClient;
   readonly persistence: AccessoryPersistence;
   readonly pluginLog: HomebridgePluginLogging;
   readonly recordingProcessFactory: RecordingProcessFactory;
@@ -537,7 +541,9 @@ export function makeNvrConfig(options: { doorbellSettings?: ProtectNvrConfig["do
  *                  (omitted, the fallback carries no doorbell settings); livestreamProcessFactory: an optional test livestream-process factory installed on the platform
  *                  double's livestreamProcessFactory interface (omitted, a fresh default factory is created so the RTSP debug adapter constructs its FFmpeg process
  *                  through the test double); mqtt: pass true to install the recording MQTT double (the default null makes every MQTT wrapper
- *                  a no-op, matching an unconfigured broker); overrideAddress: the controller-level address override for rtspHost-chain tests; recordingProcessFactory:
+ *                  a no-op, matching an unconfigured broker); mqttFactory: the MQTT client factory installed on the platform double's mqttFactory interface, the one a
+ *                  real controller root built over the double builds its client through (omitted, a fresh TestMqttClientFactory's create, so no suite reaches a real
+ *                  broker); overrideAddress: the controller-level address override for rtspHost-chain tests; recordingProcessFactory:
  *                  an optional test recording-process factory installed on the platform double's recordingProcessFactory interface (omitted, a fresh default factory is
  *                  created so the recording delegate constructs its FFmpeg process through the test double); sharedPlatform: an optional { accessories, api } pair
  *                  captured from a double built earlier, so a second controller reconciles over the SAME platform accessories array and Homebridge API double as
@@ -555,7 +561,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
   doorbellSettings?: ProtectNvrConfig["doorbellSettings"];
   livestreamProcessFactory?: LivestreamProcessFactory;
-  mqtt?: boolean; overrideAddress?: string;
+  mqtt?: boolean; mqttFactory?: typeof createMqttClient; overrideAddress?: string;
   recordingProcessFactory?: RecordingProcessFactory;
   sharedPlatform?: { accessories: ProtectAccessory[]; api: TestHomebridgeApi }; store: TestStateStore; userOptions?: string[]; }):
 { api: TestHomebridgeApi; clock: TestClock; controller: AbortController; factory: TestStreamingDelegateFactory; logEntries: readonly TestLogEntry[];
@@ -584,6 +590,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   // argument reads it straight off params.
   const log = capturingLog();
   const livestreamProcessFactory = options.livestreamProcessFactory ?? new TestLivestreamProcessFactory();
+  const mqttFactory = options.mqttFactory ?? new TestMqttClientFactory().create;
   const recordingProcessFactory = options.recordingProcessFactory ?? new TestRecordingProcessFactory();
 
   // The MQTT double reports through the same capturing logger, so a guarded publish that fails or is cancelled lands in the log's entries alongside every other line
@@ -672,6 +679,7 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       isAccessoryClaimed: (accessory: ProtectAccessory): boolean => claims.has(accessory.UUID),
       livestreamProcessFactory: livestreamProcessFactory,
       log: log,
+      mqttFactory: mqttFactory,
       persistence: persistence,
       pluginLog: log,
       recordingProcessFactory: recordingProcessFactory,

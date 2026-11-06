@@ -36,10 +36,9 @@ import { REBOOT_EXPECTED_RETURN_MS, UNREPORTED_CONTROLLER_RECORD, canTransition,
   connectFailureReading, countActiveRecordingViews, createConnectRetryPolicy, createLivestreamEpisodeLatch, isDisruptionExpected, isInducedDisruption,
   isRequestForController, isStabilityWindowElapsed, isSuccessfulRequest, isSupportedProtectVersion, isWithinRebootRecency, resolveOverrideAddress,
   shouldResumeFromInducedReboot } from "./nvr-policy.ts";
-import { TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr,
-  restoreAccessories } from "./testing.helpers.ts";
-import { TestClock, TestMqttClient, assertNoUnhandledRejections, capturingLog, formatLogEntry, linesAt, logCount, loggedAt, settle,
-  settleUntil } from "homebridge-plugin-utils/testing";
+import { TEST_CLOCK_EPOCH, TestConnection, makeConnectedClient, makeNvrConfig, makeRootPlatform, makeTestNvr, restoreAccessories } from "./testing.helpers.ts";
+import { TestClock, TestMqttClient, TestMqttClientFactory, assertNoUnhandledRejections, expectAt, formatLogEntry, linesAt, logCount, loggedAt, settle,
+  settlePastMqttEnd, settleUntil } from "homebridge-plugin-utils/testing";
 import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestStateStore, accessoryUuid, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
@@ -2128,9 +2127,22 @@ interface LoggedInRoot {
   connection: TestConnection;
   double: TestProtectNvr;
   logEntries: readonly TestLogEntry[];
+  mqtt: Nullable<TestMqttClient>;
+  mqttCalls: TestMqttClientFactory["createCalls"];
   root: ProtectNvr;
   stop: () => Promise<void>;
   store: TestStateStore;
+}
+
+// What a row logs a root in with: the accessories restored onto the bridge, the camera records in the store, the MQTT a row asks for with how its double stands, and
+// the feature options. The MQTT options leave out the factory's clock, so each double's end grace runs on the system clock and a row advancing the root's test clock
+// never expires an end it holds.
+interface LogInOptions {
+
+  accessories?: ProtectAccessory[];
+  cameras?: ProtectCameraConfig[];
+  mqtt?: { connected?: boolean; holdEnd?: Promise<void> };
+  userOptions?: string[];
 }
 
 // A camera record the root adopts at login: the record makeCameraConfig builds, with the category and the adoption by this controller the membership reconcile reads
@@ -2149,37 +2161,35 @@ const FRONT_DOOR = adopted(makeCameraConfig({ channels: G6_PRO_ENTRY_CHANNELS, f
  * the plugin logs in, and the row's camera records in the store the root connects to. The controller reports an uptime starting now, so the removal gate stays
  * unsettled and its stability sweep never runs, and nothing but the row's own removal reaches the platform. stop ends the run: Homebridge's shutdown, the double's
  * controller and a settle, so no observe loop or process-global subscription outlives the row.
+ *
+ * The platform's MQTT factory is HBPU's test factory, so a row reads every call the root made to it. A row asking for MQTT names the refused local broker on the
+ * controller's configuration, as a user names theirs, and is handed the double the factory answered, standing as the row asked.
  */
-async function logIn(options: { accessories?: ProtectAccessory[]; cameras?: ProtectCameraConfig[]; mqtt?: TestMqttClient; userOptions?: string[] } = {}):
-Promise<LoggedInRoot> {
+async function logIn(options: LogInOptions & Required<Pick<LogInOptions, "mqtt">>): Promise<LoggedInRoot & { mqtt: TestMqttClient }>;
+
+// A row asking for no MQTT names no broker, so the root holds no client.
+async function logIn(options?: LogInOptions): Promise<LoggedInRoot>;
+
+async function logIn(options: LogInOptions = {}): Promise<LoggedInRoot> {
 
   const clock = new TestClock(TEST_CLOCK_EPOCH);
   const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: clock.now(), version: "7.3.70" };
   const store = new TestStateStore(makeProtectState({ cameras: options.cameras ?? [], nvr: nvrConfig }));
-  const { api, controller, logEntries, nvr: double } = makeTestNvr({ clock, store, userOptions: options.userOptions });
+  const factory = new TestMqttClientFactory(options.mqtt);
+  const { api, controller, logEntries, nvr: double } = makeTestNvr({ clock, mqttFactory: factory.create, store, userOptions: options.userOptions });
 
   restoreAccessories(double, options.accessories ?? []);
 
   const client = makeConnectedClient({ nvrConfig, store });
   const { platform, shutdown } = makeRootPlatform(double);
   const connects: ConnectOptions[] = [];
-  const root = new ProtectNvr(platform, double.config, async (connect: ConnectOptions): Promise<ProtectClient> => {
+  const config = (options.mqtt === undefined) ? double.config : { ...double.config, mqttUrl: "mqtt://127.0.0.1:1" };
+  const root = new ProtectNvr(platform, config, async (connect: ConnectOptions): Promise<ProtectClient> => {
 
     connects.push(connect);
 
     return client;
   });
-
-  // The root builds no client of its own beside one already standing, which is how an MQTT double reaches a row.
-  root.mqtt = (options.mqtt ?? null) as unknown as ProtectNvr["mqtt"];
-
-  await root.login();
-  await settle();
-
-  // The logger the root handed the library, which is the one way the library's lines reach it.
-  const clientLog = connects[0]?.log;
-
-  assert.ok(clientLog, "the root hands the library its logger at connect");
 
   const stop = async (): Promise<void> => {
 
@@ -2189,8 +2199,92 @@ Promise<LoggedInRoot> {
     await settle();
   };
 
-  return { api, clientLog, clock, connection: client.connection as unknown as TestConnection, double, logEntries, root, stop, store };
+  // A login or a setup read that fails stops the root before the row fails, so a red row ends rather than leaving what the root stood up running behind it.
+  try {
+
+    await root.login();
+    await settle();
+
+    // The logger the root handed the library, which is the one way the library's lines reach it.
+    const clientLog = connects[0]?.log;
+
+    assert.ok(clientLog, "the root hands the library its logger at connect");
+
+    const mqtt = factory.createCalls[0]?.client ?? null;
+
+    assert.ok((options.mqtt === undefined) || mqtt, "a root given a broker builds its client through the platform's factory");
+
+    return { api, clientLog, clock, connection: client.connection as unknown as TestConnection, double, logEntries, mqtt, mqttCalls: factory.createCalls, root, stop,
+      store };
+  } catch(error) {
+
+    await stop();
+
+    throw error;
+  }
 }
+
+describe("the controller root's MQTT client", () => {
+
+  // A configuration naming no broker resolves to MQTT off, so the factory is never asked and nothing stands for the owners to publish through.
+  test("a root given no broker never calls its platform's MQTT factory and holds no client", async () => {
+
+    const { mqttCalls, root, stop } = await logIn();
+
+    try {
+
+      assert.deepEqual(mqttCalls, [], "the factory was never called");
+      assert.equal(root.mqtt, null, "and the root holds no client");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // The client prefixes every topic, writes on the log it is handed and ends with the signal it is handed, so the factory is handed each of the root's own.
+  test("a root given a broker calls the factory once with the resolved settings and its own log, on its own signal", async () => {
+
+    const { double, mqtt, mqttCalls, root, stop } = await logIn({ mqtt: {} });
+
+    try {
+
+      const { config, init } = expectAt(mqttCalls, 0, "the root's MQTT client");
+
+      assert.equal(mqttCalls.length, 1, "login builds one client");
+      assert.deepEqual(config, { brokerUrl: "mqtt://127.0.0.1:1", log: root.log, topicPrefix: double.config.mqttTopic }, "the resolved settings, with the root's log");
+      assert.equal(init?.signal, root.signal, "on the root's own signal");
+      assert.equal(root.mqtt, mqtt, "and the root holds the client the factory answered");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  // makeTestNvr's own factory is HBPU's test factory, so a suite naming a broker without handing a factory of its own still reaches no real broker.
+  test("a root given a broker over makeTestNvr's default factory holds HBPU's test double", async () => {
+
+    const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: TEST_CLOCK_EPOCH, version: "7.3.70" };
+    const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
+    const { controller, nvr: double } = makeTestNvr({ store });
+    const { platform, shutdown } = makeRootPlatform(double);
+    const root = new ProtectNvr(platform, { ...double.config, mqttUrl: "mqtt://127.0.0.1:1" },
+      async (): Promise<ProtectClient> => makeConnectedClient({ nvrConfig, store }));
+
+    try {
+
+      await root.login();
+      await settle();
+
+      assert.ok(root.mqtt instanceof TestMqttClient, "the root's client is the test double");
+    } finally {
+
+      shutdown();
+      controller.abort();
+
+      await settle();
+    }
+  });
+});
 
 describe("the controller root's MQTT availability", () => {
 
@@ -2202,22 +2296,10 @@ describe("the controller root's MQTT availability", () => {
     return mqtt.published.filter(({ topic }) => topic === (mac + "/availability")).map(({ payload, retain }) => String(payload) + (retain ? " retained" : ""));
   }
 
-  // An MQTT double recording its own lines, standing with no broker session unless a row says otherwise.
-  function standMqtt({ connected = false }: { connected?: boolean } = {}): { lines: readonly TestLogEntry[]; mqtt: TestMqttClient } {
-
-    const log = capturingLog();
-    const mqtt = new TestMqttClient({ log });
-
-    mqtt.connected = connected;
-
-    return { lines: log.entries, mqtt };
-  }
-
   // Liveviews restate themselves on a session, so a session's order reads against something the controller's statement has to come ahead of.
   test("a session opens with HBPU's statement and then the controller's, ahead of every other restatement", async () => {
 
-    const { mqtt } = standMqtt();
-    const { stop } = await logIn({ cameras: [PORCH], mqtt });
+    const { mqtt, stop } = await logIn({ cameras: [PORCH], mqtt: { connected: false } });
 
     try {
 
@@ -2237,8 +2319,7 @@ describe("the controller root's MQTT availability", () => {
   // The loop states on every transition, and the verdict decides what it says, so a blip the verdict does not read leaves the statement standing.
   test("the controller and its devices state each transition of the verdict, and a blip it does not read says nothing", async () => {
 
-    const { mqtt } = standMqtt({ connected: true });
-    const { connection, stop } = await logIn({ cameras: [PORCH], mqtt });
+    const { connection, mqtt, stop } = await logIn({ cameras: [PORCH], mqtt: {} });
 
     try {
 
@@ -2280,8 +2361,7 @@ describe("the controller root's MQTT availability", () => {
   test("a device leaving the adopted set is stated offline ahead of the stability gate, as a vanished record and as an unadopted one", async () => {
 
     const SHED = adopted(makeCameraConfig({ channels: G2_PRO_CHANNELS, id: "camera-shed", mac: "74ACB9000102", name: "Shed Camera" }));
-    const { mqtt } = standMqtt({ connected: true });
-    const { root, stop, store } = await logIn({ cameras: [ PORCH, SHED ], mqtt });
+    const { mqtt, root, stop, store } = await logIn({ cameras: [ PORCH, SHED ], mqtt: {} });
 
     try {
 
@@ -2314,8 +2394,7 @@ describe("the controller root's MQTT availability", () => {
     unclaimed.context = { mac: "74ACB9000103", nvr: CONTROLLER_MAC };
     foreign.context = { mac: "74ACB9000107", nvr: "AABBCCDDEEFF" };
 
-    const { mqtt } = standMqtt();
-    const { double, root, stop } = await logIn({ accessories: [ foreign, unclaimed ], cameras: [ PORCH, removed ], mqtt });
+    const { double, mqtt, root, stop } = await logIn({ accessories: [ foreign, unclaimed ], cameras: [ PORCH, removed ], mqtt: { connected: false } });
 
     try {
 
@@ -2350,8 +2429,7 @@ describe("the controller root's MQTT availability", () => {
 
   test("a removal during a session states the device offline once, and a later session says nothing more", async () => {
 
-    const { mqtt } = standMqtt({ connected: true });
-    const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+    const { double, mqtt, root, stop } = await logIn({ cameras: [PORCH], mqtt: {} });
 
     try {
 
@@ -2382,8 +2460,7 @@ describe("the controller root's MQTT availability", () => {
   // The session that returns is what replaces the online this camera left retained.
   test("a removal in a mid-run outage states one offline at the session that returns, and nothing at one more", async () => {
 
-    const { mqtt } = standMqtt({ connected: true });
-    const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+    const { double, mqtt, root, stop } = await logIn({ cameras: [PORCH], mqtt: {} });
 
     try {
 
@@ -2419,8 +2496,7 @@ describe("the controller root's MQTT availability", () => {
   // What comes back under the same MAC states its own availability, so a removal earlier in the run leaves nothing to contradict it.
   test("a device removed and adopted again in the same run is stated only by itself", async () => {
 
-    const { mqtt } = standMqtt();
-    const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+    const { double, mqtt, root, stop } = await logIn({ cameras: [PORCH], mqtt: { connected: false } });
 
     try {
 
@@ -2444,8 +2520,7 @@ describe("the controller root's MQTT availability", () => {
   // a standing session already heard.
   test("a MAC passed over at a session is dropped, so a later removal is not repeated", async () => {
 
-    const { mqtt } = standMqtt();
-    const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+    const { double, mqtt, root, stop } = await logIn({ cameras: [PORCH], mqtt: { connected: false } });
 
     try {
 
@@ -2481,8 +2556,7 @@ describe("the controller root's MQTT availability", () => {
   // What a held MAC is owed reads who serves it, never the controller's verdict, so a session starting through a lost controller states it as any other does.
   test("a held MAC is stated at a session that starts through a lost controller", async () => {
 
-    const { mqtt } = standMqtt();
-    const { connection, double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+    const { connection, double, mqtt, root, stop } = await logIn({ cameras: [PORCH], mqtt: { connected: false } });
 
     try {
 
@@ -2506,8 +2580,7 @@ describe("the controller root's MQTT availability", () => {
   // A removal that fails leaves its accessory standing and claimed, which no session restates, with the device already let go, so the hold alone speaks for it.
   test("a removal whose unregister throws with no session states one offline at the first session, none at the second, and online on re-adoption", async () => {
 
-    const { mqtt } = standMqtt();
-    const { api, double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+    const { api, double, mqtt, root, stop } = await logIn({ cameras: [PORCH], mqtt: { connected: false } });
 
     try {
 
@@ -2550,8 +2623,7 @@ describe("the controller root's MQTT availability", () => {
   // serves the MAC and the hold alone says so.
   test("a re-adoption whose setup throws states one offline at the first session", async (t) => {
 
-    const { mqtt } = standMqtt();
-    const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+    const { double, mqtt, root, stop } = await logIn({ cameras: [PORCH], mqtt: { connected: false } });
 
     try {
 
@@ -2586,8 +2658,7 @@ describe("the controller root's MQTT availability", () => {
 
     moved.context = { mac: PORCH.mac, nvr: "AABBCCDDEEFF" };
 
-    const { mqtt } = standMqtt();
-    const { double, root, stop } = await logIn({ cameras: [PORCH], mqtt });
+    const { double, mqtt, root, stop } = await logIn({ cameras: [PORCH], mqtt: { connected: false } });
 
     try {
 
@@ -2615,8 +2686,8 @@ describe("the controller root's MQTT availability", () => {
 
     restored.context = { mac: disabled.mac, nvr: CONTROLLER_MAC };
 
-    const { mqtt } = standMqtt();
-    const { double, stop } = await logIn({ accessories: [restored], cameras: [disabled], mqtt, userOptions: ["Disable.Device." + disabled.mac] });
+    const { double, mqtt, stop } = await logIn({ accessories: [restored], cameras: [disabled], mqtt: { connected: false },
+      userOptions: ["Disable.Device." + disabled.mac] });
 
     try {
 
@@ -2638,8 +2709,7 @@ describe("the controller root's MQTT availability", () => {
 
     stray.context = { nvr: CONTROLLER_MAC };
 
-    const { mqtt } = standMqtt();
-    const { double, stop } = await logIn({ accessories: [stray], mqtt });
+    const { double, mqtt, stop } = await logIn({ accessories: [stray], mqtt: { connected: false } });
 
     try {
 
@@ -2663,8 +2733,7 @@ describe("the controller root's MQTT availability", () => {
 
     orphan.context = { nvr: CONTROLLER_MAC, packageCamera: "74ACB9000108" };
 
-    const { mqtt } = standMqtt({ connected: true });
-    const { double, root, stop } = await logIn({ accessories: [orphan], mqtt });
+    const { double, mqtt, root, stop } = await logIn({ accessories: [orphan], mqtt: {} });
 
     try {
 
@@ -2694,8 +2763,7 @@ describe("the controller root's MQTT availability", () => {
 
     restored.context = { mac: disabled.mac, nvr: CONTROLLER_MAC };
 
-    const { mqtt } = standMqtt({ connected: true });
-    const { double, stop } = await logIn({ accessories: [restored], cameras: [ disabled, neverAdded ], mqtt,
+    const { double, mqtt, stop } = await logIn({ accessories: [restored], cameras: [ disabled, neverAdded ], mqtt: {},
       userOptions: [ "Disable.Device." + disabled.mac, "Disable.Device." + neverAdded.mac ] });
 
     try {
@@ -2721,8 +2789,7 @@ describe("the controller root's MQTT availability", () => {
   // Aborting first would release every word with the lifetime it lives under, so what the row reads is the words themselves and no complaint that any went unsaid.
   test("shutdown states the controller's and each device's offline, and only then ends the controller's lifetime", async () => {
 
-    const { lines, mqtt } = standMqtt({ connected: true });
-    const { root, stop } = await logIn({ cameras: [PORCH], mqtt });
+    const { logEntries, mqtt, root, stop } = await logIn({ cameras: [PORCH], mqtt: {} });
 
     try {
 
@@ -2737,7 +2804,7 @@ describe("the controller root's MQTT availability", () => {
       assert.equal(statements(mqtt, PORCH.mac).at(-1), "offline retained", "and the camera's");
       assert.deepEqual(signalAtWords, [false], "each stated while the controller's lifetime held");
       assert.equal(root.signal.aborted, true, "which the shutdown then ended");
-      assert.equal(lines.some(({ message }) => message.includes("went unsaid")), false, "with no word left unsaid");
+      assert.equal(logEntries.some(({ message }) => message.includes("went unsaid")), false, "with no word left unsaid");
     } finally {
 
       await stop();
@@ -2748,8 +2815,7 @@ describe("the controller root's MQTT availability", () => {
   // of the session would never see the word that ends it.
   test("the controller's final word goes out past the change gate, on a topic that already reads offline", async () => {
 
-    const { mqtt } = standMqtt({ connected: true });
-    const { connection, root, stop } = await logIn({ mqtt });
+    const { connection, mqtt, root, stop } = await logIn({ mqtt: {} });
 
     try {
 
@@ -3455,8 +3521,12 @@ describe("the controller root's client logger through a scheduled reboot", () =>
   const OVERDUE_LINE = "The Protect controller has not returned from its scheduled reboot.";
 
   // Log a root in and run its schedule to the moment the controller accepts the command. A genuine reboot drops the connection within seconds, so this one reads
-  // unhealthy, which leaves the no-op confirmation inert and the outage the row's own to stand.
-  async function acceptReboot(options: Parameters<typeof logIn>[0] = {}): Promise<LoggedInRoot> {
+  // unhealthy, which leaves the no-op confirmation inert and the outage the row's own to stand. A row asking for MQTT is handed the double, as logIn hands it.
+  async function acceptReboot(options: LogInOptions & Required<Pick<LogInOptions, "mqtt">>): Promise<LoggedInRoot & { mqtt: TestMqttClient }>;
+
+  async function acceptReboot(options?: LogInOptions): Promise<LoggedInRoot>;
+
+  async function acceptReboot(options: LogInOptions = {}): Promise<LoggedInRoot> {
 
     const logged = await logIn(options);
 
@@ -3817,12 +3887,8 @@ describe("the controller root's client logger through a scheduled reboot", () =>
   // the gate's opening shows: nothing has been torn down yet, so a line the library says here is a true one.
   test("a shutdown in the middle of a reboot, an MQTT client still ending, opens the gate with a warn and an error showing", async () => {
 
-    const mqtt = new TestMqttClient({ log: capturingLog() });
-
-    mqtt.connected = true;
-
-    const { clientLog, connection, double, logEntries, root, stop } = await acceptReboot({ mqtt });
     const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+    const { clientLog, connection, double, logEntries, root, stop } = await acceptReboot({ mqtt: { holdEnd: promise } });
 
     try {
 
@@ -3830,8 +3896,9 @@ describe("the controller root's client logger through a scheduled reboot", () =>
 
       assert.equal(root.reboot.isRebootOnTime, true, "the accepted command closed the gate");
 
-      mqtt.onEnd(async (): Promise<void> => promise);
       double.platform.api.emit(APIEvent.SHUTDOWN);
+
+      await settlePastMqttEnd();
 
       assert.equal(root.phase, "rebooting", "the client's end holds the terminal phase back");
       assert.equal(root.reboot.isRebootOnTime, false, "with the gate already open");
@@ -3843,6 +3910,31 @@ describe("the controller root's client logger through a scheduled reboot", () =>
     } finally {
 
       resolve();
+
+      await stop();
+    }
+  });
+
+  /* The control for the held shutdown above: with nothing holding it, the end has finished once settlePastMqttEnd resolves, so the held row's reads measure its hold.
+   * The settle starts ahead of the event, in the same turn, so its turns count from the moment Homebridge asks for the stop: a listener that waited a turn before
+   * beginning the end would leave it unfinished when the settle resolves, a delay that a settle started after the event would absorb.
+   */
+  test("a shutdown in the middle of a reboot, nothing holding the MQTT end, finishes the end within the turns an unheld end takes", async () => {
+
+    const { connection, double, mqtt, stop } = await acceptReboot({ mqtt: {} });
+
+    try {
+
+      connection.isRebooting = true;
+
+      const past = settlePastMqttEnd();
+
+      double.platform.api.emit(APIEvent.SHUTDOWN);
+
+      await past;
+
+      assert.equal(mqtt.signal.aborted, true, "the client's end has finished");
+    } finally {
 
       await stop();
     }
@@ -3900,20 +3992,17 @@ describe("stopping the controller", () => {
    */
   test("a second shutdown during a held MQTT end runs the sequence once, and a later Homebridge shutdown repeats nothing", async () => {
 
-    const mqtt = new TestMqttClient({ log: capturingLog() });
-
-    mqtt.connected = true;
-
-    const { double, root, stop } = await logIn({ mqtt });
     const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+    const { double, mqtt, root, stop } = await logIn({ mqtt: { holdEnd: promise } });
+    const availabilityTopic = makeNvrConfig().mac + "/availability";
     const disposals = countDisposals(root);
-
-    mqtt.onEnd(async (): Promise<void> => promise);
 
     try {
 
       const first = root.shutdown();
       const second = root.shutdown();
+
+      await settlePastMqttEnd();
 
       assert.equal(root.phase, "running", "the held end holds the terminal phase back");
       assert.equal(root.signal.aborted, false, "and the signal with it");
@@ -3926,7 +4015,8 @@ describe("stopping the controller", () => {
 
       assert.equal(root.phase, "shuttingDown");
       assert.equal(root.signal.aborted, true);
-      assert.equal(mqtt.signal.aborted, true, "the client's end ran");
+      assert.deepEqual(mqtt.publishedTo(availabilityTopic).at(-1), { payload: "offline", retain: true, topic: availabilityTopic },
+        "the client's end stated the controller's offline word");
       assert.equal(disposals(), 1, "the sequence ran once");
 
       double.platform.api.emit(APIEvent.SHUTDOWN);
@@ -3937,6 +4027,30 @@ describe("stopping the controller", () => {
     } finally {
 
       resolve();
+
+      await stop();
+    }
+  });
+
+  /* The control for the held stops in this suite: with nothing holding it, the end a stop begins has finished once settlePastMqttEnd resolves, so a held row's reads
+   * measure its hold. The settle starts ahead of the stop, in the same turn, so its turns count from the moment the stop is asked for: a sequence that waited a turn
+   * before beginning the end would leave it unfinished when the settle resolves, a delay that a settle started after the stop would absorb.
+   */
+  test("a stop with nothing holding its MQTT end finishes the end within the turns an unheld end takes", async () => {
+
+    const { mqtt, root, stop } = await logIn({ mqtt: {} });
+
+    try {
+
+      const past = settlePastMqttEnd();
+      const stopping = root.shutdown();
+
+      await past;
+
+      assert.equal(mqtt.signal.aborted, true, "the client's end has finished");
+
+      await stopping;
+    } finally {
 
       await stop();
     }
@@ -3974,41 +4088,43 @@ describe("stopping the controller", () => {
 
   /* A controller up past the stability window has its sweep armed and due the moment it reaches running, on a macrotask the held end gives it. Only the clear ahead of
    * the end keeps it out, because the transition's own clear waits behind the same hold, and only the race between a yield and a one-millisecond timer would hide its
-   * loss on a real clock.
+   * loss on a real clock. The reads inside the hold come once the turns an end nothing holds takes to finish have passed, so they read what the hold keeps back.
    */
   test("a long-up controller stopped with an orphan, its end held and the clock advanced, fires no sweep and removes nothing", async () => {
 
     const clock = new TestClock(TEST_CLOCK_EPOCH);
     const nvrConfig: ProtectNvrConfig = { ...makeNvrConfig(), firmwareVersion: "4.3.6", upSince: 1, version: "7.3.70" };
     const store = new TestStateStore(makeProtectState({ nvr: nvrConfig }));
-    const { controller, logEntries, nvr: double } = makeTestNvr({ clock, store });
+    const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+    // The factory is built with no clock, so the double's end grace runs on the system clock and the advance inside the hold, which the sweep's window needs, never
+    // expires the held end.
+    const factory = new TestMqttClientFactory({ holdEnd: promise });
+    const { controller, logEntries, nvr: double } = makeTestNvr({ clock, mqttFactory: factory.create, store });
     const orphan = makeTestAccessory("Orphan", "AABBCCFFFFFF");
 
     orphan.context = { mac: "AABBCCFFFFFF", nvr: nvrConfig.mac };
     restoreAccessories(double, [orphan]);
 
     const { platform, shutdown } = makeRootPlatform(double);
-    const root = new ProtectNvr(platform, double.config, async (): Promise<ProtectClient> => makeConnectedClient({ nvrConfig, store }));
-    const mqtt = new TestMqttClient({ log: capturingLog() });
-    const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+    const root = new ProtectNvr(platform, { ...double.config, mqttUrl: "mqtt://127.0.0.1:1" },
+      async (): Promise<ProtectClient> => makeConnectedClient({ nvrConfig, store }));
     // A sweep that finds the orphan opens by saying it is delaying the removal, so that line, ahead of any removal, is what shows the sweep ran.
     const swept = (): boolean => logEntries.some(({ message }) => [ "Delaying", "Removing" ].some((word) => message.includes(word)));
-
-    mqtt.connected = true;
-    mqtt.onEnd(async (): Promise<void> => promise);
-    root.mqtt = mqtt as unknown as ProtectNvr["mqtt"];
 
     try {
 
       await root.login();
 
+      assert.ok(expectAt(factory.createCalls, 0, "the root's MQTT client").client, "the root built its client through the factory, whose double holds the end");
       assert.equal(root.removals.removalStable, true, "the controller is past the window, so its sweep is armed and due");
 
       const stopping = root.shutdown();
 
       clock.advance(PROTECT_NVR_REMOVAL_STABILITY_WINDOW);
 
-      await settle();
+      assert.ok(factory.holdReached, "the stop's end reached its hold");
+
+      await settlePastMqttEnd();
 
       assert.equal(root.signal.aborted, false, "the end still holds");
       assert.equal(swept(), false, "the sweep did not run inside the hold");

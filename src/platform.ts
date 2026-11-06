@@ -3,7 +3,7 @@
  * platform.ts: homebridge-unifi-protect platform class.
  */
 import type { API, DynamicPlatformPlugin, Logging } from "homebridge";
-import { APIEvent, AccessoryPersistence, FeatureOptions, FfmpegCodecs, Perms, RtpPortAllocator, addressListingForm, debugGatedLog, formatErrorMessage,
+import { APIEvent, AccessoryPersistence, FeatureOptions, FfmpegCodecs, Perms, RtpPortAllocator, addressListingForm, createMqttClient, debugGatedLog, formatErrorMessage,
   livestreamProcessFactory, notResponding, recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
 import type { Clock, HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory, RetiredTranslation } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.ts";
@@ -43,6 +43,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly featureOptions: FeatureOptions;
   public readonly livestreamProcessFactory: LivestreamProcessFactory;
   public readonly log: Logging;
+  public readonly mqttFactory: typeof createMqttClient;
   public readonly persistence: AccessoryPersistence;
   public readonly pluginLog: HomebridgePluginLogging;
   public readonly recordingProcessFactory: RecordingProcessFactory;
@@ -50,7 +51,8 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly rtpPorts: RtpPortAllocator;
   public readonly streamingDelegateFactory: StreamingDelegateFactory;
 
-  constructor(log: Logging, config: ProtectPlatformConfig | undefined, api: API) {
+  // Homebridge constructs the platform with three arguments. The fourth is a suite's, handing over the factory every controller builds its MQTT client through.
+  constructor(log: Logging, config: ProtectPlatformConfig | undefined, api: API, { mqttFactory = createMqttClient }: { mqttFactory?: typeof createMqttClient } = {}) {
 
     this.accessories = [];
     this.api = api;
@@ -71,6 +73,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, [...retiredTranslation.configuredOptions]);
     this.livestreamProcessFactory = livestreamProcessFactory;
     this.log = log;
+    this.mqttFactory = mqttFactory;
 
     // Say once that a translation happened, and where the permanent fix is. It is a warning rather than an informational line because the translation is exact but
     // in-memory: the configuration on disk still speaks the older grammar until a settings save rewrites it.

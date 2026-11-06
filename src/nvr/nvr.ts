@@ -3,8 +3,8 @@
  * nvr.ts: NVR device class for UniFi Protect.
  */
 import type { API, HAP } from "homebridge";
-import { APIEvent, MQTT_AVAILABILITY_OFFLINE, MQTT_AVAILABILITY_ONLINE, createMqttClient, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter,
-  membershipDelta, mqttConnectionSettings, mqttTopic, prefixedLog, repeatDemotedLog, retry, superviseLoop } from "homebridge-plugin-utils";
+import { APIEvent, MQTT_AVAILABILITY_OFFLINE, MQTT_AVAILABILITY_ONLINE, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, membershipDelta,
+  mqttConnectionSettings, mqttTopic, prefixedLog, repeatDemotedLog, retry, superviseLoop } from "homebridge-plugin-utils";
 import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
   ProtectDeviceConfig, ProtectLogging, ProtectNvrConfig, StateStore } from "unifi-protect";
 import type { ConnectFailure, ConnectFailureType } from "./nvr-policy.ts";
@@ -978,7 +978,7 @@ export class ProtectNvr {
      */
     const mqttSettings = mqttConnectionSettings({ config: this.config, controller: this.ufp.mac, featureOptions: this.platform.featureOptions });
 
-    this.mqtt ??= mqttSettings && createMqttClient({ ...mqttSettings, log: this.log }, { signal: this.signal });
+    this.mqtt = mqttSettings && this.platform.mqttFactory({ ...mqttSettings, log: this.log }, { signal: this.signal });
 
     this.#configureAvailability();
 
