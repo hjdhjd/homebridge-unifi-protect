@@ -5,18 +5,17 @@
 import type { API, DynamicPlatformPlugin, Logging } from "homebridge";
 import { APIEvent, AccessoryPersistence, FeatureOptions, FfmpegCodecs, Perms, RtpPortAllocator, addressListingForm, debugGatedLog, formatErrorMessage,
   livestreamProcessFactory, notResponding, recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
-import type { Clock, HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
+import type { Clock, HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory, RetiredTranslation } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.ts";
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
-import type { LegacyFeatureOptions } from "./options-legacy.ts";
 import type { ProtectBase } from "./devices/device-base.ts";
 import { ProtectNvr } from "./nvr/nvr.ts";
 import type { ProtectOptions } from "./options.ts";
 import type { StreamingDelegateFactory } from "./media/stream-delegate.ts";
-import { analyzeLegacyFeatureOptions } from "./options-legacy.ts";
 import ffmpegPath from "ffmpeg-for-homebridge";
 import { streamingDelegateFactory } from "./media/stream.ts";
+import { translateRetiredOptions } from "./options-retired.ts";
 
 // Whether a configured entry is an object, which an entry has to be before anything in it can be read. A hand edit can leave anything in the list, and the type the
 // configuration is read through cannot say so, so the check takes the entry as unknown.
@@ -42,12 +41,12 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly config: ProtectOptions;
   private readonly controllers: ProtectNvr[];
   public readonly featureOptions: FeatureOptions;
-  public readonly legacyOptions: LegacyFeatureOptions;
   public readonly livestreamProcessFactory: LivestreamProcessFactory;
   public readonly log: Logging;
   public readonly persistence: AccessoryPersistence;
   public readonly pluginLog: HomebridgePluginLogging;
   public readonly recordingProcessFactory: RecordingProcessFactory;
+  public readonly retiredTranslation: RetiredTranslation;
   public readonly rtpPorts: RtpPortAllocator;
   public readonly streamingDelegateFactory: StreamingDelegateFactory;
 
@@ -64,22 +63,21 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
 
     /* The configured options as the engine should see them. A configuration written for an earlier version of this plugin can name options the current catalog does not
      * declare, and several of those shapes are not merely stale - read through that catalog they decompose into values of the very options that supersede them. The
-     * analysis rewrites each such shape into the current grammar before the engine is built, and reports which families still need the runtime overlay for their exact
-     * historic meaning. The raw entries stay where they already live, on this.config.options, which is what the overlay reads.
+     * translation rewrites each such shape into the current grammar before the engine is built, and carries the runtime overlay that gives each family still needing
+     * it its exact historic meaning. The overlay reads the translation it was built with, not this.config.options, which keeps the raw entries as they were written.
      */
-    const legacyOptions = analyzeLegacyFeatureOptions(config?.options ?? []);
+    const retiredTranslation = translateRetiredOptions(config?.options ?? []);
 
-    this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, [...legacyOptions.engineOptions]);
-    this.legacyOptions = legacyOptions;
+    this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, [...retiredTranslation.configuredOptions]);
     this.livestreamProcessFactory = livestreamProcessFactory;
     this.log = log;
 
     // Say once that a translation happened, and where the permanent fix is. It is a warning rather than an informational line because the translation is exact but
     // in-memory: the configuration on disk still speaks the older grammar until a settings save rewrites it.
-    if(legacyOptions.translated.length) {
+    if(retiredTranslation.translated.length) {
 
       this.log.warn("Feature option entries from an earlier version of this plugin were translated automatically at startup. Open the plugin settings in the " +
-        "Homebridge UI to migrate your configuration permanently.", { entries: legacyOptions.translated });
+        "Homebridge UI to migrate your configuration permanently.", { entries: retiredTranslation.translated });
     }
 
     // The plugin-side logging root. Debug is gated at global scope and emitted through warn; the other levels route to the Homebridge logger, which formats each
@@ -87,6 +85,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     // lives here and nowhere else; this.log stays the raw Homebridge logger for direct platform-level output.
     this.pluginLog = debugGatedLog(this.log, () => this.testDebug({}));
     this.recordingProcessFactory = recordingProcessFactory;
+    this.retiredTranslation = retiredTranslation;
     this.rtpPorts = new RtpPortAllocator();
     this.streamingDelegateFactory = streamingDelegateFactory;
 

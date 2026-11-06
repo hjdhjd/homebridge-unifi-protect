@@ -9,6 +9,7 @@ import { CONTROLLER_LISTED_WARNING, deviceListResult, makeControllerList, makePr
 import { addressListedElsewhere, addressListingForm } from "homebridge-plugin-utils/webui/address.js";
 import { createActionGuard, withDeadline } from "homebridge-plugin-utils/webUi-liveness.mjs";
 import { makeControllerActions, makeControllerLogin } from "./lib/webui/controller-actions.js";
+import { maskSecrets, mountSecretReveals } from "homebridge-plugin-utils/webUi-secret.mjs";
 import { FeatureOptions } from "homebridge-plugin-utils/featureOptions.js";
 import { PluginConfigSession } from "homebridge-plugin-utils/pluginConfigSession.mjs";
 import { createSaveFlow } from "homebridge-plugin-utils/webui/saveflow.js";
@@ -58,10 +59,11 @@ const firstRunOnStart = ({ config }) => {
   return true;
 };
 
-/* The classes the login result line wears in every state. The tone rides on top of this base, so the line's blank, failure, and success states are one layout with
- * one color decision between them rather than a separate class string per state, which is what would let the states drift apart.
+/* The classes the login result line wears in every state, HBPU's page kit reserving the line's height. The tone is added to this base, so the line's blank, failure,
+ * and success states are one layout with one color decision between them rather than a separate class string per state, which is what would let the states drift
+ * apart.
  */
-const LOGIN_RESULT_CLASS = "hbup-result small mt-2";
+const LOGIN_RESULT_CLASS = "fo-result small mt-2";
 
 /* Paint one card's login result line in the tone its outcome calls for - a Bootstrap text color, or an empty string for the blank state. Guidance sentences render
  * as text nodes separated by <br> elements, and the failure detail - when present - renders inside a <code class="text-danger"> via textContent, so a
@@ -693,6 +695,9 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
 
       disarmRemoval();
       renderVerdict({ row });
+
+      // A card describing another controller starts masked, so a password the user revealed for the last one is never left on screen beside the next.
+      maskSecrets(card);
     },
 
     // What the user has typed, which is what every validation and every write reads. The address is read trimmed, because the plugin reads a listed controller's
@@ -702,11 +707,9 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
     verdict
   };
 
-  // Each masked credential's reveal, bound from the markup itself: a toggle declares the field it serves, so the card grows a reveal without this wiring changing.
-  for(const toggle of card.querySelectorAll("[data-reveal]")) {
-
-    toggle.addEventListener("click", () => toggleReveal({ input: fields[toggle.dataset.reveal], toggle }), { signal: cardSignal });
-  }
+  // Each masked credential's reveal, given by HBPU from the markup itself: a secret field's wrapper names what it holds, so the card grows a reveal without this
+  // wiring changing, and the reveal lasts as long as the card does.
+  mountSecretReveals({ root: card, signal: cardSignal });
 
   // An edit to any credential retires the verdict standing beside it, so the line never describes anything but the current input.
   for(const field of Object.values(fields)) {
@@ -860,8 +863,8 @@ const showControllerErrorPanel = ({ controller, panel, signal }) => {
 
   if(errorPanel?.signal !== signal) {
 
-    // The compact-card class keys the page's style block, so this card's controls render at the panel's own type rhythm rather than the full-size card scale.
-    panel.classList.add("hbup-compact-card");
+    // HBPU's page kit gives a compact card's controls the panel's own type rhythm, so this card's controls render at it rather than at the full-size card scale.
+    panel.classList.add("fo-compact-card");
 
     errorPanel = { editor: mountControllerEditor({
 
@@ -897,9 +900,9 @@ const showProtectDetails = ({ device, panel, signal }) => {
     const dock = document.createElement("div");
     const statsRegion = document.createElement("div");
 
-    // The compact-card class keys the page's style block, so the standing editor's controls render at the panel's own type rhythm rather than the full-size
+    // HBPU's page kit gives a compact card's controls the panel's own type rhythm, so the standing editor's controls render at it rather than at the full-size
     // card scale.
-    dock.className = "hbup-compact-card";
+    dock.className = "fo-compact-card";
 
     panel.replaceChildren(statsRegion, dock);
 
@@ -1140,25 +1143,6 @@ const onValidateLogin = async ({ button, card }) => {
   }
 };
 
-// A reveal toggle's accessible name, naming what the NEXT click will do rather than what the field is doing now, which is what a control announced as a button
-// wants to say. The subject is the field's own plain name, so each toggle on the page announces which credential it acts on.
-const revealLabel = (subject, revealed) => (revealed ? "Hide the " : "Show the ") + subject + ".";
-
-/* Flip one masked credential between hidden and shown. A toggle names the field it serves and the subject its accessible name uses on its own data attributes, so a
- * field gains a reveal by carrying a button in the markup rather than by growing a handler of its own.
- *
- * The field's type, the toggle's accessible name, and its pressed state describe one state between them, so they are written together and no path can move one and
- * leave the others saying something else. Nothing here touches a value: whether a secret is on screen right now says nothing about the configuration.
- */
-const toggleReveal = ({ input, toggle }) => {
-
-  const revealed = input.type === "password";
-
-  input.type = revealed ? "text" : "password";
-  toggle.setAttribute("aria-label", revealLabel(toggle.dataset.revealSubject, revealed));
-  toggle.setAttribute("aria-pressed", revealed ? "true" : "false");
-};
-
 /* The first-run page's own card, mounted into the slot the template vacated. It is mounted here rather than at first-run start because the page's markup is present
  * before this module loads while the first-run hooks run later, so one mount at load serves every call the framework makes into them afterwards.
  */
@@ -1182,16 +1166,17 @@ const closeControllerEditor = () => {
 
 /* Open a blank card as the whole of the feature-options view's main content.
  *
- * The card is handed to the framework's takeover inside an element of its own, made fresh for each open and carrying the compact-card class the page's style
- * block keys on, and the framework hides its own regions while the card holds the area and restores them when the takeover ends. The handle's signal is the
- * card's lifetime, so the card's listeners leave with the takeover however it ends. A second open takes the area again and the framework ends the first card's
- * takeover as it does, so the area passes from one card to the next with no flash of the page beneath.
+ * The card is handed to the framework's takeover inside an element of its own, made fresh for each open and carrying HBPU's page kit compact-card class, which
+ * renders a working placement's controls at the panel's own type scale; only the first-run card keeps the stock control scale, because there the card is the page.
+ * The framework hides its own regions while the card holds the area and restores them when the takeover ends. The handle's signal is the card's lifetime, so the
+ * card's listeners leave with the takeover however it ends. A second open takes the area again and the framework ends the first card's takeover as it does, so
+ * the area passes from one card to the next with no flash of the page beneath.
  */
 const openControllerEditor = () => {
 
   const element = document.createElement("div");
 
-  element.className = "hbup-compact-card";
+  element.className = "fo-compact-card";
 
   const takeover = ui.featureOptions.takeover(element);
 
@@ -1321,7 +1306,7 @@ const wireProtectConfig = async () => {
    * Each probe is bounded exactly as the pass above bounds its own, and a controller that does not answer simply contributes no topology: the families whose scopes it
    * would have placed keep their entries for a later open, and the runtime overlay keeps honoring them meanwhile.
    */
-  if(composed?.legacyRemaining && !wiringSignal.aborted) {
+  if(composed?.remaining && !wiringSignal.aborted) {
 
     const topology = (await Promise.all(controllers(session.platform).map(async ({ address, password, username }) => {
 
@@ -1330,7 +1315,7 @@ const wireProtectConfig = async () => {
       const { devices } = readDeviceListAnswer(settled);
       const mac = devices.find(isController)?.mac;
 
-      return mac ? { devices: devices.filter((device) => !isController(device) && device?.mac).map((device) => ({ mac: device.mac })), mac } : null;
+      return mac ? { devices: devices.filter((device) => !isController(device) && device?.mac).map((device) => device.mac), id: mac } : null;
     }))).filter((entry) => entry);
 
     const widened = await withDeadline({ promise: homebridge.request("/translateOptions", { migratePatch, platformOptions: session.platform?.options ?? [], topology }),

@@ -35,7 +35,6 @@ import type { StreamingCapability } from "./streaming.ts";
 import { configured } from "../device-base.ts";
 import { isolateAccessoryChange } from "../../nvr/nvr-accessory-change.ts";
 import { mqttTopics } from "../../mqtt.ts";
-import { resolveLegacySelection } from "../../options-legacy.ts";
 
 // The source tag threaded through the capability-reconcile and doorbell-capability methods: "construct" marks establishment (a fresh adoption or a Homebridge
 // restart), "observe" a live reconcile. The establishment-only side effects - the Access lock's SECURED resting stamp and the night vision dimmer's value push - branch
@@ -1396,15 +1395,14 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     const domain = STREAM_QUALITY_TIERS.map((entry) => entry.choice);
 
-    // The family the overlay still has to answer for, or null once the configuration has converged. The engine read is skipped entirely while the overlay owns the
-    // answer, since the retired entries it reads are exactly the ones the engine resolves nothing from.
-    const overlaid = this.overlaidFamily(option);
+    // The overlay's answer while the retired grammar still owns this pin, or undefined once the configuration has converged. The engine read is skipped entirely
+    // while the overlay answers, since the retired entries it reads are exactly the ones the engine resolves nothing from.
+    const overlay = this.retiredSelection(option, domain);
 
     // The raw stored text on the non-overlaid path, read for the narration below alone: the engine read answers the pin, and this is the spelling the user wrote.
-    const stored = overlaid ? undefined : this.getFeatureValue(option);
-    const selected = overlaid ? resolveLegacySelection({ controller: this.nvr.ufp.mac, device: this.device.config.mac, domain, family: overlaid,
-      options: this.platform.config.options }) : this.platform.featureOptions.valueList({ controller: this.nvr.ufp.mac, defaultWhenUnset: true,
-      device: this.device.config.mac, domain, option });
+    const stored = overlay ? undefined : this.getFeatureValue(option);
+    const selected = overlay ?? this.platform.featureOptions.valueList({ controller: this.nvr.ufp.mac, defaultWhenUnset: true, device: this.device.config.mac, domain,
+      option });
     const pinned = STREAM_QUALITY_TIERS.find((entry) => entry.choice === selected[0])?.tier ?? null;
 
     /* A stored quality the tier table does not offer names no channel at all. Only a hand-edited configuration reaches it, so we say which value we set aside rather

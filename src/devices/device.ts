@@ -12,9 +12,7 @@ import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, ProtectServiceNaming, ProtectServiceOptions, WithoutIdentity } from "../types.ts";
 import { describeDevice, deviceDisplayNaming } from "./device-descriptor.ts";
 import { isDeviceAdopted, isDeviceOnline } from "unifi-protect";
-import { legacyFamilyForOption, resolveLegacySelection } from "../options-legacy.ts";
 import type { DeviceDisplayNaming } from "./device-descriptor.ts";
-import type { LegacyFamily } from "../options-legacy.ts";
 import type { ObserverWakePayload } from "../diagnostics.ts";
 import { ProtectBase } from "./device-base.ts";
 import type { ProtectCapabilityHost } from "./device-capability.ts";
@@ -837,28 +835,19 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
    */
   public getFeatureList(option: string, domain: readonly string[]): readonly string[] {
 
-    const overlaid = this.overlaidFamily(option);
-
-    if(overlaid) {
-
-      return resolveLegacySelection({ controller: this.nvr.ufp.mac, device: this.device.config.mac, domain, family: overlaid,
-        options: this.platform.config.options });
-    }
-
-    return this.platform.featureOptions.valueList({ controller: this.nvr.ufp.mac, defaultWhenUnset: true, device: this.device.config.mac, domain, option });
+    return this.retiredSelection(option, domain) ??
+      this.platform.featureOptions.valueList({ controller: this.nvr.ufp.mac, defaultWhenUnset: true, device: this.device.config.mac, domain, option });
   }
 
-  /* The retired family whose overlay must still answer for a feature option at this device, or null once the configuration has converged - which is also the answer
-   * for any option that supersedes nothing.
+  /* The overlay's answer for a feature option at this device while the retired grammar still owns it, read at this device's own device and controller, or undefined
+   * once the configuration has converged - which is also the answer for any option that supersedes nothing.
    *
-   * Every selection read asks this one question before deciding where to resolve, so "does the retired grammar still own this answer?" has one expression. On a
-   * migrated configuration the families set is empty and the whole question costs one set-membership test.
+   * This is the one expression of whether the retired grammar still owns an answer at this device, so every selection read asks it before deciding where to resolve,
+   * and no reader can ask the overlay at a scope other than the one this device resolves at. On a converged configuration the question costs one map lookup.
    */
-  protected overlaidFamily(option: string): Nullable<LegacyFamily> {
+  protected retiredSelection(option: string, domain: readonly string[]): readonly string[] | undefined {
 
-    const family = legacyFamilyForOption(option);
-
-    return (family && this.platform.legacyOptions.families.has(family)) ? family : null;
+    return this.platform.retiredTranslation.selection({ controller: this.nvr.ufp.mac, device: this.device.config.mac, domain, option });
   }
 
   // Utility for checking feature options on a device.

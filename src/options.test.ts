@@ -69,9 +69,9 @@ describe("feature-option retirement wave", () => {
     assert.equal(optionEntry("Video.Timeshift", "Livestream")?.default, true, "buffer-backed livestreaming defaults on");
   });
 
-  /* Both channel pins are single-select pickers over the same three tiers. The choices are pinned at FULL depth - every label and every value, in order - because a
-   * count-only assertion passes against a mistyped or reordered list, and these values are the exact text a stored configuration carries and the legacy translation
-   * emits. Pinning both entries at the same depth is what keeps the two pickers from drifting apart, since they derive from one table.
+  /* Both channel pins are single-select pickers over the same three tiers. The choices are asserted at FULL depth - every label and every value, in order - because a
+   * count-only assertion passes against a mistyped or reordered list, and these values are the exact text a stored configuration carries and the retired translation
+   * emits. Asserting both entries at the same depth is what keeps the two pickers from drifting apart, since they derive from one table.
    *
    * The registered defaults differ by pin, and the difference is the whole point: the timeshift buffer feeds HomeKit Secure Video, snapshots, and buffer-backed live
    * views, so it presets High, while a direct-RTSP live view is the transport a constrained network reaches for and presets Medium. Each is the tier that applies
@@ -171,7 +171,7 @@ describe("feature-option retirement wave", () => {
       "the entry carries the display names the picker renders each detection type as");
   });
 
-  /* The fob's buttons are one inline-choice selection over a fixed table, so its choices are pinned at FULL depth - every label and every value, in order. The labels
+  /* The fob's buttons are one inline-choice selection over a fixed table, so its choices are asserted at FULL depth - every label and every value, in order. The labels
    * carry the controller's position number in parentheses only where it says something the name does not: the numbered buttons read "Arm (1)" through "Panic (4)", and
    * Right and Left carry none, because their position label IS their name. The values are the wire ids a press arrives under, which is what makes the selection and the
    * router address one identity.
@@ -298,7 +298,7 @@ describe("smart detection display names", () => {
 
   /* The curated column earns its place on the audio alarm family alone - the types Protect spells for its own protocol convenience. Every clean object type's label
    * is exactly what the humanizing rule produces from its value, "License Plate" among them, which is why that rule has to split camelCase joins rather than
-   * capitalize at whitespace alone. Both directions are pinned, so a curated name added to a clean type or dropped from an alarm type fails here.
+   * capitalize at whitespace alone. Both directions are asserted, so a curated name added to a clean type or dropped from an alarm type fails here.
    */
   test("the clean object types read as their humanized values and the alarm family is the curated scope", () => {
 

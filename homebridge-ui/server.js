@@ -11,7 +11,7 @@ import { ProtectClient, isDeviceAdopted, noopLog } from "unifi-protect";
 import { UNREPORTED_CONTROLLER_RECORD, UNSUPPORTED_PROTECT_VERSION, isSupportedProtectVersion } from "../dist/nvr/nvr-policy.js";
 import { featureOptionCategories, featureOptions } from "../dist/options.js";
 import { HomebridgePluginUiServer } from "@homebridge/plugin-ui-utils";
-import { composeMigrationPatch } from "../dist/options-legacy.js";
+import { composeMigrationPatch } from "../dist/options-retired.js";
 import { deviceDisplayName } from "../dist/devices/device-descriptor.js";
 import util from "node:util";
 

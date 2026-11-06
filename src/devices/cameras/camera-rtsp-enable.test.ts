@@ -313,7 +313,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
    * that names none pins none. The witness is a retired entry that turns a tier OFF at this camera - it puts the family on the overlay while selecting nothing - so a
    * preset leaking onto the overlay path would read as a High pin here instead of no pin.
    */
-  test("a legacy-overlaid family resolves through the overlay and never gains a preset", async () => {
+  test("a retired-overlaid family resolves through the overlay and never gains a preset", async () => {
 
     const { camera } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS,
       userOptions: ["Disable.Video.Timeshift.Only.High.74ACB9000001"] });
@@ -322,10 +322,28 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     assert.equal(camera.selectSubstrateChannel()?.channel.id, 0, "the substrate policy computes its own answer, exactly as it does for an unpinned camera");
   });
 
+  /* An overlaid empty selection names no tier, asserted where the engine alone would resolve one. The controller carries the retired High entry and this camera
+   * turns it off, so the overlay answers the empty selection while the engine's own reading inherits the controller's High, and a camera that fell through to the
+   * engine on an empty overlay answer would name the High tier here. While the overlay answers, the camera also skips its stored read: a camera that read it would
+   * find the controller's High beside an empty selection and set it aside as an unrecognized quality. That narration is a debug line. The camera-scoped Log.Debug
+   * entry opens this camera's debug gate, and HBPU routes a debug line through the gate to warn, so the row counts the narration at warn. The declined enable write
+   * is what lets the tier assertion fail: a camera that named the High tier would need RTSP enabled, and the projection double records an accepted write without
+   * applying it, so the derivation would return before it set the hint and the row would read undefined either way.
+   */
+  test("an overlaid empty selection names no tier and skips the stored read, where the engine alone would resolve the controller's High", async () => {
+
+    const { camera, logEntries } = built = await buildCamera({ channels: MIXED_RTSP_DISABLED_CHANNELS, updateRejection: new ProtectAuthorizationError("forbidden"),
+      userOptions: [ "Enable.Log.Debug.74ACB9000001", "Enable.Video.Rtsp.Only.High.74ACB9FFFFFF", "Disable.Video.Rtsp.Only.High.74ACB9000001" ] });
+
+    assert.equal(camera.hints.rtspDefault, undefined, "the overlay's empty answer names no tier, and the controller's High does not fill in behind it");
+    assert.equal(logCount(logEntries, "warn", "Ignoring an unrecognized stream quality"), 0,
+      "the camera skips its stored read while the overlay answers, so no quality is set aside");
+  });
+
   /* The end-to-end translation proof, written in the retired per-tier grammar a long-lived configuration still carries, one row per pin family. Both literals are
    * DEVICE-SCOPED on purpose: a scoped retired entry registers a key that addresses no current option at all, so the feature-option engine reading the raw array
-   * resolves nothing from it. A global literal would slip through on the engine's own incidental reading and prove nothing about the translation. These are the only
-   * rows in this file written in the retired grammar, and they are here to prove that a configuration nobody has opened the settings page on still steers as it did.
+   * resolves nothing from it. A global literal would slip through on the engine's own incidental reading and prove nothing about the translation.
+   * These rows are here to prove that a configuration nobody has opened the settings page on still steers as it did.
    */
   test("a device-scoped pin in the retired per-tier grammar still steers both selectors", async () => {
 

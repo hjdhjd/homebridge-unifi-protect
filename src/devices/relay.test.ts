@@ -26,11 +26,11 @@ import type { ProtectNvr } from "../nvr/nvr.ts";
 import { ProtectRelay } from "./relay.ts";
 import { ProtectReservedNames } from "../types.ts";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
-import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
 import assert from "node:assert/strict";
 import { configured } from "./device-base.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
+import { translateRetiredOptions } from "../options-retired.ts";
 
 // The MAC-scoped tail the plugin composed, with the /get or /set suffix the MQTT client appends taken back off. These rows assert what the plugin addressed,
 // which is the tail rather than the child topic the registration lands on.
@@ -232,7 +232,7 @@ describe("real ProtectRelay construction and behavior", () => {
 
   /* The mixed-configuration row: a retired per-output entry AND a canonical selection present together. The canonical value is evidence the user has adopted the
    * current grammar, so it wins outright and every output it names is shown - which is what tells the ruled composition apart from a union (same answer here), an
-   * intersection (which would hide output 2), and a silent legacy override (which would also hide it). The retired entry is superseded rather than honored, and the
+   * intersection (which would hide output 2), and a silent retired override (which would also hide it). The retired entry is superseded rather than honored, and the
    * startup narration names it so the user can see what was set aside.
    */
   test("a canonical selection supersedes a retired per-output entry outright, and the narration names what it set aside", () => {
@@ -246,10 +246,10 @@ describe("real ProtectRelay construction and behavior", () => {
         "output " + (id + 1).toString() + " is shown - the canonical selection wins over the retired entry");
     }
 
-    const analysis = analyzeLegacyFeatureOptions([ "Disable.Relay.Output.2", "Enable.Relay.Outputs=1,2,3" ]);
+    const translation = translateRetiredOptions([ "Disable.Relay.Output.2", "Enable.Relay.Outputs=1,2,3" ]);
 
-    assert.equal(analysis.families.size, 0, "a superseded family is not overlaid");
-    assert.deepEqual(analysis.translated, ["Disable.Relay.Output.2"], "the superseded entry is named for the startup line");
+    assert.equal(translation.selection({ domain: [], option: "Relay.Outputs" }), undefined, "a superseded family is not overlaid");
+    assert.deepEqual(translation.translated, ["Disable.Relay.Output.2"], "the superseded entry is named for the startup line");
 
     built.relay.cleanup();
   });

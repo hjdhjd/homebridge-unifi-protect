@@ -1,6 +1,6 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * platform.test.ts: The platform's construction-time wiring of the legacy feature-option translation and its walk of the configured controllers, driven against
+ * platform.test.ts: The platform's construction-time wiring of the retired feature-option translation and its walk of the configured controllers, driven against
  * the REAL ProtectPlatform.
  *
  * The claims under test are wiring claims, so the real class is what has to make them: that the configured options reach the feature-option engine through the
@@ -101,7 +101,7 @@ function configuredControllers(platform: ProtectPlatform): ProtectNvr[] {
   return (platform as unknown as { controllers: ProtectNvr[] }).controllers;
 }
 
-describe("platform construction and the legacy feature-option translation", () => {
+describe("platform construction and the retired feature-option translation", () => {
 
   /* The wiring row: a device-scoped retired pin entry resolves at that camera once the platform has built its engine. It is device-scoped on purpose - a scoped
    * retired entry registers a key that addresses no current option, so the engine reads nothing from it on its own. The control below builds the same engine on the
@@ -117,13 +117,14 @@ describe("platform construction and the legacy feature-option translation", () =
       "the same engine built on the raw array resolves nothing, which is what the analysis is there to prevent");
   });
 
-  // The analysis result is retained where the device layer reads it, so a family still needing the overlay is visible to every reader that resolves a selection.
+  // The translation is retained where the device layer reads it, so a family still needing the overlay answers every reader that resolves a selection.
   test("construction retains which families still need the overlay", () => {
 
     const { platform } = buildPlatform(["Enable.Video.Rtsp.Only.High." + CAMERA]);
 
-    assert.deepEqual([...platform.legacyOptions.families], ["rtspPin"], "the direct-RTSP family is marked for the overlay");
-    assert.deepEqual(platform.config.options, ["Enable.Video.Rtsp.Only.High." + CAMERA], "the raw entries stay where the overlay reads them");
+    assert.deepEqual(platform.retiredTranslation.selection({ device: CAMERA, domain: [ "High", "Medium", "Low" ], option: "Video.Rtsp.Only" }), ["High"],
+      "the direct-RTSP family answers through the overlay");
+    assert.deepEqual(platform.config.options, ["Enable.Video.Rtsp.Only.High." + CAMERA], "the raw entries stay as they were configured");
   });
 
   // A translated configuration says so exactly once, at warn, and names the entries it acted on so a user can see what was read and where to make it permanent.
@@ -135,7 +136,7 @@ describe("platform construction and the legacy feature-option translation", () =
     assert.equal(narrations.length, 1, "the translation is narrated once");
     assert.equal(narrations[0]?.level, "warn", "it is a warning, because the configuration on disk still speaks the older grammar");
     assert.deepEqual(narrations[0].params, [{ entries: [ "Enable.Video.Rtsp.Only.High", "Enable.Video.Timeshift.Only.Low" ] }],
-      "the entries it acted on ride along as context");
+      "the entries it acted on travel with it as context");
   });
 
   // A configuration already speaking the current grammar has nothing to say, so the line stays out of the log entirely rather than reporting an empty translation.

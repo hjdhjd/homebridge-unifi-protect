@@ -449,13 +449,13 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       assert.deepEqual(device.getFeatureList("Motion.OccupancySensor", DOMAIN), [], "an unoffered value selects nothing, and the default does not stand in for it");
     });
 
-    /* The overlay branch, pinned with a SCOPE-DIVERGENT fixture written in the retired per-type grammar - the one row in this block that is. The controller subtracts
+    /* The overlay branch, asserted with a SCOPE-DIVERGENT fixture written in the retired per-type grammar. The controller subtracts
      * face and the camera adds vehicle, so the overlay's answer and the engine's
      * post-translation reading of the same configuration genuinely differ - a rewrite composed without topology reads each scope against the global level alone. A
      * wrapper that quietly fell through to the engine's reading would answer the camera's own composition and fail this row; a single-scope fixture resolves the same
      * way down either path and could not tell them apart.
      */
-    test("the overlay answers a controller-plus-device legacy composition, where the engine's own reading differs", () => {
+    test("the overlay answers a controller-plus-device retired composition, where the engine's own reading differs", () => {
 
       const built = buildHintsDevice({ userOptions: [ "Enable.Motion.OccupancySensor." + CONTROLLER_MAC, "Disable.Motion.OccupancySensor.Face." + CONTROLLER_MAC,
         "Enable.Motion.OccupancySensor.Vehicle." + SENSOR_MAC ] });
@@ -467,6 +467,24 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       assert.equal(device.getFeatureValue("Motion.OccupancySensor"), "person",
         "the engine's own post-translation reading of the same configuration inherits the controller's composition alone, missing the camera's own addition - which " +
         "is what makes this row tell the two paths apart");
+    });
+
+    /* The overlay's empty answer, asserted with a fixture in the same retired per-type grammar, where the engine's own reading selects something. The controller
+     * enables the option and subtracts face, and the device subtracts person, so the overlay composes the empty selection while the engine's post-translation reading
+     * inherits the controller's composition alone and answers person. A wrapper that fell through to the engine on an empty overlay answer would select person here
+     * and fail this row.
+     */
+    test("an overlaid empty selection stays empty, where the engine's own reading selects something", () => {
+
+      const built = buildHintsDevice({ userOptions: [ "Enable.Motion.OccupancySensor." + CONTROLLER_MAC, "Disable.Motion.OccupancySensor.Face." + CONTROLLER_MAC,
+        "Disable.Motion.OccupancySensor.Person." + SENSOR_MAC ] });
+
+      device = built.device;
+
+      assert.deepEqual(device.getFeatureList("Motion.OccupancySensor", DOMAIN), [],
+        "the overlay composes the device's subtraction over the controller's, leaving nothing selected");
+      assert.equal(device.getFeatureValue("Motion.OccupancySensor"), "person",
+        "the engine's own post-translation reading inherits the controller's composition alone, which is what tells the kept empty selection from a fallback");
     });
   });
 });

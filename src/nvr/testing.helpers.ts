@@ -20,7 +20,7 @@
 import { APIEvent, AccessoryPersistence, FeatureOptions, MQTT_AVAILABILITY_OFFLINE, mqttTopic, onAbort, prefixedLog } from "homebridge-plugin-utils";
 import type { Camera, Chime, ProtectCameraConfig, ProtectClient, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig,
   ProtectRingtoneConfig } from "unifi-protect";
-import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
+import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory, RetiredTranslation } from "homebridge-plugin-utils";
 import type { NvrPhase, ProtectNvr } from "./nvr.ts";
 import { OVERRIDE_ADDRESS_ZONE_WARNING, isDisruptionExpected, resolveOverrideAddress } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
@@ -36,7 +36,6 @@ import { DeviceRemovalCascade } from "./nvr-removal-cascade.ts";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import { DoorbellCapability } from "../devices/cameras/doorbell.ts";
 import { FIXTURE_RTSPS_PORT } from "../camera.fixtures.ts";
-import type { LegacyFeatureOptions } from "../options-legacy.ts";
 import type { ProtectCamera } from "../devices/cameras/camera.ts";
 import { ProtectCameraPackage } from "../devices/cameras/camera-package.ts";
 import type { ProtectDevice } from "../devices/device.ts";
@@ -47,9 +46,9 @@ import { RemovalStabilityGate } from "./nvr-removal.ts";
 import { StreamingCapability } from "../devices/cameras/streaming.ts";
 import { TestCameraProjection } from "../devices/testing.helpers.ts";
 import type { TestChimeProjection } from "../devices/testing.helpers.ts";
-import { analyzeLegacyFeatureOptions } from "../options-legacy.ts";
 import { countActiveHksvRecordings } from "./nvr-endpoints.ts";
 import { mqttTopics } from "../mqtt.ts";
+import { translateRetiredOptions } from "../options-retired.ts";
 
 // The platform double's honest structural type. The members mirror what ProtectBase and the camera-family construction paths read off nvr.platform: HBPU's
 // Homebridge API double, which carries the real HAP namespace, Homebridge's own platform-accessory class, the accessory calls the doorbell's configurePackageCamera
@@ -72,7 +71,6 @@ export interface TestProtectPlatform {
   readonly config: ProtectOptions;
   readonly featureOptions: FeatureOptions;
   readonly isAccessoryClaimed: (accessory: ProtectAccessory) => boolean;
-  readonly legacyOptions: LegacyFeatureOptions;
   readonly livestreamProcessFactory: LivestreamProcessFactory;
   readonly log: {
 
@@ -85,6 +83,7 @@ export interface TestProtectPlatform {
   readonly pluginLog: HomebridgePluginLogging;
   readonly recordingProcessFactory: RecordingProcessFactory;
   readonly releaseAccessory: (accessory: ProtectAccessory) => void;
+  readonly retiredTranslation: RetiredTranslation;
   readonly streamingDelegateFactory: TestStreamingDelegateFactory;
   readonly testDebug: (context: { controller?: string; device?: string }) => boolean;
 }
@@ -591,19 +590,19 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   // the construction path emits. It is built after the log for that reason.
   const mqtt = options.mqtt ? new TestMqttClient({ log }) : null;
 
-  /* The platform double's config, legacy analysis, and feature-option engine, hoisted out of the literal below so the debug gate can resolve against the very
-   * instances the double exposes - a test steering platform.config.debugAll or seeding a scoped Log.Debug entry then drives the same resolution production performs.
-   * The local names deliberately avoid `featureOptions`, which would shadow the module-level catalog import the constructor call below reads.
+  /* The platform double's config, retired-option translation, and feature-option engine, hoisted out of the literal below so the debug gate can resolve against the
+   * very instances the double exposes - a test steering platform.config.debugAll or seeding a scoped Log.Debug entry then drives the same resolution production
+   * performs. The local names deliberately avoid `featureOptions`, which would shadow the module-level catalog import the constructor call below reads.
    *
-   * The three travel together exactly as they do in the platform constructor: the userOptions run through the legacy analysis, the engine is built on the analysis's
-   * view of them, and the RAW array lands on the double's config.options where the runtime overlay reads it. A double that handed the engine the raw array and left
-   * config.options empty would let every legacy-grammar test pass or fail for the wrong reason - the overlay would find nothing to read, and the engine would see the
-   * shapes the analysis exists to keep away from it.
+   * They travel together exactly as they do in the platform constructor: the userOptions run through the retired-option translation, the engine is built on the
+   * translation's view of them, and the runtime overlay reads the translation itself, while the RAW array lands on the double's config.options as the platform's own
+   * configuration carries it. A double that built the engine on the raw array would let every retired-grammar test pass or fail for the wrong reason - the engine would
+   * see the shapes the translation exists to keep away from it.
    */
   const userOptions = options.userOptions ?? [];
-  const legacyOptions = analyzeLegacyFeatureOptions(userOptions);
+  const retiredTranslation = translateRetiredOptions(userOptions);
   const platformConfig: ProtectOptions = { controllers: [], debugAll: false, options: userOptions, ringDelay: 0, verboseFfmpeg: false, videoProcessor: "ffmpeg" };
-  const platformFeatureOptions = new FeatureOptions(featureOptionCategories, featureOptions, [...legacyOptions.engineOptions]);
+  const platformFeatureOptions = new FeatureOptions(featureOptionCategories, featureOptions, [...retiredTranslation.configuredOptions]);
   const client = {
 
     // The controller-wide camera projections, read through the store double's CURRENT state, mirroring the production client.cameras array the M3U playlist composes
@@ -671,13 +670,13 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       config: platformConfig,
       featureOptions: platformFeatureOptions,
       isAccessoryClaimed: (accessory: ProtectAccessory): boolean => claims.has(accessory.UUID),
-      legacyOptions: legacyOptions,
       livestreamProcessFactory: livestreamProcessFactory,
       log: log,
       persistence: persistence,
       pluginLog: log,
       recordingProcessFactory: recordingProcessFactory,
       releaseAccessory: (accessory: ProtectAccessory): void => void claims.delete(accessory.UUID),
+      retiredTranslation: retiredTranslation,
       streamingDelegateFactory: factory,
 
       // The production predicate, mirrored exactly: the legacy plugin-wide flag, else a Log.Debug entry resolved at the caller's own device and controller scope. It
