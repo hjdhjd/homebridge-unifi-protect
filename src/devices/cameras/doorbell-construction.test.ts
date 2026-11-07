@@ -523,8 +523,8 @@ describe("doorbell bare-motion package forward (suite C)", () => {
 
 /* Suite D names the package camera under its doorbell's custom name, with name syncing off, so a name the package carries is one the custom name put there. The
  * package accessory is restored from the cache under the name a run before the custom name gave it, so the package's own configure pass is what renames it. Its log
- * prefix reads the name the controller reports rather than the one HomeKit carries, and once the shared record is gone it reads the package accessory's own name,
- * which nothing has to read the record for. Each test builds a fresh family and unwinds it in afterEach.
+ * prefix leads with the custom name where one is set and with the name the controller reports otherwise, and once the shared record is gone it reads the package
+ * accessory's own name, which nothing has to read the record for. Each test builds a fresh family and unwinds it in afterEach.
  */
 describe("the package camera under a custom name (suite D)", () => {
 
@@ -607,11 +607,12 @@ describe("the package camera under a custom name (suite D)", () => {
       removed: "Front Door Package Camera: " }, "the prefix is the parent's descriptor with the suffix, and the package accessory's own name once the record is gone");
   });
 
-  test("under a custom name, a package log line still carries Protect's name with the suffix, and the package's own name once the parent record is removed", async () => {
+  test("under a custom name, a package log line carries the custom name with the suffix, with the record and without it", async () => {
 
-    // The log prefix reads the name the controller reports, so a custom name reaches it only once the record is gone, through the package accessory's own name.
-    assert.deepEqual(await packagePrefixes({ customName: true }), { present: "Front Door Package Camera [Test Camera Model]: ",
-      removed: CUSTOM_NAME + " Package Camera: " }, "the prefix carries Protect's name while the record stands, and the package's HomeKit name once it is gone");
+    // The log prefix leads with the custom name, as the display name does, so the custom name names the package while the record stands, beside the model, and once
+    // the record is gone through the package accessory's own name, which carries it.
+    assert.deepEqual(await packagePrefixes({ customName: true }), { present: CUSTOM_NAME + " Package Camera [Test Camera Model]: ",
+      removed: CUSTOM_NAME + " Package Camera: " }, "the prefix carries the custom name with the suffix while the record stands and once it is gone");
   });
 });
 

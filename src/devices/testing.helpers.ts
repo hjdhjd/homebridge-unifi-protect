@@ -1332,7 +1332,7 @@ export class TestBaseDevice extends ProtectDevice<Sensor> {
   }
 
   // Public window onto the base configureInfo (the AccessoryInformation Manufacturer / Model / SerialNumber / FirmwareRevision writes via setInfo, plus the name
-  // write a custom name or name syncing asks for). Its deep tests live in device-info.test.ts.
+  // write, the display name always and the HomeKit names where a custom name or name syncing owns them). Its deep tests live in device-info.test.ts.
   public configureInfoFor(): boolean {
 
     return this.configureInfo();

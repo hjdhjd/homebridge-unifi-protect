@@ -5,7 +5,6 @@
 import type { CharacteristicValue, Service } from "homebridge";
 import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../../types.ts";
 import { buildAdvertisedResolutions, buildChannelProfile, formatResolution, isPackageChannel } from "../../media/resolution.ts";
-import { describeDevice, describeDeviceModel } from "../device-descriptor.ts";
 import type { AdvertisedStreams } from "./camera.ts";
 import type { ChannelProfile } from "../../media/resolution.ts";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -81,26 +80,21 @@ export class ProtectCameraPackage extends ProtectCamera {
 
   // The package camera's HomeKit name is the parent's plus the display suffix, single-sourced from the shared live parent projection and the parent's custom name,
   // which the package's hints resolve from the parent MAC's scope, through the base homeKitName accessor, which adds the suffix to the name it derives from the record
-  // or the custom name. Every name write and every restore reads that derivation, so the suffix applies uniformly wherever the plugin owns the name, and a vanished
-  // record falls back to the package accessory's own name, which already carries the suffix once; with neither a custom name nor name syncing, the accessory keeps
-  // the name it carries.
+  // or the custom name. Every name write, every restore and the log prefix read that derivation, so the suffix applies uniformly, and a vanished record falls back to
+  // the package accessory's own name, which already carries the suffix once. With neither a custom name nor name syncing, the accessory's display name follows the
+  // derivation while its HomeKit names keep the names they carry.
   protected override get homeKitNameSuffix(): string {
 
     return PACKAGE_CAMERA_NAME_SUFFIX;
   }
 
-  // The package camera's log prefix is the parent's "Name [Model]" descriptor with the Package Camera suffix on the name, so the package's log lines are attributable
-  // instead of colliding with the parent doorbell's (they share the same projection, so the base logName would render identically). While the record stands the prefix
-  // carries the name the controller reports, as every device's log prefix does, and once the record is gone it carries the package accessory's own name, a custom name
-  // included.
+  // The package camera's log prefix is the base descriptor, whose name carries the Package Camera suffix through homeKitNameSuffix above, so the package's lines are
+  // attributable instead of colliding with the parent doorbell's, which shares its projection. Once the shared record is gone, in the removal grace, the prefix is the
+  // package accessory's own name, which already carries the suffix, rather than the synthetic identity the base would fall back to, so a detached package timer
+  // callback names the device instead of throwing.
   protected override get logName(): string {
 
-    // Derive from the live record when present, the name falling back to the model as the parent's descriptor does; when the parent record has vanished (in the
-    // removal grace), fall back to the package accessory's own name, which already carries the suffix and reads nothing from the record, so a detached package timer
-    // callback names the device instead of throwing.
-    const config = this.device.peek();
-
-    return config ? describeDevice(config, { name: ((config.name ?? "") || describeDeviceModel(config)) + PACKAGE_CAMERA_NAME_SUFFIX }) : this.accessoryName;
+    return this.device.peek() ? super.logName : this.accessoryName;
   }
 
   // Configure the package camera.

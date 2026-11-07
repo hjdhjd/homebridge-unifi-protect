@@ -58,6 +58,19 @@ interface DeviceDisplayNameOptions {
 }
 
 /**
+ * Treat an empty name as a missing one. An empty name names nothing, so it answers as absent and a `??` chain falls through it to the next name exactly as it falls
+ * through a missing one.
+ *
+ * @param name - The name to read, or a missing one.
+ *
+ * @returns The name when it carries something, and `undefined` otherwise.
+ */
+export function nonEmptyName(name: Nullable<string> | undefined): string | undefined {
+
+  return name?.length ? name : undefined;
+}
+
+/**
  * Render the model label for a Protect device or controller.
  *
  * @param device - Any record carrying the controller's market name and hardware type, either of which the wire may omit.
@@ -69,7 +82,7 @@ export function describeDeviceModel(device: DeviceModelConfig): string {
   // The label prefers the human marketName and falls back to the raw wire type. The wire can deliver either field as an empty string, which falls through as an
   // absent field does. A unit reporting neither field reads as "unknown", the same word the unifi-protect CLI inventory renders for it, so one device shows the same
   // model in the CLI and here.
-  return (device.marketName ?? "") || (device.type ?? "") || "unknown";
+  return nonEmptyName(device.marketName) ?? nonEmptyName(device.type) ?? "unknown";
 }
 
 /**
@@ -117,7 +130,7 @@ export function deviceDisplayNaming(device: DeviceModelConfig & { name?: string 
     return { name, passedOver: null };
   }
 
-  return { name: sanitizeName(describeDeviceModel(device)) || "unknown", passedOver: device.name?.length ? device.name : null };
+  return { name: sanitizeName(describeDeviceModel(device)) || "unknown", passedOver: nonEmptyName(device.name) ?? null };
 }
 
 /**
@@ -148,7 +161,7 @@ export function describeDevice(device: DeviceDescriptorConfig, { includeNetwork 
 
   // The displayed name prefers the explicit override, then the config's own name, and falls back to the model when a unit carries no user-assigned name or an empty
   // one, as the HomeKit name does. The log keeps the raw name rather than the sanitized one, so a line shows what the controller reports.
-  const label = ((name ?? device.name ?? "") || model) + " [" + model + "]";
+  const label = (nonEmptyName(name) ?? nonEmptyName(device.name) ?? model) + " [" + model + "]";
 
   if(!includeNetwork) {
 

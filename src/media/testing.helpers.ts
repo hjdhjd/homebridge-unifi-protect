@@ -96,7 +96,6 @@ export class TestCameraHost implements ProtectCameraHost {
     smartOccupancy: [],
     standalone: false,
     substrateDefault: "",
-    syncName: false,
     transcode: false,
     transcodeBitrate: 0,
     transcodeHighLatency: false,

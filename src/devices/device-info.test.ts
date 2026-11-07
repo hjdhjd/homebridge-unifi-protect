@@ -4,8 +4,9 @@
  *
  * setInfo (device-base.ts), configureInfo (device.ts), and the universal observers spawnObservers (device.ts) registers are BASE ProtectDevice behaviors
  * shared by every device family: setInfo writes the unconditional Manufacturer and the length-guarded Model / SerialNumber / HardwareRevision / FirmwareRevision;
- * configureInfo names the accessory where a custom name or name syncing is in force and then writes that info; and the base observers react to controller-side
- * changes - the device.name observer propagates a controller-side rename into HomeKit (gated by Device.SyncName) through syncNameFromController, and the
+ * configureInfo names the accessory, its display name always and its HomeKit names where a custom name or name syncing is in force, and then writes that info; and
+ * the base observers react to controller-side changes - the device.name observer propagates a controller-side rename through syncNameFromController, into the
+ * display name always and into the HomeKit names under Device.SyncName, and the
  * device.firmwareVersion observer refreshes the FirmwareRevision characteristic on a Protect firmware update through setInfo alone. They are exercised only
  * incidentally (family construction calls configureInfo; the package camera's name-sync is asserted family-specifically in doorbell-construction.test.ts), so per the
  * two-layer test architecture this suite nets the BASE behaviors family-agnostically against the shared TestBaseDevice vehicle on the all-quiet makeSensorConfig
@@ -25,14 +26,15 @@
  * edit - plus the exact change log and the one save it asks for, beside the first sync's save of a fresh accessory's ConfiguredName, the firmware push that writes no
  * name and saves nothing, and the returning-record pair: a record that vanishes and returns unchanged writes, logs and saves nothing, and one that returns over a Home
  * app rename restores the controller's name and saves once with no rename line, each proving its return woke the name and firmware observers; WITHOUT it the test
- * captures the Name baseline immediately before the push and asserts the device.name observer STILL woke
- * (non-vacuous) but the Name characteristic is unchanged and no rename log fires - so the if(!syncName) return guard, not a dead observer, suppresses the rename
- * (mirroring light.test.ts's falsy-motion non-vacuity pattern). HardwareRevision is netted as a non-vacuous opt-in pair: makeSensorConfig omits hardwareRevision by
- * default, so setInfo's length-guard short-circuits; HAP builds the accessory's AccessoryInformation service with the characteristics it requires, and
- * HardwareRevision is an optional one, so beyond those the service holds exactly the kinds the configure path itself wrote and the HardwareRevision kind is never
- * materialized - the absent case is asserted with testCharacteristic so the read stays a pure predicate; passing hardwareRevision opts the value in so the
- * length-guarded write lands and is read back. The accessoryName getter's ?? "Unknown" fallback is unreachable here because the carrier's record name, read through
- * peek()?.name, is always "Test Sensor" (never nullish).
+ * restores the accessory under a name that differs from the controller's before and after the push, asserts the device.name observer woke, and asserts the display
+ * name moved to the controller's new name while neither HomeKit name was written and no rename line fired - so the ownership HBPU's name helper is handed, not a dead
+ * observer or the helper's own comparison, is what keeps the user's HomeKit names standing.
+ *
+ * HardwareRevision is netted as a non-vacuous opt-in pair: makeSensorConfig omits hardwareRevision by default, so setInfo's length-guard short-circuits; HAP builds
+ * the accessory's AccessoryInformation service with the characteristics it requires, and HardwareRevision is an optional one, so beyond those the service holds
+ * exactly the kinds the configure path itself wrote and the HardwareRevision kind is never materialized - the absent case is asserted with testCharacteristic so the
+ * read stays a pure predicate; passing hardwareRevision opts the value in so the length-guarded write lands and is read back. The accessoryName getter's ?? "Unknown"
+ * fallback is unreachable here because the carrier's record name, read through peek()?.name, is always "Test Sensor" (never nullish).
  *
  * The custom-name rows set Device.Name at the carrier's own MAC, the one scope it declares, and read the name every configure pass applies whether or not
  * SyncName is on. Clearing a custom name is a restart over an accessory Homebridge's cache restores still carrying the name that custom name gave it, so those rows
@@ -64,8 +66,9 @@ const controllers: AbortController[] = [];
 // The reusable construction helper: build a REAL TestBaseDevice (a concrete ProtectDevice leaf whose ctor only super()s) against the harness doubles, seeded with the
 // all-quiet sensor carrier. The casts are confined to the point of construction exactly as the light / chime / device-statusled suites do; the instance under test is the
 // production base, running its real configureHints / configureInfo / spawnObservers paths. We drive the wiring a family leaf would: configureHints first (configureInfo
-// and syncNameFromController read the name hints), then configureInfo (the AccessoryInformation writes plus the name write a custom name or name syncing asks for), then
-// spawnObservers (the base observers). The userOptions thread into the REAL FeatureOptions engine, so Enable.Device.SyncName - and only it - flips hints.syncName true.
+// and syncNameFromController read the name hints), then configureInfo (the AccessoryInformation writes plus the name write, the display name always and the HomeKit
+// names where a custom name or name syncing owns them), then spawnObservers (the base observers). The userOptions thread into the REAL FeatureOptions engine, so
+// Enable.Device.SyncName, with no custom name, is what hands the plugin the device's name.
 // A restoredName is the name Homebridge's cache restores the accessory carrying, its display name, Name and ConfiguredName alike, as a previous run's naming left them,
 // and the observations start after that seed so a row reads the construction's writes alone. A restoredParts seeds the parts the cache restores beside it, before
 // the observations start. The accessory is restored onto the bridge first, as a device's cached accessory is, so a save the name write asks for reaches the API
@@ -110,6 +113,28 @@ function buildInfoDevice(configOptions: Parameters<typeof makeSensorConfig>[0] =
 function savesOf(built: ReturnType<typeof buildInfoDevice>): number {
 
   return built.nvr.platform.api.calls.filter((call) => (call.kind === "update") && call.accessories.includes(built.accessory)).length;
+}
+
+// The names an accessory carries, read together: the platform accessory's display name, the information service's Name, and the ConfiguredName the Home app edits.
+function namesOf(built: ReturnType<typeof buildInfoDevice>): { configured: unknown; displayName: string; name: unknown } {
+
+  const info = built.accessory.getService(Service.AccessoryInformation);
+
+  assert.ok(info, "the AccessoryInformation service exists");
+
+  return { configured: info.getCharacteristic(Characteristic.ConfiguredName).value, displayName: built.accessory.displayName,
+    name: info.getCharacteristic(Characteristic.Name).value };
+}
+
+// The writes a row's window made to the Name and ConfiguredName characteristics.
+function nameWritesOf(built: ReturnType<typeof buildInfoDevice>): unknown[] {
+
+  const info = built.accessory.getService(Service.AccessoryInformation);
+
+  assert.ok(info, "the AccessoryInformation service exists");
+
+  return [ ...writesTo(built.accessory, info.getCharacteristic(Characteristic.Name)),
+    ...writesTo(built.accessory, info.getCharacteristic(Characteristic.ConfiguredName)) ];
 }
 
 describe("base ProtectDevice device-information capability (device-info concern net)", () => {
@@ -280,7 +305,7 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
     test("with Device.SyncName, a name push wakes the device.name observer, renames the Name and ConfiguredName characteristics, and logs the change", async () => {
 
-      // Rebuild with the syncName feature enabled so hints.syncName is true. The name write a custom name or name syncing asks for renamed the accessory to the carrier
+      // Rebuild with the SyncName feature enabled so the plugin owns the device's name. The name write that ownership asks for renamed the accessory to the carrier
       // name at construction, so both name characteristics read "Test Sensor" BEFORE the push - the construction value, which makes each post-push read a proven
       // before->after transition. ConfiguredName is the name the Home app lets a user edit, so it must track the controller-side rename alongside Name rather than lag
       // behind it.
@@ -303,8 +328,8 @@ describe("base ProtectDevice device-information capability (device-info concern 
       const savesBefore = savesOf(built);
 
       // The push moves only the name slice on the STORE record the device.name selector reads, so exactly that observer wakes; syncNameFromController re-reads
-      // homeKitName (the record's name through the same store record) and, because syncName is enabled and the name differs, writes the new name, logs the change and
-      // saves.
+      // homeKitName (the record's name through the same store record) and, because the plugin owns the name under SyncName and the name differs, writes the new name
+      // to the display name and both HomeKit names, logs the change and saves.
       built.store.pushSensorPatch(built.device.protectId, { name: "Renamed Sensor" });
 
       await settle();
@@ -505,34 +530,35 @@ describe("base ProtectDevice device-information capability (device-info concern 
       assert.equal(loggedAt(built.logEntries, "info", "Detected a name change on the controller"), false, "the firmware update logs no controller rename");
     });
 
-    test("without Device.SyncName, a name push wakes the device.name observer but the guard suppresses the rename and the log", async () => {
+    test("without Device.SyncName, a name push moves the display name alone, leaving the HomeKit names, logging nothing and saving once", async () => {
 
-      // The default beforeEach build omits Enable.Device.SyncName and sets no custom name, so hints.syncName is false and the name write a custom name or name syncing
-      // asks for did NOT write the Name characteristic. We seed a STALE Name ("Stale Name", modeling the value Homebridge restored from the cached accessory) so it
-      // deliberately DIFFERS from the post-push synced name ("Renamed Sensor"). This isolates the guard: with the stale value differing from synced, HBPU's name helper
-      // would write and answer true if it were reached, so only the if(!this.hints.syncName) return guard - not the helper's own comparison, and not a dead observer -
-      // keeps the rename from firing. (A captured baseline that equalled synced would let the helper's comparison suppress the write too, masking which one actually
-      // blocks the rename.)
-      const info = accessory.getService(Service.AccessoryInformation);
+      // With no custom name and SyncName off the user owns the HomeKit name. The accessory comes back from the cache under a name that differs from both the
+      // controller's name before the push and after it, the name a previous run left in HomeKit, so a sync that reached the information service would write it.
+      const built = buildInfoDevice({}, { restoredName: "Den Sensor" });
 
-      assert.ok(info, "the AccessoryInformation service exists");
-
-      info.updateCharacteristic(Characteristic.Name, "Stale Name");
-
-      const before = info.getCharacteristic(Characteristic.Name).value;
-      const baseline = wakeLog.length;
-
-      // The push still moves the name slice, so the device.name observer WAKES (the wake half is what makes "Name unchanged" non-vacuous); but the syncName guard skips
-      // the rename and the log, leaving the seeded stale Name untouched.
-      store.pushSensorPatch(sensorConfig.id, { name: "Renamed Sensor" });
+      device = built.device;
 
       await settle();
 
-      const result = info.getCharacteristic(Characteristic.Name).value;
+      // Close the save window the construction's display-name write opened, so the count below reads the controller rename's saves alone.
+      built.nvr.platform.clock.advance(ACCESSORY_SAVE_WINDOW_MS);
 
-      assert.deepEqual(wakeLog.slice(baseline), [{ accessoryId: accessory.UUID, key: "device.name" }], "the device.name observer woke on the changed name");
-      assert.equal(result, before, "the Name characteristic is unchanged (the syncName guard suppressed the rename despite synced differing from the current name)");
-      assert.equal(loggedAt(logEntries, "info", "Detected a name change on the controller"), false, "no controller-rename line logged without Device.SyncName");
+      const baseline = wakeLog.length;
+      const savesBefore = savesOf(built);
+
+      built.accessory.clearObservations();
+      built.store.pushSensorPatch(built.device.protectId, { name: "Renamed Sensor" });
+
+      await settle();
+
+      built.nvr.platform.clock.advance(ACCESSORY_SAVE_WINDOW_MS);
+
+      assert.deepEqual(wakeLog.slice(baseline), [{ accessoryId: built.accessory.UUID, key: "device.name" }], "the device.name observer woke on the changed name");
+      assert.deepEqual(namesOf(built), { configured: "Den Sensor", displayName: "Renamed Sensor", name: "Den Sensor" },
+        "the display name followed the controller's name while the HomeKit names the user owns stood");
+      assert.deepEqual(nameWritesOf(built), [], "the sync wrote neither HomeKit name");
+      assert.equal(loggedAt(built.logEntries, "info", "Detected a name change on the controller"), false, "no controller-rename line logged without Device.SyncName");
+      assert.equal(savesOf(built), savesBefore + 1, "and the display-name move saved the accessory once");
     });
   });
 
@@ -541,29 +567,6 @@ describe("base ProtectDevice device-information capability (device-info concern 
     // The custom name these rows set, and the entry that sets it at the carrier's own MAC, the one scope the option declares.
     const CUSTOM_NAME = "Kitchen Sensor";
     const customName = "Enable.Device.Name." + makeSensorConfig().mac + "=" + CUSTOM_NAME;
-
-    // The names HomeKit holds for an accessory, read together: the platform accessory's display name, the information service's Name, and the ConfiguredName the Home
-    // app edits.
-    const namesOf = (built: ReturnType<typeof buildInfoDevice>): { configured: unknown; displayName: string; name: unknown } => {
-
-      const info = built.accessory.getService(Service.AccessoryInformation);
-
-      assert.ok(info, "the AccessoryInformation service exists");
-
-      return { configured: info.getCharacteristic(Characteristic.ConfiguredName).value, displayName: built.accessory.displayName,
-        name: info.getCharacteristic(Characteristic.Name).value };
-    };
-
-    // The writes a row's window made to the Name and ConfiguredName characteristics.
-    const nameWritesOf = (built: ReturnType<typeof buildInfoDevice>): unknown[] => {
-
-      const info = built.accessory.getService(Service.AccessoryInformation);
-
-      assert.ok(info, "the AccessoryInformation service exists");
-
-      return [ ...writesTo(built.accessory, info.getCharacteristic(Characteristic.Name)),
-        ...writesTo(built.accessory, info.getCharacteristic(Characteristic.ConfiguredName)) ];
-    };
 
     test("with Device.SyncName off, a custom name renames the accessory at its configure pass", async () => {
 
@@ -613,10 +616,10 @@ describe("base ProtectDevice device-information capability (device-info concern 
       assert.equal(configured.value, CUSTOM_NAME, "the next configure pass brought the custom name back over the Home app rename");
     });
 
-    test("clearing a custom name with Device.SyncName off leaves the accessory's name standing, writing and saving nothing", async () => {
+    test("clearing a custom name with Device.SyncName off leaves the HomeKit names standing and moves the display name to the controller's name", async () => {
 
       // The restart after the custom name was cleared: the accessory comes back from the cache carrying the name the custom name gave it, and nothing is in force
-      // that names it, so it keeps that name until the user names it again.
+      // that names it in HomeKit, so its HomeKit names stay until the user names it again, while its display name follows the name the plugin shows for it.
       const built = buildInfoDevice({}, { restoredName: CUSTOM_NAME });
 
       device = built.device;
@@ -625,27 +628,30 @@ describe("base ProtectDevice device-information capability (device-info concern 
 
       built.nvr.platform.clock.advance(ACCESSORY_SAVE_WINDOW_MS);
 
-      assert.deepEqual(namesOf(built), { configured: CUSTOM_NAME, displayName: CUSTOM_NAME, name: CUSTOM_NAME }, "the accessory keeps the name it carries");
-      assert.deepEqual(nameWritesOf(built), [], "the configure pass wrote no name");
-      assert.equal(savesOf(built), 0, "and saved nothing");
+      assert.deepEqual(namesOf(built), { configured: CUSTOM_NAME, displayName: "Test Sensor", name: CUSTOM_NAME },
+        "the HomeKit names stood and the display name took the controller's name");
+      assert.deepEqual(nameWritesOf(built), [], "the configure pass wrote neither HomeKit name");
+      assert.equal(savesOf(built), 1, "and the display-name move saved the accessory once");
     });
 
-    test("with Device.SyncName off, a custom name HomeKit can carry nothing of leaves the accessory's name standing, writing and saving nothing", async () => {
+    test("with Device.SyncName off, a custom name HomeKit can carry nothing of leaves the HomeKit names standing and names the display name for the controller",
+      async () => {
 
-      // An emoji alone counts as no custom name, so nothing is in force that names the accessory. It comes back from the cache under a name that differs from the
-      // controller's, so a configure pass that read the emoji as a custom name would write the controller's name over the one the accessory carries.
-      const built = buildInfoDevice({}, { restoredName: "Den Sensor", userOptions: ["Enable.Device.Name." + makeSensorConfig().mac + "=🙂"] });
+        // An emoji alone counts as no custom name, so nothing is in force that names the accessory in HomeKit. It comes back from the cache under a name that differs
+        // from the controller's, so a configure pass that read the emoji as a custom name would write a name over the HomeKit names the accessory carries.
+        const built = buildInfoDevice({}, { restoredName: "Den Sensor", userOptions: ["Enable.Device.Name." + makeSensorConfig().mac + "=🙂"] });
 
-      device = built.device;
+        device = built.device;
 
-      await settle();
+        await settle();
 
-      built.nvr.platform.clock.advance(ACCESSORY_SAVE_WINDOW_MS);
+        built.nvr.platform.clock.advance(ACCESSORY_SAVE_WINDOW_MS);
 
-      assert.deepEqual(namesOf(built), { configured: "Den Sensor", displayName: "Den Sensor", name: "Den Sensor" }, "the accessory keeps the name it carries");
-      assert.deepEqual(nameWritesOf(built), [], "the configure pass wrote no name");
-      assert.equal(savesOf(built), 0, "and saved nothing");
-    });
+        assert.deepEqual(namesOf(built), { configured: "Den Sensor", displayName: "Test Sensor", name: "Den Sensor" },
+          "the HomeKit names stood and the display name took the controller's name");
+        assert.deepEqual(nameWritesOf(built), [], "the configure pass wrote neither HomeKit name");
+        assert.equal(savesOf(built), 1, "and the display-name move saved the accessory once");
+      });
 
     test("clearing a custom name with Device.SyncName on restores the controller's name at the next configure pass", async () => {
 
@@ -976,6 +982,36 @@ describe("base ProtectDevice device-information capability (device-info concern 
       assert.ok(entry, "the probe line was captured");
       assert.ok(formatLogEntry(entry).startsWith("Test Sensor [Test Sensor Model]: "), "the line carries the device's logName prefix and the family separator");
       assert.equal(formatLogEntry(entry), "Test Sensor [Test Sensor Model]: A base-device prefix probe.", "the rendered line is exactly the prefix plus the message");
+    });
+
+    test("a custom name leads the prefix as HomeKit's naming rules clean it, the model beside it, and alone once the record is gone", async () => {
+
+      // The custom name carries an emoji HomeKit refuses, so the prefix reading it sanitized, as the display name and the settings page show it, is non-vacuous.
+      const built = buildInfoDevice({}, { userOptions: ["Enable.Device.Name." + makeSensorConfig().mac + "=Kitchen Sensor 🙂"] });
+
+      device = built.device;
+
+      // The prefix of the one line the device logs when asked to, read from the line itself.
+      const prefixOf = (line: string): string | undefined => {
+
+        built.device.log.info(line);
+
+        const entry = built.logEntries.find((candidate) => (candidate.level === "info") && formatLogEntry(candidate).endsWith(": " + line));
+
+        return entry ? formatLogEntry(entry).slice(0, -line.length) : undefined;
+      };
+
+      assert.equal(prefixOf("Present line."), "Kitchen Sensor [Test Sensor Model]: ", "the custom name leads the prefix while the record stands");
+
+      const record = built.store.snapshot().sensors.get(built.device.protectId);
+
+      assert.ok(record, "the sensor record is in the store before it is removed");
+
+      built.store.removeSensorRecord(record.id);
+
+      await settle();
+
+      assert.equal(prefixOf("Removed line."), "Kitchen Sensor: ", "and names the device alone once the record is gone");
     });
   });
 

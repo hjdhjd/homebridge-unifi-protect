@@ -20,6 +20,7 @@ import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectDevice } from "./device.ts";
+import type { ProtectHints } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { TEST_CLOCK_EPOCH } from "../nvr/testing.helpers.ts";
 import { TestClock } from "homebridge-plugin-utils/testing";
@@ -73,6 +74,13 @@ const makeDevice = (update: (payload: unknown) => Promise<unknown> = () => Promi
     signal: new AbortController().signal
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, makeTestAccessory(), device as unknown as Camera);
+
+  // The hints configure() resolves before a device logs its first line, which logName reads for the custom name. The vehicle never runs configure(), so it holds the
+  // resting bag a device with no options set resolves: no custom name, so the prefix is the bare descriptor.
+  const hints: ProtectHints = { enabled: true, logMotion: false, motionDuration: 10, nameOverride: null, nameOwned: false, occupancyDuration: 300, smartDetect: false,
+    smartOccupancy: [], standalone: false };
+
+  instance.hints = hints;
 
   return { device, errors, instance };
 };

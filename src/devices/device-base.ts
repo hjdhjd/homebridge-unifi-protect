@@ -10,12 +10,12 @@ import type { CharacteristicTarget, HomebridgePluginLogging, Nullable } from "ho
 import type { ProtectDeviceConfig, ProtectNvrConfig, ProtectState } from "unifi-protect";
 import { TimerRegistry, composeSignals, debugGatedLog, formatErrorMessage, loopFaultReporter, mqttTopic, notResponding, prefixedLog,
   superviseLoop } from "homebridge-plugin-utils";
+import { describeDeviceModel, nonEmptyName } from "./device-descriptor.ts";
 import { PROTECT_HOMEKIT_REFLECT_DELAY } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { ProtectAuthorizationError } from "unifi-protect";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import type { ProtectPlatform } from "../platform.ts";
-import { describeDeviceModel } from "./device-descriptor.ts";
 
 // An observed slice of controller state, expressed in the projections a single observer needs. `key` is a stable, dotted, machine-facing tag ("camera.ispSettings")
 // that identifies the slice on the observer-wake diagnostics channel - it stays put across field renames so diagnostic filters keep working. `selector` reads the slice
@@ -139,11 +139,12 @@ export abstract class ProtectBase {
   }
 
   // Utility function to return the fully enumerated name of this device. We default it to the controller but expect it to be overridden downstream. The controller
-  // label is single-sourced from the unifi-protect library's selectControllerName (client.controllerName). controllerName is null only pre-bootstrap; the empty-string
-  // fallback keeps log lines producing "" before bootstrap rather than "null".
+  // label is single-sourced from the unifi-protect library's selectControllerName (client.controllerName). A controller name that is missing or empty names nothing,
+  // so the name falls back to the controller's model, as the controller's own log prefix does, and a controller-scoped line never opens on a blank. The model reads
+  // the controller record, which an owner can rely on: every owner is built after the controller has bootstrapped, as the debug scope below also relies on.
   public get name(): string {
 
-    return this.nvr.client.controllerName ?? "";
+    return nonEmptyName(this.nvr.client.controllerName) ?? describeDeviceModel(this.nvr.ufp);
   }
 
   // The log-line prefix for this owner. The base returns the bare name because a controller-scoped owner (system information, liveviews) has no hardware model to

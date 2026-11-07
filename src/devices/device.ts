@@ -10,7 +10,7 @@ import { MQTT_AVAILABILITY_OFFLINE, MQTT_AVAILABILITY_ONLINE, acquireService, ge
   resolveNameOverride, sanitizeName, setAccessoryName, setServiceName, validCharacteristic, validService, watchServiceName } from "homebridge-plugin-utils";
 import { PROTECT_MOTION_DURATION, PROTECT_OCCUPANCY_DURATION} from "../settings.ts";
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectProjectionMap, ProtectServiceNaming, ProtectServiceOptions, WithoutIdentity } from "../types.ts";
-import { describeDevice, deviceDisplayNaming } from "./device-descriptor.ts";
+import { describeDevice, describeDeviceModel, deviceDisplayNaming, nonEmptyName } from "./device-descriptor.ts";
 import { isDeviceAdopted, isDeviceOnline } from "unifi-protect";
 import type { DeviceDisplayNaming } from "./device-descriptor.ts";
 import type { ObserverWakePayload } from "../diagnostics.ts";
@@ -45,9 +45,9 @@ export interface ProtectHints {
    */
   nameOverride: Nullable<string>;
 
-  // Whether the plugin owns this device's HomeKit name, as HBPU's family naming rule decides it from the custom name above and SyncName below: a custom name HomeKit
-  // can carry owns it, SyncName on owns it otherwise, and with neither the user does. It is resolved once with the hints it reads, so the accessory and every part
-  // named from it follow one answer for the life of the process.
+  // Whether the plugin owns this device's HomeKit name, as HBPU's family naming rule decides it from the custom name above and the SyncName option: a custom name
+  // HomeKit can carry owns it, SyncName on owns it otherwise, and with neither the user does. It is resolved once with the hints it reads, so the accessory and
+  // every part named from it follow one answer for the life of the process.
   nameOwned: boolean;
 
   // The minimum number of seconds an occupancy event stays active before it can be cleared.
@@ -67,9 +67,6 @@ export interface ProtectHints {
 
   // Whether this accessory is published to HomeKit as a standalone accessory rather than bridged through the platform.
   standalone: boolean;
-
-  // Whether the Protect device name is synced to HomeKit.
-  syncName: boolean;
 }
 
 // The shared device-and-plugin-context surface the media delegates read off the camera they serve - the slice of ProtectDevice/ProtectBase that is genuinely
@@ -377,8 +374,9 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   // camera family's override derives their real values.
   protected configureHints(): boolean {
 
-    // The custom name and SyncName are read first, so the naming rule decides ownership from the very values the hints carry. Its fallback reads the accessory alone
-    // rather than homeKitName, which reads the hints this literal is still building, and a fallback never moves whether the rule answers null.
+    // The custom name and SyncName are read first, so the naming rule decides ownership from the very custom name the hints carry. SyncName has no reader beyond that
+    // rule, so the hints carry its answer as nameOwned alone. The rule's fallback reads the accessory alone rather than homeKitName, which reads the hints this literal
+    // is still building, and a fallback never moves whether the rule answers null.
     const customName = this.getFeatureValue("Device.Name");
     const nameOverride = resolveNameOverride(customName);
     const syncName = this.hasFeature("Device.SyncName");
@@ -393,8 +391,7 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
       occupancyDuration: this.getFeatureNumber("Motion.OccupancySensor.Duration") ?? PROTECT_OCCUPANCY_DURATION,
       smartDetect: false,
       smartOccupancy: [],
-      standalone: this.hasFeature("Device.Standalone"),
-      syncName
+      standalone: this.hasFeature("Device.Standalone")
     };
 
     // Sanity check motion detection duration. Make sure it's never less than 2 seconds so we can actually alert the user.
@@ -438,20 +435,21 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   // Configure the device information details for HomeKit.
   public configureInfo(): boolean {
 
-    /* Name the accessory as HomeKit should carry it while the plugin owns the name, a custom name the user set or name syncing, and hold it there: the information
-     * service's watch puts the owned name back the moment the Home app renames the accessory's tile, reading the owned name afresh on each rename, so a controller
-     * rename under SyncName reaches the next restore. With neither set the user owns the name, so the accessory keeps the name it carries, a Home app rename
-     * included, and nothing watches it. HBPU's name helper writes only the names that differ and answers whether it wrote any, so the accessory is marked for the
-     * next save exactly when the write changed what Homebridge's accessory cache holds - a fresh accessory's first write adds its ConfiguredName - and a steady start
-     * saves nothing. This runs once per device object, so the information service carries one watch, which ends with the device's signal; it sits outside the
-     * part registry because the accessory's information service is never removed while the device stands.
+    /* Name the accessory through HBPU's name helper, which holds its display name, Homebridge's own label, to homeKitName whoever owns the HomeKit name, so the
+     * accessory cache never keeps a custom name the user has cleared. While the plugin owns the name, a custom name the user set or name syncing, the helper writes the
+     * information service's names as well, and the information service's watch puts the owned name back the moment the Home app renames the accessory's tile, reading
+     * the owned name afresh on each rename, so a controller rename under SyncName reaches the next restore. With neither set the user owns the HomeKit name, so the
+     * information service keeps the name it carries, a Home app rename included, and nothing watches it. The helper writes only the names that differ and answers
+     * whether it wrote any, so the accessory is marked for the next save exactly when the write changed what Homebridge's accessory cache holds - a fresh accessory's
+     * first owned write adds its ConfiguredName - and a steady start saves nothing. This runs once per device object, so the information service carries one watch,
+     * which ends with the device's signal; it sits outside the part registry because the accessory's information service is never removed while the device stands.
      */
+    if(setAccessoryName(this.accessory, this.homeKitName, { owned: this.hints.nameOwned })) {
+
+      this.platform.persistence.persist(this.accessory);
+    }
+
     if(this.hints.nameOwned) {
-
-      if(setAccessoryName(this.accessory, this.homeKitName)) {
-
-        this.platform.persistence.persist(this.accessory);
-      }
 
       const info = this.accessory.getService(this.hap.Service.AccessoryInformation);
 
@@ -914,9 +912,9 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     // Bind the by-id config selector once, as each device family does for its own observers, so every evaluation reuses the same closure.
     const config = this.deviceConfigSelector();
 
-    // The universal reaction: when the controller-side name changes and the user opted into name syncing, push it to the HomeKit accessory. The selector is the name
-    // slice itself, so this fires whenever that slice changes while the record is present, a record returning within the removal grace included, and never on
-    // routine config churn.
+    // The universal reaction: when the controller-side name changes, carry it into the accessory's names, its display name always and its HomeKit names while the
+    // plugin owns them. The selector is the name slice itself, so this fires whenever that slice changes while the record is present, a record returning within the
+    // removal grace included, and never on routine config churn.
     this.observeState({ key: "device.name", selector: state => config(state)?.name, title: "the device name" }, () => this.syncNameFromController());
 
     // Device information (model, serial, firmware) is set once at configure; the firmware revision is the only field that changes at runtime, on a Protect firmware
@@ -957,12 +955,12 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
   /* The name the plugin applies to this device's accessory in HomeKit, and the device's own name the rule passed over to reach it: the custom name the user set where
    * HomeKit can carry it, and the controller's name for the device otherwise, through the one name rule the accessory is minted under, so the mint, every configure
    * pass, and the controller sync cannot name a device differently. The name is the one to apply rather than the name the accessory's information service carries
-   * now, which accessoryName below reads: while the user owns the name nothing applies this one, so the two part once the controller's name for the device moves on,
-   * or a custom name is cleared. This is the single derivation every name write and every restore reads - the accessory's and each part's alike - and a leaf decorates
-   * it through homeKitNameSuffix below rather than by overriding it, so every write picks the decoration up without the parent fanning anything out. The record is read
-   * non-throwing, so a vanished record falls back to the custom name and then to the name the accessory's information service carries now, which already carries any
-   * decoration and so takes none of its own, and passes nothing over, since no record is read. configureInfo reads the whole answer, to tell the user when the
-   * controller's name for the device has nothing HomeKit can display.
+   * now, which accessoryName below reads: while the user owns the name only the accessory's display name takes this one, so the two part once the controller's name
+   * for the device moves on, or a custom name is cleared. This is the single derivation every name write and every restore reads - the accessory's and each part's
+   * alike - and a leaf decorates it through homeKitNameSuffix below rather than by overriding it, so every write picks the decoration up without the parent fanning
+   * anything out. The record is read non-throwing, so a vanished record falls back to the custom name and then to the name the accessory's information service carries
+   * now, which already carries any decoration and so takes none of its own, and passes nothing over, since no record is read. configureInfo reads the whole answer, to
+   * tell the user when the controller's name for the device has nothing HomeKit can display.
    */
   protected get homeKitNaming(): DeviceDisplayNaming {
 
@@ -999,30 +997,30 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     return this.hints.nameOwned ? this.homeKitName : null;
   }
 
-  // Sync the controller's device name into HomeKit when the user enabled name syncing. The name applied is the homeKitName derivation above, so a custom name the user
-  // set holds through a controller-side rename, and HBPU's name helper writes only the names that differ and answers whether it wrote any, so a name-slice yield that
-  // finds every name matching writes nothing and saves nothing. Every part held to the owned name follows the accessory to its new name, each written where it
-  // differs, so a controller rename reaches every part named from the device, a capability's parts included.
-  // Any write changes what Homebridge's accessory cache holds and marks the accessory for the next save, a record returning within the removal grace and restoring the
-  // controller's name over one the user set in the Home app included. The rename line is logged only when the platform accessory's display name moved: the plugin alone
-  // writes that name and the Home app never touches it, so a move means the controller-side name changed, while a restore over a Home app rename logs nothing. The line
-  // names the name HomeKit carries after the write, the controller's name as HomeKit's naming rules clean it.
+  /* Carry the controller's device name into the accessory's names. The name applied is the homeKitName derivation above, so a custom name the user set holds through a
+   * controller-side rename. HBPU's name helper holds the accessory's display name to it whoever owns the HomeKit name, and while the plugin owns the name writes the
+   * information service's names as well, so with the user owning the name a controller rename moves the display name alone. The helper writes only the names that
+   * differ and answers whether it wrote any, so a name-slice yield that finds every name matching writes nothing and saves nothing. Every part held to the owned name
+   * follows the accessory to its new name, each written where it differs, so a controller rename under SyncName reaches every part named from the device, a
+   * capability's parts included, while no part is held with the user owning the name. Any write changes what Homebridge's accessory cache holds and marks the
+   * accessory for the next save, a record returning within the removal grace and restoring the controller's name over one the user set in the Home app included.
+   *
+   * The rename line is logged only when the plugin owns the name and the platform accessory's display name moved: the plugin alone writes that name and the Home app
+   * never touches it, so a move under ownership means the controller-side name changed, while a restore over a Home app rename, or a move with the user owning the
+   * name, which changes nothing HomeKit shows, logs nothing. The line names the name HomeKit carries after the write, the controller's name as HomeKit's naming rules
+   * clean it.
+   */
   protected syncNameFromController(): void {
-
-    if(!this.hints.syncName) {
-
-      return;
-    }
 
     const name = this.homeKitName;
     const previousName = this.accessory.displayName;
 
-    if(!setAccessoryName(this.accessory, name)) {
+    if(!setAccessoryName(this.accessory, name, { owned: this.hints.nameOwned })) {
 
       return;
     }
 
-    if(this.accessory.displayName !== previousName) {
+    if(this.hints.nameOwned && (this.accessory.displayName !== previousName)) {
 
       this.log.info("Detected a name change on the controller; updating the HomeKit name to %s.", this.accessory.displayName);
     }
@@ -1116,14 +1114,25 @@ export abstract class ProtectDevice<D extends ProtectProjectionMap[DeviceCollect
     return config?.name ?? config?.displayName ?? this.mac;
   }
 
-  // The log-line prefix for a device, decorated with the model - "Name [Model]" - so every device-scoped line shows which hardware produced it. The format is
-  // single-sourced through describeDevice (plain mode) reading the live projection, so a device rename reflects immediately; the functional `name` above is left bare and
-  // untouched. We read non-throwing through peek() so a detached timer or removal log line on a vanished record falls back to the persisted MAC rather than throwing.
+  /* The log-line prefix for a device, decorated with the model - "Name [Model]" - so every device-scoped line shows which hardware produced it. The name follows the
+   * family naming rule the accessory's display name follows: a custom name the user set leads, as homeKitName applies it, so a line names the device as the Home app
+   * and the settings page do; otherwise the line carries the name the controller reports, raw, so it shows what the Protect app shows, or the model where the
+   * controller reports no name. A leaf's homeKitNameSuffix decorates either, as it decorates the HomeKit name. The format is single-sourced through describeDevice
+   * reading the live projection, so a controller rename reaches the next line, and the functional `name` above is left bare and untouched. The custom name is the
+   * hint configure() resolves before any line is logged, so the prefix costs no option lookup. We read non-throwing through peek() so a detached timer or removal
+   * log line on a vanished record names the device by its custom name where one is set, and by its persisted MAC otherwise, rather than throwing.
+   */
   protected override get logName(): string {
 
     const config = this.device.peek();
+    const custom = (this.hints.nameOverride === null) ? null : this.homeKitName;
 
-    return config ? describeDevice(config) : (this.accessory.context.mac ?? "Unknown");
+    if(!config) {
+
+      return custom ?? this.accessory.context.mac ?? "Unknown";
+    }
+
+    return describeDevice(config, { name: custom ?? ((nonEmptyName(config.name) ?? describeDeviceModel(config)) + this.homeKitNameSuffix) });
   }
 
   // The debug scope for a device: its own MAC alongside the controller's, so a Log.Debug entry suffixed with this device turns on its debug lines alone while its

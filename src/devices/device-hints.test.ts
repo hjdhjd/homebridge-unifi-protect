@@ -3,7 +3,7 @@
  * device-hints.test.ts: The base-capability concern net for the shared ProtectDevice feature-option hints derivation, netted once family-agnostically.
  *
  * configureHints (device.ts) is a BASE ProtectDevice behavior every family runs at construction: it derives its hints from feature options (enabled, logMotion,
- * motionDuration, nameOverride, occupancyDuration, smartOccupancy, standalone, syncName), clamps the durations to their floors (motionDuration >= 2,
+ * motionDuration, nameOverride, nameOwned, occupancyDuration, smartOccupancy, standalone), clamps the durations to their floors (motionDuration >= 2,
  * occupancyDuration >= 60), and logs deviations from the defaults. Per the two-layer test architecture the base derivation/clamp/log logic is netted ONCE here
  * against the shared minimal TestBaseDevice vehicle (the all-quiet makeSensorConfig carrier) rather than re-asserted inside each family suite: every concern test
  * builds the device with a userOptions set, calls the test-only configureHintsFor window, and asserts the resulting hints + the deviation logs.
@@ -115,7 +115,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       assert.equal(hints.occupancyDuration, 300, "occupancyDuration defaults to PROTECT_OCCUPANCY_DURATION (300)");
       assert.deepEqual(hints.smartOccupancy, [], "smartOccupancy seeds to an empty array (the base sets [], the camera family populates it)");
       assert.equal(hints.standalone, false, "standalone defaults to false (Device.Standalone defaults false)");
-      assert.equal(hints.syncName, false, "syncName defaults to false (Device.SyncName defaults false)");
+      assert.equal(hints.nameOwned, false, "nameOwned defaults to false (no custom name, and Device.SyncName defaults false)");
 
       // No hint deviated from its default, so none of the deviation logs fire.
       assert.equal(loggedAt(built.logEntries, "info", "Motion event duration set to"), false, "no motion-duration deviation log at the defaults");
@@ -143,7 +143,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       assert.equal(hints.motionDuration, 10, "motionDuration stays at its default");
       assert.equal(hints.occupancyDuration, 300, "occupancyDuration stays at its default");
       assert.equal(hints.standalone, false, "standalone stays at its default");
-      assert.equal(hints.syncName, false, "syncName stays at its default");
+      assert.equal(hints.nameOwned, false, "nameOwned stays at its default");
     });
 
     test("Enable.Log.Motion drives logMotion true while the other hints stay at their defaults", () => {
@@ -160,7 +160,7 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       assert.equal(hints.motionDuration, 10, "motionDuration stays at its default");
       assert.equal(hints.occupancyDuration, 300, "occupancyDuration stays at its default");
       assert.equal(hints.standalone, false, "standalone stays at its default");
-      assert.equal(hints.syncName, false, "syncName stays at its default");
+      assert.equal(hints.nameOwned, false, "nameOwned stays at its default");
     });
 
     test("Enable.Device.Standalone drives standalone true while the other hints stay at their defaults", () => {
@@ -177,10 +177,10 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
       assert.equal(hints.logMotion, false, "logMotion stays at its default");
       assert.equal(hints.motionDuration, 10, "motionDuration stays at its default");
       assert.equal(hints.occupancyDuration, 300, "occupancyDuration stays at its default");
-      assert.equal(hints.syncName, false, "syncName stays at its default");
+      assert.equal(hints.nameOwned, false, "nameOwned stays at its default");
     });
 
-    test("Enable.Device.SyncName drives syncName true while the other hints stay at their defaults", () => {
+    test("Enable.Device.SyncName drives nameOwned true while the other hints stay at their defaults", () => {
 
       const built = buildHintsDevice({ userOptions: ["Enable.Device.SyncName"] });
 
@@ -188,8 +188,8 @@ describe("base ProtectDevice feature-option hints derivation (device-hints conce
 
       const hints: Readonly<ProtectHints> = device.hints;
 
-      // The robust core, asserted independently of the log path: the global userOption drives syncName true.
-      assert.equal(hints.syncName, true, "Enable.Device.SyncName drives syncName true");
+      // The robust core, asserted independently of the log path: the global userOption hands the plugin the device's name with no custom name set.
+      assert.equal(hints.nameOwned, true, "Enable.Device.SyncName drives nameOwned true");
 
       assert.equal(hints.enabled, true, "enabled stays at its default (true)");
       assert.equal(hints.logMotion, false, "logMotion stays at its default");
