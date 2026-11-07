@@ -165,8 +165,11 @@ export class ProtectNvrSystemInfo extends ProtectBase {
     // If we're configuring for the first time, we add our respective handlers.
     if(!initialized) {
 
-      // Retrieve the current temperature when requested.
-      service.getCharacteristic(this.hap.Characteristic.CurrentTemperature).onGet(this.answering(() => this.nvr.ufp.systemInfo.cpu.temperature));
+      // We report the CPU temperature in whole degrees. Its ordinary jitter crosses HomeKit's default tenth-of-a-degree step several times a minute, and a tenth of a
+      // degree tells no one anything useful about a controller's CPU. HAP rounds every value we push and every read it answers to the characteristic's step, which keeps
+      // both the read below and the update that follows in whole degrees while MQTT carries the controller's full-precision reading.
+      service.getCharacteristic(this.hap.Characteristic.CurrentTemperature).setProps({ minStep: 1 })
+        .onGet(this.answering(() => this.nvr.ufp.systemInfo.cpu.temperature));
     }
 
     // Update the sensor.

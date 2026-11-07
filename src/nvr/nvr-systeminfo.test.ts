@@ -218,6 +218,32 @@ describe("real ProtectNvrSystemInfo construction and controller-owner behavior",
       "the observer's updateDevice refreshed the cached CurrentTemperature to the pushed value");
   });
 
+  test("the CPU temperature reaches HomeKit in whole degrees, on the initial pass, on a pull, and on an observer refresh", async () => {
+
+    const built = buildSystemInfo({ temperature: 56.4 }, { userOptions: ["Enable.Nvr.SystemInfo"] });
+
+    activeController = built.controller;
+
+    await settle();
+
+    const temperature = built.accessory?.getService(Service.TemperatureSensor);
+
+    assert.ok(temperature, "the temperature service exists");
+
+    const characteristic = temperature.getCharacteristic(Characteristic.CurrentTemperature);
+
+    assert.equal(characteristic.props.minStep, 1, "the characteristic declares a one-degree step");
+    assert.equal(characteristic.value, 56, "the initial pass rounds the controller's fractional reading to a whole degree");
+    assert.equal(await triggerGet(characteristic), 56, "a pull answers the rounded reading");
+
+    // A fresh systemInfo moves the reading across a half-degree boundary, so the observer's refresh lands on the next whole degree.
+    built.store.pushNvrPatch({ systemInfo: { ...built.nvr.ufp.systemInfo, cpu: { ...built.nvr.ufp.systemInfo.cpu, temperature: 56.6 } } });
+
+    await settle();
+
+    assert.equal(characteristic.value, 57, "the observer's refresh rounds the pushed reading to a whole degree");
+  });
+
   test("a non-systemInfo nvr patch does NOT refresh the temperature - the narrow selector ignores it", async () => {
 
     const built = buildSystemInfo({ temperature: 20 }, { userOptions: ["Enable.Nvr.SystemInfo"] });
