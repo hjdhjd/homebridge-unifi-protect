@@ -15,23 +15,23 @@
  * those functions serve, and deliberately does not restate them. Honest coverage note: what runSweep DOES in production - the controller's sweepRemovableDevices - is
  * the root's territory and stays untested; the recorder here proves only that the gate calls it, at which instants, and what the gate reads at each.
  */
+import { TestClock, capturingLog, formatLogEntry } from "homebridge-plugin-utils/testing";
 import { accessoryUuid, makeTestAccessory } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory } from "../types.ts";
 import { RemovalStabilityGate } from "./nvr-removal.ts";
 import { TEST_CLOCK_EPOCH } from "./testing.helpers.ts";
-import { TestClock } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
-import util from "node:util";
 
-// Everything the gate's actions and log wrote, plus the grace the supplier answers with. A plain mutable record rather than closures with accessors: an arm reads
-// recorder.sweeps or moves recorder.grace directly, which is what the gate's own suppliers and actions see on their next call.
+// Everything the gate's actions and log wrote, plus the grace the supplier answers with. The levers are plain mutable fields rather than closures with accessors: an
+// arm reads recorder.sweeps or moves recorder.grace directly, which is what the gate's own suppliers and actions see on their next call. What the gate wrote is
+// read-only: the accessories it removed, and every line it logged at any level, in the order it logged them and rendered as the user reads them.
 interface GateRecorder {
 
   grace: number;
-  logLines: string[];
-  removals: ProtectAccessory[];
+  readonly logLines: readonly string[];
+  readonly removals: readonly ProtectAccessory[];
   stableAtSweep: boolean;
   sweeps: number;
 }
@@ -46,17 +46,25 @@ function buildGate(options: { graceSeconds?: number } = {}): { accessory: Return
   // rather than backdating - and a clock seeded at zero lands a test's "up for N milliseconds" fact on that value the moment it has advanced exactly N.
   const clock = new TestClock(TEST_CLOCK_EPOCH);
   const controller = new AbortController();
-  const recorder: GateRecorder = { grace: options.graceSeconds ?? 60, logLines: [], removals: [], stableAtSweep: false, sweeps: 0 };
-  const sink = (message: string, ...parameters: unknown[]): void => {
+  const log = capturingLog();
+  const removals: ProtectAccessory[] = [];
+  const recorder: GateRecorder = {
 
-    recorder.logLines.push(util.format(message, ...parameters));
+    grace: options.graceSeconds ?? 60,
+    get logLines(): readonly string[] {
+
+      return log.entries.map(formatLogEntry);
+    },
+    removals,
+    stableAtSweep: false,
+    sweeps: 0
   };
 
   const gate = new RemovalStabilityGate({
 
     actions: {
 
-      removeDevice: (accessory: ProtectAccessory): void => { recorder.removals.push(accessory); },
+      removeDevice: (accessory: ProtectAccessory): void => { removals.push(accessory); },
       runSweep: (): void => {
 
         recorder.stableAtSweep = gate.removalStable;
@@ -65,7 +73,7 @@ function buildGate(options: { graceSeconds?: number } = {}): { accessory: Return
     },
     clock,
     graceSeconds: (): number => recorder.grace,
-    log: { debug: sink, error: sink, info: sink, warn: sink },
+    log,
     signal: controller.signal
   });
 

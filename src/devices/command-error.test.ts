@@ -16,16 +16,16 @@
  * here in the exact shape they ship, while the shared command path they all route through is the real one.
  */
 import { Characteristic, Service, hap, makeTestAccessory } from "../testing.helpers.ts";
+import { TestClock, capturingLog, linesAt } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
+import type { CapturingLog } from "homebridge-plugin-utils/testing";
 import { ProtectAuthorizationError } from "unifi-protect";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectHints } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { TEST_CLOCK_EPOCH } from "../nvr/testing.helpers.ts";
-import { TestClock } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
-import util from "node:util";
 
 // The smallest concrete leaf of the abstract base, mirroring reachability.test.ts. Beside the empty configureDevice ProtectDevice requires, this adds nothing but a
 // public window onto the protected command helper - runDeviceCommand, setStatusLed, and statusLedCommand are all the base's own, inherited unchanged.
@@ -42,14 +42,14 @@ class TestProtectDevice extends ProtectDevice {
   }
 }
 
-// A constructed device plus the handles a command test reads: the captured controller-log error lines (the helper's single failure-report sink) and the projection's
-// write-through update thunk, which resolves or rejects to drive the success and failure paths.
+// A constructed device plus the handles a command test reads: the projection's write-through update thunk, which resolves or rejects to drive the success and failure
+// paths, and the capturing log behind the controller's logging root, whose error lines are the helper's single failure-report sink.
 interface CommandHarness {
 
   device: { config: Record<string, unknown>; isOnline: boolean; modelKey: string; name: string; peek: () => Record<string, unknown>;
     update: (payload: unknown) => Promise<unknown>; };
-  errors: string[];
   instance: TestProtectDevice;
+  log: CapturingLog;
 }
 
 // Construct a real ProtectDevice against the minimal mocks the command path reads: a projection carrying modelKey (statusLedCommand narrows on it), name (the log
@@ -58,11 +58,9 @@ interface CommandHarness {
 // is the production class.
 const makeDevice = (update: (payload: unknown) => Promise<unknown> = () => Promise.resolve({}), modelKey = "camera"): CommandHarness => {
 
-  const errors: string[] = [];
-  const sink = (): void => undefined;
-  // The device derives its prefixed logger from the platform's plugin logging root, so the capture lives on pluginLog. error renders the line through util.format - the
-  // line the real Homebridge sink would write - so a command test matches against the final substituted text; the other levels sink.
-  const log = { debug: sink, error: (message: string, ...parameters: unknown[]): void => { errors.push(util.format(message, ...parameters)); }, info: sink, warn: sink };
+  // The device derives its prefixed logger from the platform's plugin logging root, so the capture lives on pluginLog. A test reads the error lines rendered - the line
+  // the real Homebridge sink would write - so it matches against the final substituted text.
+  const log = capturingLog();
   // logName reads the live record through peek() (non-throwing), so the projection mock exposes it alongside config; the empty config makes describeDevice render the
   // same bare descriptor logName produces.
   const config = {};
@@ -82,11 +80,11 @@ const makeDevice = (update: (payload: unknown) => Promise<unknown> = () => Promi
 
   instance.hints = hints;
 
-  return { device, errors, instance };
+  return { device, instance, log };
 };
 
 // Assert exactly one failure line was reported and return it, narrowing past the noUncheckedIndexedAccess undefined so the caller can match against the message directly.
-const onlyError = (errors: string[]): string => {
+const onlyError = (errors: readonly string[]): string => {
 
   assert.equal(errors.length, 1, "exactly one failure line is reported");
 
@@ -101,36 +99,36 @@ describe("runDeviceCommand (real ProtectDevice)", () => {
 
   test("a successful command returns true and logs nothing", async () => {
 
-    const { errors, instance } = makeDevice();
+    const { instance, log } = makeDevice();
     let ran = false;
     const result = await instance.runCommand("turn the light on", async () => { ran = true; });
 
     assert.equal(result, true, "a command that resolves reports success");
     assert.equal(ran, true, "the supplied command thunk is invoked");
-    assert.equal(errors.length, 0, "a successful command logs nothing");
+    assert.equal(linesAt(log.entries, "error").length, 0, "a successful command logs nothing");
   });
 
   test("an authorization failure returns false and logs the Administrator-role guidance", async () => {
 
-    const { errors, instance } = makeDevice();
+    const { instance, log } = makeDevice();
     const result = await instance.runCommand("turn the light on", () => Promise.reject(new ProtectAuthorizationError("forbidden")));
 
     assert.equal(result, false, "an authorization failure reports failure");
-    assert.match(onlyError(errors), /Unable to turn the light on\. Please ensure this username has the full management role in UniFi Protect\./);
+    assert.match(onlyError(linesAt(log.entries, "error")), /Unable to turn the light on\. Please ensure this username has the full management role in UniFi Protect\./);
   });
 
   test("any other Error returns false and reports the action with its underlying cause", async () => {
 
-    const { errors, instance } = makeDevice();
+    const { instance, log } = makeDevice();
     const result = await instance.runCommand("adjust the brightness to 50%", () => Promise.reject(new Error("connection refused")));
 
     assert.equal(result, false, "a transient failure reports failure");
-    assert.match(onlyError(errors), /Unable to adjust the brightness to 50%: connection refused\./);
+    assert.match(onlyError(linesAt(log.entries, "error")), /Unable to adjust the brightness to 50%: connection refused\./);
   });
 
   test("a non-Error throw is reported through its string coercion", async () => {
 
-    const { errors, instance } = makeDevice();
+    const { instance, log } = makeDevice();
 
     // We deliberately reject with a non-Error value to exercise runDeviceCommand's String(error) fallback - the branch that reports a thrown value that is not an Error.
     // Commands only ever throw classified Error subclasses, so this is the defensive path, and rejecting with a non-Error is the whole point of the assertion.
@@ -138,41 +136,41 @@ describe("runDeviceCommand (real ProtectDevice)", () => {
     const result = await instance.runCommand("set the doorbell message", () => Promise.reject("boom"));
 
     assert.equal(result, false);
-    assert.match(onlyError(errors), /Unable to set the doorbell message: boom\./);
+    assert.match(onlyError(linesAt(log.entries, "error")), /Unable to set the doorbell message: boom\./);
   });
 
   test("a non-auth error whose message already ends in a period logs exactly one terminal period", async () => {
 
-    const { errors, instance } = makeDevice();
+    const { instance, log } = makeDevice();
 
     // A classified error message is a full sentence ending in a period. The format string supplies its own terminal period, so without normalization the line would
     // end in a doubled "..". The helper renders the cause through formatErrorMessage, which strips the cause's trailing period so the sentence ends in exactly one.
     const result = await instance.runCommand("reboot the camera", () => Promise.reject(new Error("The camera is offline.")));
 
     assert.equal(result, false);
-    assert.match(onlyError(errors), /Unable to reboot the camera: The camera is offline\.$/);
-    assert.doesNotMatch(onlyError(errors), /\.\.$/);
+    assert.match(onlyError(linesAt(log.entries, "error")), /Unable to reboot the camera: The camera is offline\.$/);
+    assert.doesNotMatch(onlyError(linesAt(log.entries, "error")), /\.\.$/);
   });
 
   test("a non-auth error whose message carries no terminal period still ends in exactly one", async () => {
 
-    const { errors, instance } = makeDevice();
+    const { instance, log } = makeDevice();
     const result = await instance.runCommand("reboot the camera", () => Promise.reject(new Error("connection refused")));
 
     assert.equal(result, false);
-    assert.match(onlyError(errors), /Unable to reboot the camera: connection refused\.$/);
+    assert.match(onlyError(linesAt(log.entries, "error")), /Unable to reboot the camera: connection refused\.$/);
   });
 
   test("a non-auth error whose message ends in an ellipsis keeps the ellipsis intact", async () => {
 
-    const { errors, instance } = makeDevice();
+    const { instance, log } = makeDevice();
 
     // formatErrorMessage strips exactly one trailing period - the doubled sentence terminator - so an intentional ellipsis survives: two of its periods remain and the
     // format string's own terminal period completes the three. This is the family-wide cause rendering, shared with every other error line in the plugin.
     const result = await instance.runCommand("reboot the camera", () => Promise.reject(new Error("retrying...")));
 
     assert.equal(result, false);
-    assert.match(onlyError(errors), /Unable to reboot the camera: retrying\.\.\.$/);
+    assert.match(onlyError(linesAt(log.entries, "error")), /Unable to reboot the camera: retrying\.\.\.$/);
   });
 });
 
@@ -181,21 +179,22 @@ describe("setStatusLed (real migrated command path)", () => {
   test("a successful set issues the ledSettings write-through update and reports success", async () => {
 
     let captured: unknown;
-    const { errors, instance } = makeDevice(async (payload) => { captured = payload; });
+    const { instance, log } = makeDevice(async (payload) => { captured = payload; });
     const result = await instance.setStatusLed(true);
 
     assert.equal(result, true, "the accepted command reports success");
     assert.deepEqual(captured, { ledSettings: { isEnabled: true } }, "a camera/sensor routes the ledSettings payload through the projection's update");
-    assert.equal(errors.length, 0, "a successful set logs nothing");
+    assert.equal(linesAt(log.entries, "error").length, 0, "a successful set logs nothing");
   });
 
   test("an authorization failure reports failure with the status-indicator action and the Administrator-role guidance", async () => {
 
-    const { errors, instance } = makeDevice(() => Promise.reject(new ProtectAuthorizationError("forbidden")));
+    const { instance, log } = makeDevice(() => Promise.reject(new ProtectAuthorizationError("forbidden")));
     const result = await instance.setStatusLed(false);
 
     assert.equal(result, false);
-    assert.match(onlyError(errors), /Unable to turn the status indicator light off\. Please ensure this username has the full management role in UniFi Protect\./);
+    assert.match(onlyError(linesAt(log.entries, "error")),
+      /Unable to turn the status indicator light off\. Please ensure this username has the full management role in UniFi Protect\./);
   });
 });
 
@@ -223,7 +222,7 @@ describe("the onSet revert through HAP", () => {
     await nightVisionOnSet(harness, service)(true);
 
     assert.equal(onChar.value, true, "a successful command does not revert the switch");
-    assert.equal(harness.errors.length, 0);
+    assert.equal(linesAt(harness.log.entries, "error").length, 0);
   });
 
   test("a failed command reverts the switch to its prior state and logs the Administrator-role guidance", async () => {
@@ -236,7 +235,7 @@ describe("the onSet revert through HAP", () => {
     await nightVisionOnSet(harness, service)(true);
 
     assert.equal(onChar.value, false, "the failed command reverts the switch to off");
-    assert.match(onlyError(harness.errors), /full management role/);
+    assert.match(onlyError(linesAt(harness.log.entries, "error")), /full management role/);
   });
 });
 
@@ -275,7 +274,7 @@ describe("access unlock onSet (real runDeviceCommand)", () => {
 
     assert.equal(current.value, Characteristic.LockCurrentState.SECURED, "a failed unlock reverts the current state to SECURED");
     assert.equal(target.value, Characteristic.LockTargetState.SECURED, "a failed unlock reverts the target state to SECURED");
-    assert.match(onlyError(harness.errors), /Unable to unlock the Access device: The Access device is unreachable\.$/);
+    assert.match(onlyError(linesAt(harness.log.entries, "error")), /Unable to unlock the Access device: The Access device is unreachable\.$/);
   });
 
   test("a successful unlock reports the momentary unlock and logs nothing", async () => {
@@ -293,7 +292,7 @@ describe("access unlock onSet (real runDeviceCommand)", () => {
 
     assert.equal(current.value, Characteristic.LockCurrentState.UNSECURED, "a successful unlock pushed the momentary UNSECURED current state");
     assert.equal(target.value, Characteristic.LockTargetState.UNSECURED, "a successful unlock leaves HomeKit's UNSECURED target in place");
-    assert.equal(harness.errors.length, 0, "a successful unlock logs nothing");
+    assert.equal(linesAt(harness.log.entries, "error").length, 0, "a successful unlock logs nothing");
   });
 
   test("an authorization failure reverts the lock and reports the Administrator-role guidance", async () => {
@@ -307,6 +306,7 @@ describe("access unlock onSet (real runDeviceCommand)", () => {
     await unlockOnSet(harness, service, () => Promise.reject(new ProtectAuthorizationError("forbidden")))();
 
     assert.equal(target.value, Characteristic.LockTargetState.SECURED, "an authorization failure still reverts the lock to SECURED");
-    assert.match(onlyError(harness.errors), /Unable to unlock the Access device\. Please ensure this username has the full management role in UniFi Protect\./);
+    assert.match(onlyError(linesAt(harness.log.entries, "error")),
+      /Unable to unlock the Access device\. Please ensure this username has the full management role in UniFi Protect\./);
   });
 });

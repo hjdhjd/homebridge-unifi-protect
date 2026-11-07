@@ -20,14 +20,15 @@
  * their exact text.
  */
 import type { HttpRequestEndPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload } from "unifi-protect";
+import { TestClock, capturingLog, formatLogEntry } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
+import type { CapturingLog } from "homebridge-plugin-utils/testing";
 import { DiagnosticsHealthBridge } from "./nvr-health-bridge.ts";
 import type { NvrHealthState } from "./nvr-health.ts";
-import { TestClock } from "homebridge-plugin-utils/testing";
 import type { ThrottleRailSource } from "./nvr-health-bridge.ts";
 import assert from "node:assert/strict";
+import { labeledLines } from "../testing.helpers.ts";
 import { channels as protectChannels } from "unifi-protect";
-import util from "node:util";
 
 // The controller address every arm's bridge is scoped to, and a foreign one for the scoping arm. Two distinct hosts is the whole fixture the address filter needs.
 const CONTROLLER_ADDRESS = "controller.test";
@@ -36,13 +37,13 @@ const FOREIGN_ADDRESS = "other-controller.test";
 // The camera this suite's livestream payloads name. Ownership is answered by the mutable predicate below rather than by the id, so one id serves both polarities.
 const CAMERA_ID = "camera-under-test";
 
-// Everything the bridge's log and action recorded, plus the ownership answer its predicate returns. A plain mutable record rather than closures with accessors: an arm
-// moves recorder.owned or reads recorder.refreshes directly, and that is what the bridge's own predicate and action see on their next call.
+// Everything the bridge's log and action recorded, plus the ownership answer its predicate returns. The levers are plain mutable fields rather than closures with
+// accessors: an arm moves recorder.owned or reads recorder.refreshes directly, and that is what the bridge's own predicate and action see on their next call. What
+// the bridge logged is read-only.
 interface BridgeRecorder {
 
-  // The level of each line in logLines, in the same order.
-  logLevels: string[];
-  logLines: string[];
+  // Every line the bridge logged at any level, in the order it logged them and rendered as the user reads them.
+  readonly logLines: readonly string[];
   owned: boolean;
   refreshes: number;
 }
@@ -50,15 +51,19 @@ interface BridgeRecorder {
 // Build a bridge against recording stubs and a test clock, the caller's when it supplies one. Every log level lands in the one collection, so an arm asserting "no
 // lines" is asserting that the bridge said nothing at all rather than nothing at one chosen level - and since the state narration is its entire log surface, the
 // collection IS the narration.
-function buildBridge(options: { address?: string; clock?: TestClock } = {}): { bridge: DiagnosticsHealthBridge; controller: AbortController;
+function buildBridge(options: { address?: string; clock?: TestClock } = {}): { bridge: DiagnosticsHealthBridge; controller: AbortController; log: CapturingLog;
   recorder: BridgeRecorder; } {
 
   const controller = new AbortController();
-  const recorder: BridgeRecorder = { logLevels: [], logLines: [], owned: true, refreshes: 0 };
-  const sink = (level: string) => (message: string, ...parameters: unknown[]): void => {
+  const log = capturingLog();
+  const recorder: BridgeRecorder = {
 
-    recorder.logLevels.push(level);
-    recorder.logLines.push(util.format(message, ...parameters));
+    get logLines(): readonly string[] {
+
+      return log.entries.map(formatLogEntry);
+    },
+    owned: true,
+    refreshes: 0
   };
 
   const bridge = new DiagnosticsHealthBridge({
@@ -66,14 +71,14 @@ function buildBridge(options: { address?: string; clock?: TestClock } = {}): { b
     actions: { refreshRemovalStability: (): void => { recorder.refreshes++; } },
     address: options.address ?? CONTROLLER_ADDRESS,
     clock: options.clock ?? new TestClock(),
-    log: { debug: sink("debug"), error: sink("error"), info: sink("info"), warn: sink("warn") },
+    log,
     ownsCamera: (cameraId: string): boolean => recorder.owned && (cameraId === CAMERA_ID),
     signal: controller.signal
   });
 
   bridge.wireDiagnostics();
 
-  return { bridge, controller, recorder };
+  return { bridge, controller, log, recorder };
 }
 
 // Publish one completed request on the library's HTTP channel. A 500 is the failure the bridge reads as a stress symptom; a 200 is the success it reads as recovery.
@@ -144,7 +149,7 @@ describe("the health bridge: narration", () => {
 
   test("the way up narrates each entry exactly once, at the reducer's own thresholds", () => {
 
-    const { bridge, controller, recorder } = buildBridge();
+    const { bridge, controller, log, recorder } = buildBridge();
 
     try {
 
@@ -153,16 +158,17 @@ describe("the health bridge: narration", () => {
       // Five weighted failures is where the reducer first calls the controller degraded. The line is the operator's alert that reconnects are being softened.
       publishRequests(5, { ok: false });
 
-      assert.deepEqual(recorder.logLines, ["The Protect controller is responding slowly or with intermittent errors. Reducing reconnect attempts until conditions " +
-        "improve."], "crossing into degraded narrates the slow-response line exactly once");
+      assert.deepEqual(labeledLines(log.entries), ["warn: The Protect controller is responding slowly or with intermittent errors. Reducing reconnect attempts until " +
+        "conditions improve."], "crossing into degraded narrates the slow-response line exactly once, at warn because it is an alert");
       assert.equal(bridge.state, "degraded", "five failures within the window read as degraded");
 
       // Seven more carries the count to twelve, the sustained-load threshold.
       publishRequests(7, { ok: false });
 
       assert.equal(recorder.logLines.length, 2, "crossing into stressed adds exactly one more line");
-      assert.equal(recorder.logLines[1], "The Protect controller is under sustained load. Pausing background operations until conditions improve. Active recordings " +
-        "and live streams continue.", "the stressed entry names what keeps running, so an operator knows recordings are not being dropped");
+      assert.equal(labeledLines(log.entries)[1], "warn: The Protect controller is under sustained load. Pausing background operations until conditions improve. " +
+        "Active recordings and live streams continue.", "the stressed entry is an alert at warn and names what keeps running, so an operator knows recordings are not " +
+        "being dropped");
       assert.equal(bridge.state, "stressed", "twelve failures within the window read as stressed");
     } finally {
 
@@ -172,7 +178,7 @@ describe("the health bridge: narration", () => {
 
   test("the way down is silent through the hysteresis step and speaks only on the return to healthy", () => {
 
-    const { bridge, controller, recorder } = buildBridge();
+    const { bridge, controller, log, recorder } = buildBridge();
 
     try {
 
@@ -193,8 +199,8 @@ describe("the health bridge: narration", () => {
       publishRequests(5, { ok: true });
 
       assert.equal(bridge.state, "healthy", "the weight fell under the degraded release bound");
-      assert.deepEqual(recorder.logLines.slice(2), ["The Protect controller is responsive again."], "the return to healthy narrates the recovery exactly once");
-      assert.deepEqual(recorder.logLevels, [ "warn", "warn", "info" ], "each alert is a warning, and the recovery is info, because it asks nothing of anyone");
+      assert.deepEqual(labeledLines(log.entries.slice(2)), ["info: The Protect controller is responsive again."],
+        "the return to healthy narrates the recovery exactly once, at info because it asks nothing of anyone");
     } finally {
 
       controller.abort();

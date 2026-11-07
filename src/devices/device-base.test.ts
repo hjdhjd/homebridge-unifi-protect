@@ -9,7 +9,7 @@
  * rather than from the call alone.
  */
 import { ProtectBase, configured } from "./device-base.ts";
-import { TestClock, settle } from "homebridge-plugin-utils/testing";
+import { TestClock, settle, silentLog } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectNvr } from "../nvr/nvr.ts";
@@ -58,8 +58,7 @@ class TestOwner extends ProtectBase {
 function makeOwner(): { clock: TestClock; owner: TestOwner } {
 
   const clock = new TestClock(TEST_CLOCK_EPOCH);
-  const sink = (): void => undefined;
-  const log = { debug: sink, error: sink, info: sink, warn: sink };
+  const log = silentLog();
   const nvr = { platform: { api: { hap }, clock, log, pluginLog: log, testDebug: (): boolean => false }, signal: new AbortController().signal };
 
   return { clock, owner: new TestOwner(nvr as unknown as ProtectNvr) };

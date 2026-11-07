@@ -23,10 +23,10 @@
  */
 import type { API, Logging } from "homebridge";
 import { APIEvent, FeatureOptions, FfmpegCodecs, HAPStatus, Perms, createMqttClient, parseFfmpegVersionParts } from "homebridge-plugin-utils";
+import type { CapturingLog, TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, makeTestApi } from "./testing.helpers.ts";
 import type { ProtectNvrConfig, ProtectNvrLiveviewConfig } from "unifi-protect";
-import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
-import { TestMqttClientFactory, assertNoUnhandledRejections, expectAt, hapStatus, settle, settlePastMqttEnd, settleUntil, triggerGet,
+import { TestMqttClientFactory, assertNoUnhandledRejections, capturingLog, expectAt, hapStatus, settle, settlePastMqttEnd, settleUntil, triggerGet,
   triggerSet } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { featureOptionCategories, featureOptions } from "./options.ts";
@@ -74,25 +74,22 @@ function listedAgain(address: string): TestLogEntry {
  *                               with Homebridge's three.
  * @param injected.mqttFactory - The factory the platform's controllers build their MQTT clients through.
  *
- * @returns The API double the platform was handed, the constructed platform, and every line its construction logged.
+ * @returns The API double the platform was handed, the constructed platform, and the capturing log every line its construction logged lands on.
  */
 function buildPlatform(options: string[], controllers?: unknown, { mqttFactory }: { mqttFactory?: typeof createMqttClient } = {}):
-{ api: TestHomebridgeApi; lines: TestLogEntry[]; platform: ProtectPlatform } {
+{ api: TestHomebridgeApi; log: CapturingLog; platform: ProtectPlatform } {
 
-  const lines: TestLogEntry[] = [];
-  const sink = (level: TestLogEntry["level"]) => (message: string, ...params: unknown[]): void => {
-
-    lines.push({ level, message, params });
-  };
-  // Homebridge's own logger is a callable object carrying a method per level, and the plugin's debug router wraps it, so the double has to be one too. Its success and
-  // log channels record at info: the captured shape carries the four severities production actually branches on, and nothing here asserts on either channel.
-  const log = Object.assign(sink("info"), { debug: sink("debug"), error: sink("error"), info: sink("info"), log: sink("info"), success: sink("info"),
-    warn: sink("warn") });
+  const log = capturingLog();
+  // Homebridge's own logger is a callable object carrying a method per level, and the plugin's debug router wraps it, so the double has to be one too, a callable over
+  // the capturing log. Its success and log channels record at info: the captured shape carries the four severities production actually branches on, and nothing here
+  // asserts on either channel.
+  const homebridgeLog = Object.assign((message: string, ...params: unknown[]): void => log.info(message, ...params), { debug: log.debug, error: log.error,
+    info: log.info, log: log.info, success: log.info, warn: log.warn });
   const config: ProtectPlatformConfig = { controllers: controllers as ProtectPlatformConfig["controllers"], name: "UniFi Protect", options, platform: "UniFi Protect" };
   const api = makeTestApi();
-  const homebridgeArguments = [ log as unknown as Logging, config, api as unknown as API ] as const;
+  const homebridgeArguments = [ homebridgeLog as unknown as Logging, config, api as unknown as API ] as const;
 
-  return { api, lines, platform: (mqttFactory === undefined) ? new ProtectPlatform(...homebridgeArguments) :
+  return { api, log, platform: (mqttFactory === undefined) ? new ProtectPlatform(...homebridgeArguments) :
     new ProtectPlatform(...homebridgeArguments, { mqttFactory }) };
 }
 
@@ -137,8 +134,8 @@ describe("platform construction and the retired feature-option translation", () 
   // A translated configuration says so exactly once, at warn, and names the entries it acted on so a user can see what was read and where to make it permanent.
   test("a translated configuration narrates once at warn with the entries it translated", () => {
 
-    const { lines } = buildPlatform([ "Enable.Video.Rtsp.Only.High", "Enable.Video.Timeshift.Only.Low" ]);
-    const narrations = lines.filter((line) => line.message.includes("translated automatically at startup"));
+    const { log } = buildPlatform([ "Enable.Video.Rtsp.Only.High", "Enable.Video.Timeshift.Only.Low" ]);
+    const narrations = log.entries.filter((line) => line.message.includes("translated automatically at startup"));
 
     assert.equal(narrations.length, 1, "the translation is narrated once");
     assert.equal(narrations[0]?.level, "warn", "it is a warning, because the configuration on disk still speaks the older grammar");
@@ -149,9 +146,9 @@ describe("platform construction and the retired feature-option translation", () 
   // A configuration already speaking the current grammar has nothing to say, so the line stays out of the log entirely rather than reporting an empty translation.
   test("a canonical configuration narrates nothing", () => {
 
-    const { lines } = buildPlatform(["Enable.Video.Rtsp.Only=High"]);
+    const { log } = buildPlatform(["Enable.Video.Rtsp.Only=High"]);
 
-    assert.equal(lines.filter((line) => line.message.includes("translated automatically at startup")).length, 0, "nothing was translated, so nothing is said");
+    assert.equal(log.entries.filter((line) => line.message.includes("translated automatically at startup")).length, 0, "nothing was translated, so nothing is said");
   });
 });
 
@@ -163,28 +160,28 @@ describe("platform construction and the configured controllers", () => {
    */
   test("entries at one address in its exact, case-varied, space-padded, dotted, and default-port spellings warn once, naming the first entry's address", () => {
 
-    const { lines } = buildPlatform([], [ { address: "UniFi.local" }, { address: "UNIFI.LOCAL" }, { address: "  unifi.local\t" }, { address: "unifi.local." },
+    const { log } = buildPlatform([], [ { address: "UniFi.local" }, { address: "UNIFI.LOCAL" }, { address: "  unifi.local\t" }, { address: "unifi.local." },
       { address: "UniFi.local:443" }, { address: "UniFi.local" } ]);
 
-    assert.deepEqual(lines, [ NO_CREDENTIALS, listedAgain("UniFi.local") ],
+    assert.deepEqual(log.entries, [ NO_CREDENTIALS, listedAgain("UniFi.local") ],
       "the first entry is read, and the first repeat warns once with the address as the first entry stores it while every repeat is skipped");
   });
 
   // An IPv6 literal names one console with or without its brackets, and a port other than the default names another console, so only the bracketed repeat warns.
   test("an IPv6 address repeated in its bracketed spelling warns once, and the same host on another port is read as its own controller", () => {
 
-    const { lines } = buildPlatform([], [ { address: "fe80::1" }, { address: "[FE80::1]" }, { address: "unifi.local" }, { address: "unifi.local:8443" } ]);
+    const { log } = buildPlatform([], [ { address: "fe80::1" }, { address: "[FE80::1]" }, { address: "unifi.local" }, { address: "unifi.local:8443" } ]);
 
-    assert.deepEqual(lines, [ NO_CREDENTIALS, listedAgain("fe80::1"), NO_CREDENTIALS, NO_CREDENTIALS ],
+    assert.deepEqual(log.entries, [ NO_CREDENTIALS, listedAgain("fe80::1"), NO_CREDENTIALS, NO_CREDENTIALS ],
       "the bracketed repeat is skipped with one warning naming the first entry's address, and the entry on another port is read beside the bare host");
   });
 
   // However many entries repeat an address, the warning is about the address, so it is logged once for it, naming the address as the first entry stores it.
   test("entries at two addresses, one of them repeated twice more, warn once", () => {
 
-    const { lines } = buildPlatform([], [ { address: "10.0.0.1" }, { address: "10.0.0.2" }, { address: " 10.0.0.1 " }, { address: "10.0.0.1" } ]);
+    const { log } = buildPlatform([], [ { address: "10.0.0.1" }, { address: "10.0.0.2" }, { address: " 10.0.0.1 " }, { address: "10.0.0.1" } ]);
 
-    assert.deepEqual(lines, [ NO_CREDENTIALS, NO_CREDENTIALS, listedAgain("10.0.0.1") ],
+    assert.deepEqual(log.entries, [ NO_CREDENTIALS, NO_CREDENTIALS, listedAgain("10.0.0.1") ],
       "each address's first entry is read, and the repeated address warns once however many entries repeat it");
   });
 
@@ -193,9 +190,9 @@ describe("platform construction and the configured controllers", () => {
    */
   test("entries at distinct addresses, and entries with no address, warn nothing", () => {
 
-    const { lines } = buildPlatform([], [ { address: "10.0.0.1" }, { address: "10.0.0.2" }, {}, {}, { address: "" }, { address: "" }, { address: 10001 } ]);
+    const { log } = buildPlatform([], [ { address: "10.0.0.1" }, { address: "10.0.0.2" }, {}, {}, { address: "" }, { address: "" }, { address: 10001 } ]);
 
-    assert.deepEqual(lines, [ NO_CREDENTIALS, NO_CREDENTIALS, NO_HOST, NO_HOST, NO_HOST, NO_HOST, NO_HOST ],
+    assert.deepEqual(log.entries, [ NO_CREDENTIALS, NO_CREDENTIALS, NO_HOST, NO_HOST, NO_HOST, NO_HOST, NO_HOST ],
       "every entry is read and nothing is reported, because no address repeats, and the entry a hand edit left a number is read as one with no address");
   });
 
@@ -205,12 +202,12 @@ describe("platform construction and the configured controllers", () => {
    */
   test("a padded entry before its clean form is one controller at the trimmed address, warned about once", (t) => {
 
-    const { api, lines, platform } = buildPlatform([], [ { address: " 10.0.0.1 ", password: "password", username: "padded" },
+    const { api, log, platform } = buildPlatform([], [ { address: " 10.0.0.1 ", password: "password", username: "padded" },
       { address: "10.0.0.1", password: "password", username: "clean" } ]);
 
     t.after(() => void api.emit(APIEvent.SHUTDOWN));
 
-    assert.deepEqual(lines, [listedAgain("10.0.0.1")], "the repeat warns once, naming the address as the plugin reads it");
+    assert.deepEqual(log.entries, [listedAgain("10.0.0.1")], "the repeat warns once, naming the address as the plugin reads it");
     assert.deepEqual(configuredControllers(platform).map((controller) => [ controller.config.address, controller.config.username ]), [[ "10.0.0.1", "padded" ]],
       "and the first entry is the one constructed, at its trimmed address");
   });
@@ -218,19 +215,20 @@ describe("platform construction and the configured controllers", () => {
   test("a padded entry alone reaches its controller trimmed, and the entry Homebridge handed over is left as it stands", (t) => {
 
     const entry = { address: "\tunifi.local  ", password: "password", username: "username" };
-    const { api, lines, platform } = buildPlatform([], [entry]);
+    const { api, log, platform } = buildPlatform([], [entry]);
     const [controller] = configuredControllers(platform);
 
     t.after(() => void api.emit(APIEvent.SHUTDOWN));
 
     assert.ok(controller, "the entry carries an address and credentials, so a controller is constructed for it");
     assert.equal(controller.config.address, "unifi.local", "the controller connects to the trimmed address, the form unifi-protect can carry");
-    assert.deepEqual(lines, [], "a single entry repeats nothing");
+    assert.deepEqual(log.entries, [], "a single entry repeats nothing");
 
     // A controller that has not connected prefixes its lines with its configured address, so a line it logs shows the form its prefix reads.
     controller.log.info("Probing the prefix.");
 
-    assert.deepEqual(lines, [{ level: "info", message: "unifi.local: Probing the prefix.", params: [] }], "and its lines are prefixed with that form until it connects");
+    assert.deepEqual(log.entries, [{ level: "info", message: "unifi.local: Probing the prefix.", params: [] }],
+      "and its lines are prefixed with that form until it connects");
     assert.equal(entry.address, "\tunifi.local  ", "the trim reads a copy, so Homebridge's own configuration object keeps what it was handed");
   });
 
@@ -240,16 +238,16 @@ describe("platform construction and the configured controllers", () => {
 
     for(const [ value, label ] of [ [ { address: "10.0.0.1" }, "an object" ], [ "unifi.local", "a non-empty string" ], [ 42, "a number" ] ] as [ unknown, string ][]) {
 
-      assert.deepEqual(buildPlatform([], value).lines, [NO_CONTROLLERS], label + " logs the no-controllers line once and nothing about an address or credentials");
+      assert.deepEqual(buildPlatform([], value).log.entries, [NO_CONTROLLERS], label + " logs the no-controllers line once and nothing about an address or credentials");
     }
   });
 
   // A hand edit can leave anything in the list, and an entry that is not an object carries nothing to read, so it is passed over without a line.
   test("a list holding null and a string beside one entry with no credentials constructs and reads the one entry", () => {
 
-    const { lines } = buildPlatform([], [ null, "unifi.local", { address: "10.0.0.1" } ]);
+    const { log } = buildPlatform([], [ null, "unifi.local", { address: "10.0.0.1" } ]);
 
-    assert.deepEqual(lines, [NO_CREDENTIALS], "construction completes, and only the one entry is read");
+    assert.deepEqual(log.entries, [NO_CREDENTIALS], "construction completes, and only the one entry is read");
   });
 
   // Homebridge hands the platform three arguments, so the factory its controllers build their MQTT clients through is the one that reaches a real broker.
@@ -289,10 +287,10 @@ describe("the platform's launch of its controllers", () => {
    * @param options.entry       - The configured entry the controller is built from (omitted, FIRST).
    * @param options.mqttFactory - The factory handed to the platform (omitted, the platform is built with Homebridge's three arguments).
    *
-   * @returns The API double, the controller, the controller record it connects to, the platform, and every line logged.
+   * @returns The API double, the controller, the controller record it connects to, the platform, and the capturing log every line lands on.
    */
   function rejectPastConnect(t: TestContext, { entry = FIRST, mqttFactory }: { entry?: unknown; mqttFactory?: typeof createMqttClient } = {}):
-  { api: TestHomebridgeApi; controller: ProtectNvr; lines: TestLogEntry[]; nvrConfig: ProtectNvrConfig; platform: ProtectPlatform } {
+  { api: TestHomebridgeApi; controller: ProtectNvr; log: CapturingLog; nvrConfig: ProtectNvrConfig; platform: ProtectPlatform } {
 
     answerProbe(t);
 
@@ -303,14 +301,14 @@ describe("the platform's launch of its controllers", () => {
 
     t.mock.method(ProtectClient, "connect", async (): Promise<ProtectClient> => client);
 
-    const { api, lines, platform } = buildPlatform([], [entry], { mqttFactory });
+    const { api, log, platform } = buildPlatform([], [entry], { mqttFactory });
     const [controller] = configuredControllers(platform);
 
     t.after(() => void api.emit(APIEvent.SHUTDOWN));
 
     assert.ok(controller, "the entry carries an address and credentials, so a controller is constructed for it");
 
-    return { api, controller, lines, nvrConfig, platform };
+    return { api, controller, log, nvrConfig, platform };
   }
 
   /* A login that rejects floats out of the launch, where nothing awaits it, and a rejection that floats ends Homebridge, or a child bridge, for everyone. So the launch
@@ -321,7 +319,7 @@ describe("the platform's launch of its controllers", () => {
 
     answerProbe(t);
 
-    const { api, lines, platform } = buildPlatform([], [ SECOND, FIRST ]);
+    const { api, log, platform } = buildPlatform([], [ SECOND, FIRST ]);
     const [ other, controller ] = configuredControllers(platform);
 
     t.after(() => void api.emit(APIEvent.SHUTDOWN));
@@ -345,7 +343,7 @@ describe("the platform's launch of its controllers", () => {
       await settleUntil(() => controller.signal.aborted, { description: "the rejected login's stop" });
     });
 
-    assert.deepEqual(lines, [{ level: "error", message: LOGIN_REJECTED, params: ["The record is gone: A cause beneath it"] }],
+    assert.deepEqual(log.entries, [{ level: "error", message: LOGIN_REJECTED, params: ["The record is gone: A cause beneath it"] }],
       "the line is said once at error on the controller's own prefix, its reason keeping its chain");
     assert.equal(controller.phase, "shuttingDown", "the controller that rejected is stopped");
     assert.equal(other.signal.aborted, false, "and the other controller's signal holds");
@@ -357,8 +355,8 @@ describe("the platform's launch of its controllers", () => {
 
     const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
     const factory = new TestMqttClientFactory({ holdEnd: promise });
-    const { api, controller, lines } = rejectPastConnect(t, { entry: { ...FIRST, mqttUrl: "mqtt://127.0.0.1:1" }, mqttFactory: factory.create });
-    const errors = (): TestLogEntry[] => lines.filter(({ level }) => level === "error");
+    const { api, controller, log } = rejectPastConnect(t, { entry: { ...FIRST, mqttUrl: "mqtt://127.0.0.1:1" }, mqttFactory: factory.create });
+    const errors = (): TestLogEntry[] => log.entries.filter(({ level }) => level === "error");
 
     t.after(() => resolve());
 
@@ -427,7 +425,7 @@ describe("the platform's launch of its controllers", () => {
 
     answerProbe(t);
 
-    const { api, lines, platform } = buildPlatform([], [ FIRST, SECOND ]);
+    const { api, log, platform } = buildPlatform([], [ FIRST, SECOND ]);
     const [ controller, other ] = configuredControllers(platform);
 
     t.after(() => void api.emit(APIEvent.SHUTDOWN));
@@ -453,7 +451,7 @@ describe("the platform's launch of its controllers", () => {
 
       api.emit(APIEvent.DID_FINISH_LAUNCHING);
 
-      await settleUntil(() => lines.length > 1, { description: "the stop's line" });
+      await settleUntil(() => log.entries.length > 1, { description: "the stop's line" });
 
       assert.equal(other.signal.aborted, false, "the other controller's signal holds");
       assert.equal(other.phase, "connecting", "with its login still under way");
@@ -463,7 +461,7 @@ describe("the platform's launch of its controllers", () => {
       await settle();
     });
 
-    assert.deepEqual(lines, [ { level: "error", message: LOGIN_REJECTED, params: ["The record is gone"] },
+    assert.deepEqual(log.entries, [ { level: "error", message: LOGIN_REJECTED, params: ["The record is gone"] },
       { level: "error", message: STOP_REJECTED, params: ["The disposal failed: A cause beneath it"] } ]);
     assert.equal(controller.phase, "shuttingDown", "the sequence reached its transition ahead of the disposal");
   });
@@ -471,7 +469,7 @@ describe("the platform's launch of its controllers", () => {
   // Homebridge's listener voids what it is handed, so a stop it asked for first has no caller to read a rejection, and the line has to stand for that stop on its own.
   test("a stop that rejects after Homebridge asked first writes its line and floats nothing", async () => {
 
-    const { api, lines, platform } = buildPlatform([], [FIRST]);
+    const { api, log, platform } = buildPlatform([], [FIRST]);
     const [controller] = configuredControllers(platform);
 
     assert.ok(controller, "the entry carries an address and credentials, so a controller is constructed for it");
@@ -488,14 +486,14 @@ describe("the platform's launch of its controllers", () => {
       await settle();
     });
 
-    assert.deepEqual(lines, [{ level: "error", message: STOP_REJECTED, params: ["The disposal failed: A cause beneath it"] }]);
+    assert.deepEqual(log.entries, [{ level: "error", message: STOP_REJECTED, params: ["The disposal failed: A cause beneath it"] }]);
     assert.equal(controller.phase, "shuttingDown", "the sequence reached its transition ahead of the disposal");
   });
 
   // The controller's sweep is armed when its login rejects, and the restored orphan is what that sweep would remove.
   test("a login that really rejects past connect stops its controller, and its sweep removes nothing", async (t) => {
 
-    const { api, controller, lines, nvrConfig, platform } = rejectPastConnect(t);
+    const { api, controller, log, nvrConfig, platform } = rejectPastConnect(t);
     const orphan = makeTestAccessory("Orphan", "AABBCCFFFFFF");
 
     orphan.context = { mac: "AABBCCFFFFFF", nvr: nvrConfig.mac };
@@ -509,14 +507,14 @@ describe("the platform's launch of its controllers", () => {
       await settle();
     });
 
-    const errors = lines.filter(({ level }) => level === "error");
+    const errors = log.entries.filter(({ level }) => level === "error");
 
     assert.equal(errors.length, 1, "the line is said once at error");
     assert.ok(errors[0]?.message.endsWith(LOGIN_REJECTED_SENTENCE));
     assert.equal(controller.phase, "shuttingDown");
     assert.equal(controller.isAvailable, false);
     assert.ok(platform.accessories.includes(orphan), "the orphan stays, because the stop kept the sweep from running");
-    assert.equal(lines.some(({ message }) => [ "Delaying", "Removing" ].some((word) => message.includes(word))), false, "and nothing says the sweep ran");
+    assert.equal(log.entries.some(({ message }) => [ "Delaying", "Removing" ].some((word) => message.includes(word))), false, "and nothing says the sweep ran");
   });
 
   // A shutdown that tears a login down is our own doing, so what it rejects with is no reason to report. An aborted signal means this controller is already stopping.
@@ -524,7 +522,7 @@ describe("the platform's launch of its controllers", () => {
 
     answerProbe(t);
 
-    const { api, lines, platform } = buildPlatform([], [FIRST]);
+    const { api, log, platform } = buildPlatform([], [FIRST]);
     const [controller] = configuredControllers(platform);
 
     t.after(() => void api.emit(APIEvent.SHUTDOWN));
@@ -553,7 +551,7 @@ describe("the platform's launch of its controllers", () => {
       await settle();
     });
 
-    assert.deepEqual(lines, [], "the rejection is read, and nothing is said about it");
+    assert.deepEqual(log.entries, [], "the rejection is read, and nothing is said about it");
   });
 });
 

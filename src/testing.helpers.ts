@@ -9,7 +9,7 @@
  * assertion about HomeKit state therefore reads what production would leave there, and the harness restates no part of HAP or Homebridge to get it. The accessory
  * builder derives every identity through HAP's own UUID generator, the way production derives each accessory's UUID, and the read helpers below give suites the
  * views HAP keeps no log of: the values production wrote to one characteristic, the controller configurations and removals an accessory saw, and the options a camera
- * controller was built with.
+ * controller was built with. Beside them, labeledLines renders a captured log as one list across every level, for an assertion that reads levels and order together.
  *
  * Alongside them this file holds the rest of the harness's cross-cutting core: TestStateStore, the facade over unifi-protect's real state store, with makeProtectState
  * to seed it; and the streaming and timeshift stubs every device family that constructs a real camera host shares: the streaming delegate with its controller
@@ -31,13 +31,13 @@ import type { DeepPartial, DeviceSelectors, ProtectCameraConfig, ProtectChimeCon
   ProtectNvrLiveviewConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectState, ProtectStateRecord, ProtectViewerConfig, StateModelKey,
   StateStore } from "unifi-protect";
 import type { ProtectAccessory, ProtectAccessoryContext } from "./types.ts";
-import { loadHomebridge, watchServerWarnings } from "homebridge-plugin-utils/testing";
+import type { TestLogEntry, TestPlatformAccessory } from "homebridge-plugin-utils/testing";
+import { formatLogEntry, loadHomebridge, watchServerWarnings } from "homebridge-plugin-utils/testing";
 import type { AdvertisedStreams } from "./devices/cameras/camera.ts";
 import type { ChannelProfile } from "./media/resolution.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectCameraHost } from "./media/camera-host.ts";
 import type { SnapshotSource } from "./media/timeshift.ts";
-import type { TestPlatformAccessory } from "homebridge-plugin-utils/testing";
 import { controllerIdentityOf } from "./media/stream-delegate.ts";
 import { createStateStore } from "unifi-protect";
 
@@ -163,6 +163,19 @@ export function writesTo(accessory: TestPlatformAccessory, characteristic: Chara
 export function eventsFrom(accessory: TestPlatformAccessory, characteristic: Characteristic): Nullable<CharacteristicValue>[] {
 
   return changeValues(accessory, characteristic, ChangeReason.EVENT);
+}
+
+/**
+ * Render every captured line led by the level it was said at, in the order the lines were said. HBPU's linesAt answers one level's lines, which is what most
+ * assertions want; this answers a whole run as one list, for an assertion that spans levels and reads the order they came in.
+ *
+ * @param entries - The captured entries to render, a capturing log's whole list or a slice of it.
+ *
+ * @returns Each line as its level, a colon, and the line as the user reads it.
+ */
+export function labeledLines(entries: readonly TestLogEntry[]): string[] {
+
+  return entries.map((entry) => entry.level + ": " + formatLogEntry(entry));
 }
 
 /**

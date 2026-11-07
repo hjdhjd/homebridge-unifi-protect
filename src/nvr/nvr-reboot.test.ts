@@ -19,15 +19,16 @@
  */
 import { PROTECT_NVR_REBOOT_CHECK_INTERVAL, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS, PROTECT_NVR_REBOOT_DEFERRAL_MAX, PROTECT_NVR_REBOOT_INTERVAL,
   PROTECT_NVR_REBOOT_MIN_INTERVAL } from "../settings.ts";
-import { TestClock, settle } from "homebridge-plugin-utils/testing";
+import { TestClock, capturingLog, formatLogEntry, settle } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
+import type { CapturingLog } from "homebridge-plugin-utils/testing";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { NvrPhase } from "./nvr.ts";
 import { REBOOT_EXPECTED_RETURN_MS } from "./nvr-policy.ts";
 import { RebootScheduler } from "./nvr-reboot.ts";
 import { TEST_CLOCK_EPOCH } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
-import util from "node:util";
+import { labeledLines } from "../testing.helpers.ts";
 
 // The default cadence, in milliseconds - what an enabled-without-a-value schedule waits.
 const DEFAULT_INTERVAL_MS = PROTECT_NVR_REBOOT_INTERVAL * 60 * 60 * 1000;
@@ -50,19 +51,19 @@ const CHECKS_TO_CEILING = DEFERRAL_CEILING_MS / PROTECT_NVR_REBOOT_CHECK_INTERVA
 // The line the bound logs for a controller that has not come back, transcribed rather than referenced so a wording that drifts by a character reddens a row.
 const OVERDUE_LINE = "The Protect controller has not returned from its scheduled reboot.";
 
-// Everything the scheduler's actions, log, and suppliers exchanged with the test. A plain mutable record rather than closures with accessors: an arm reads
-// recorder.rebootCalls or moves recorder.recordings directly, and the scheduler's own suppliers see that on their next pull.
+// Everything the scheduler's actions, log, and suppliers exchanged with the test. The levers are plain mutable fields rather than closures with accessors: an arm
+// reads recorder.rebootCalls or moves recorder.recordings directly, and the scheduler's own suppliers see that on their next pull. What the scheduler did is
+// read-only: the actions it ran and the lines it logged.
 interface SchedulerRecorder {
 
   // Every action the scheduler ran, in order, so an arm can assert the choreography's sequence rather than only its effects.
-  actions: string[];
+  readonly actions: readonly string[];
   // The availability verdict the bound's line pulls.
   available: boolean;
   // The connection-health fact the confirmation's guard pulls.
   healthy: boolean;
-  // The level of each line in logLines, in the same order.
-  logLevels: string[];
-  logLines: string[];
+  // Every line the scheduler logged at any level, in the order it logged them and rendered as the user reads them.
+  readonly logLines: readonly string[];
   // The lifecycle phase the confirmation's guard pulls. The two phase actions move it, and an arm may move it directly to drive the guard's negatives.
   phase: NvrPhase;
   // The levers over a reboot command the builder was asked to hold open, so an arm can abort the lifetime signal while the command is genuinely in flight and then
@@ -80,20 +81,30 @@ interface SchedulerRecorder {
  * @param options - holdReboot: make the reboot command return a promise the arm resolves or rejects itself, so a teardown can land while the command is outstanding.
  *                  Omitted, the command settles immediately - throwing the injected error when one is set.
  *
- * @returns the scheduler, its recorder, the AbortController behind the lifetime signal, the scheduler's test clock (started at the harness epoch, since the schedule
- *          reads a controller upSince of zero as no boot time reported), and the advance that drives that clock.
+ * @returns the scheduler, its recorder, the capturing log behind its logger, the AbortController behind the lifetime signal, the scheduler's test clock (started at
+ *          the harness epoch, since the schedule reads a controller upSince of zero as no boot time reported), and the advance that drives that clock.
  */
 function buildScheduler(options: { holdReboot?: boolean } = {}): { advance: (ms: number) => Promise<void>; clock: TestClock; controller: AbortController;
-  recorder: SchedulerRecorder; scheduler: RebootScheduler; } {
+  log: CapturingLog; recorder: SchedulerRecorder; scheduler: RebootScheduler; } {
 
   const clock = new TestClock(TEST_CLOCK_EPOCH);
   const controller = new AbortController();
-  const recorder: SchedulerRecorder = { actions: [], available: true, healthy: true, logLevels: [], logLines: [], pendingReboot: null, phase: "running", rebootCalls: 0,
-    rebootError: null, recordings: 0 };
-  const sink = (level: string) => (message: string, ...parameters: unknown[]): void => {
+  const actions: string[] = [];
+  const log = capturingLog();
+  const recorder: SchedulerRecorder = {
 
-    recorder.logLevels.push(level);
-    recorder.logLines.push(util.format(message, ...parameters));
+    actions,
+    available: true,
+    healthy: true,
+    get logLines(): readonly string[] {
+
+      return log.entries.map(formatLogEntry);
+    },
+    pendingReboot: null,
+    phase: "running",
+    rebootCalls: 0,
+    rebootError: null,
+    recordings: 0
   };
 
   const scheduler = new RebootScheduler({
@@ -102,12 +113,12 @@ function buildScheduler(options: { holdReboot?: boolean } = {}): { advance: (ms:
 
       beginReboot: (): void => {
 
-        recorder.actions.push("beginReboot");
+        actions.push("beginReboot");
         recorder.phase = "rebooting";
       },
       reboot: async (): Promise<void> => {
 
-        recorder.actions.push("reboot");
+        actions.push("reboot");
         recorder.rebootCalls++;
 
         // Hand the arm the levers and wait on them, so the command stays outstanding until the arm ends it.
@@ -132,7 +143,7 @@ function buildScheduler(options: { holdReboot?: boolean } = {}): { advance: (ms:
       },
       resumeRunning: (): void => {
 
-        recorder.actions.push("resumeRunning");
+        actions.push("resumeRunning");
         recorder.phase = "running";
       }
     },
@@ -140,7 +151,7 @@ function buildScheduler(options: { holdReboot?: boolean } = {}): { advance: (ms:
     clock,
     isConnectionHealthy: (): boolean => recorder.healthy,
     isControllerAvailable: (): boolean => recorder.available,
-    log: { debug: sink("debug"), error: sink("error"), info: sink("info"), warn: sink("warn") },
+    log,
     phase: (): NvrPhase => recorder.phase,
     signal: controller.signal
   });
@@ -154,7 +165,7 @@ function buildScheduler(options: { holdReboot?: boolean } = {}): { advance: (ms:
     await settle();
   };
 
-  return { advance, clock, controller, recorder, scheduler };
+  return { advance, clock, controller, log, recorder, scheduler };
 }
 
 // Every line the scheduler logged that contains the given fragment.
@@ -257,14 +268,14 @@ describe("the reboot scheduler: entering the schedule", () => {
 
   test("an infinite interval arms no reboot and logs one error in place of the enabled line", async () => {
 
-    const { advance, controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, log, recorder, scheduler } = buildScheduler();
 
     try {
 
       scheduler.schedule({ requestedIntervalHours: Infinity, upSince: TEST_CLOCK_EPOCH });
 
-      assert.deepEqual(recorder.logLines, [NO_SCHEDULE_ERROR], "the user is told once that no reboot was set, and no enabled line claims a schedule");
-      assert.deepEqual(recorder.logLevels, ["error"], "at error, because a person has to correct the interval");
+      assert.deepEqual(labeledLines(log.entries), ["error: " + NO_SCHEDULE_ERROR],
+        "the user is told once that no reboot was set, at error because a person has to correct the interval, and no enabled line claims a schedule");
 
       await advance(NO_SCHEDULE_SPAN_MS);
 
@@ -277,14 +288,14 @@ describe("the reboot scheduler: entering the schedule", () => {
 
   test("a negative infinite interval arms no reboot rather than clamping to the minimum, and logs one error in place of the enabled line", async () => {
 
-    const { advance, controller, recorder, scheduler } = buildScheduler();
+    const { advance, controller, log, recorder, scheduler } = buildScheduler();
 
     try {
 
       scheduler.schedule({ requestedIntervalHours: -Infinity, upSince: TEST_CLOCK_EPOCH });
 
-      assert.deepEqual(recorder.logLines, [NO_SCHEDULE_ERROR], "the user is told once that no reboot was set, and no enabled line claims the clamped minimum");
-      assert.deepEqual(recorder.logLevels, ["error"], "at error, because a person has to correct the interval");
+      assert.deepEqual(labeledLines(log.entries), ["error: " + NO_SCHEDULE_ERROR],
+        "the user is told once that no reboot was set, at error because a person has to correct the interval, and no enabled line claims the clamped minimum");
 
       await advance(NO_SCHEDULE_SPAN_MS);
 

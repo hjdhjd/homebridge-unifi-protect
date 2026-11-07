@@ -13,12 +13,12 @@
  * the accessory's own characteristics come from.
  */
 import { Characteristic, Service, hap, makeTestAccessory } from "../testing.helpers.ts";
+import { TestClock, silentLog } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import type { Camera } from "unifi-protect";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { TEST_CLOCK_EPOCH } from "../nvr/testing.helpers.ts";
-import { TestClock } from "homebridge-plugin-utils/testing";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import { composeSignals } from "homebridge-plugin-utils";
@@ -49,12 +49,10 @@ class TestProtectDevice extends ProtectDevice {
 const makeReachableDevice = (accessory: TestProtectAccessory):
 { connection: { isHealthy: boolean }; device: { config: { state: string }; present: boolean }; instance: TestProtectDevice } => {
 
-  const captured: unknown[] = [];
   const connection = { isHealthy: true };
   const device = { config: { state: "CONNECTED" }, name: "Test Accessory", peek(): { state: string } | undefined { return this.present ? this.config : undefined; },
     present: true };
-  const sink = (...args: unknown[]): void => { captured.push(args); };
-  const log = { debug: sink, error: sink, info: sink, warn: sink };
+  const log = silentLog();
   const nvr = {
 
     client: { connection },

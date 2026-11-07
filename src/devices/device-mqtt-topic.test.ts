@@ -13,16 +13,16 @@
  * near-empty concrete leaf answers with an empty body and never runs, so the leaf is a faithful instance whose publish, subscribeGet, and subscribeSet are all the
  * base's own - the same admission command-error.test.ts and reachability.test.ts rely on.
  */
-import { TestClock, TestMqttClient, settle } from "homebridge-plugin-utils/testing";
+import { TestClock, TestMqttClient, capturingLog, linesAt, settle, silentLog } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { hap, makeTestAccessory } from "../testing.helpers.ts";
 import type { Camera } from "unifi-protect";
+import type { CapturingLog } from "homebridge-plugin-utils/testing";
 import { ProtectBase } from "./device-base.ts";
 import { ProtectDevice } from "./device.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import { TEST_CLOCK_EPOCH } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
-import util from "node:util";
 
 // The smallest concrete leaf of the abstract base, mirroring command-error.test.ts: beside the empty configureDevice ProtectDevice requires, this adds nothing but a
 // public window onto the protected MQTT wrappers this suite exercises, inherited unchanged.
@@ -102,8 +102,7 @@ const MAC = "AABBCCDDEEFF";
 const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => {
 
   const capture: MqttCapture = { publish: [], subscribeGet: [], subscribeSet: [] };
-  const sink = (): void => undefined;
-  const log = { debug: sink, error: sink, info: sink, warn: sink };
+  const log = silentLog();
   const device = { config: { mac: MAC } };
   const accessory = makeTestAccessory();
 
@@ -127,14 +126,11 @@ const makeDevice = (): { capture: MqttCapture; instance: TestProtectDevice } => 
 };
 
 // Construct the same real ProtectDevice, but wired to a real TestMqttClient (so its injectable rejection lever drives the client's guarded-publish failure path) and a
-// capturing error log (so the reported line is observable). The double reports on the log it is handed at construction, which is the same capturing sink the device
-// logs through, so one array collects the line either origin would write. error renders through util.format - the line the real Homebridge sink would write - the same
-// posture command-error.test.ts uses; the other levels sink.
-const makeGuardedDevice = (): { errors: string[]; instance: TestProtectDevice; mqtt: TestMqttClient; record: { present: boolean } } => {
+// capturing log (so the reported line is observable). The double reports on the log it is handed at construction, which is the same capturing log the device logs
+// through, so one log collects the line either origin would write, rendered as the real Homebridge sink would write it - the same posture command-error.test.ts uses.
+const makeGuardedDevice = (): { instance: TestProtectDevice; log: CapturingLog; mqtt: TestMqttClient; record: { present: boolean } } => {
 
-  const errors: string[] = [];
-  const sink = (): void => undefined;
-  const log = { debug: sink, error: (message: string, ...parameters: unknown[]): void => { errors.push(util.format(message, ...parameters)); }, info: sink, warn: sink };
+  const log = capturingLog();
   const mqtt = new TestMqttClient({ log });
   // logName reads the live record through peek() (non-throwing) when the prefixed logger renders a line, so the projection mock exposes it alongside config. The
   // empty-but-present config makes describeDevice render the same bare descriptor. The record lever stands in for a removal's grace, when peek() finds no record.
@@ -153,7 +149,7 @@ const makeGuardedDevice = (): { errors: string[]; instance: TestProtectDevice; m
   };
   const instance = new TestProtectDevice(nvr as unknown as ProtectNvr, accessory, device as unknown as Camera);
 
-  return { errors, instance, mqtt, record };
+  return { instance, log, mqtt, record };
 };
 
 // The controller MAC the base wrappers compose into every topic tail when no leaf overrides mqttId. Deliberately distinct from the device MAC so a controller-scope
@@ -166,8 +162,7 @@ const NVR_MAC = "112233445566";
 const makeController = (): { capture: MqttCapture; instance: TestProtectBase } => {
 
   const capture: MqttCapture = { publish: [], subscribeGet: [], subscribeSet: [] };
-  const sink = (): void => undefined;
-  const log = { debug: sink, error: sink, info: sink, warn: sink };
+  const log = silentLog();
   const mqtt = {
 
     publishGuarded: (topic: string): void => { capture.publish.push(topic); },
@@ -219,7 +214,7 @@ describe("ProtectDevice MQTT publish guard", () => {
 
   test("a rejected publish is reported by the client's guarded path and floats no unhandled rejection", async () => {
 
-    const { errors, instance, mqtt } = makeGuardedDevice();
+    const { instance, log, mqtt } = makeGuardedDevice();
 
     // Arm the rejection lever so the publish the wrapper hands off rejects, driving the client's guarded failure path rather than recording the message.
     mqtt.publishRejection = new Error("the broker connection dropped");
@@ -241,6 +236,9 @@ describe("ProtectDevice MQTT publish guard", () => {
     }
 
     assert.equal(floats.length, 0, "the rejected publish did not float an unhandled rejection");
+
+    const errors = linesAt(log.entries, "error");
+
     assert.equal(errors.length, 1, "the guarded path reported exactly one failure line");
     assert.match(errors[0] ?? "", /Unable to publish to the MQTT topic AABBCCDDEEFF\/motion/,
       "the reported line names the composed topic the publish was attempted on");
