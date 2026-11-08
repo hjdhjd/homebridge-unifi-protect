@@ -22,7 +22,7 @@
 
 You shouldn't need this for day-to-day use...the defaults suit almost everyone, and the right place to configure HBUP is the webUI, where every option is validated for you. Hand-editing the JSON in your Homebridge `config.json` is error-prone and easy to get subtly wrong. This page is here for when you come across a setting and want to know exactly what it does.
 
-There isn't much left in `config.json`, and that's by design. It holds the plugin's identity, the login details for each of your Protect controllers, and the list of feature options you've set. Everything you can actually tailor is a [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md), and the webUI is where you set those.
+There isn't much left in `config.json`, and that's by design. It holds the plugin's identity, the connection details for each of your Protect controllers, and the list of feature options you've set. Everything you can actually tailor is a [feature option](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md), and the webUI is where you set those.
 
 ```js
 "platforms": [
@@ -56,6 +56,7 @@ The settings come in two groups: platform-level fields that apply to the whole p
 | address          | Controller | Host or IP address of your UniFi Protect controller.    |                                  | Yes      |
 | username         | Controller | The username of the local UniFi Protect account you use with HBUP. |                       | Yes      |
 | password         | Controller | The password of that local UniFi Protect account.       |                                  | Yes      |
+| verifyTls        | Controller | Require this controller to present a TLS certificate that verifies, on every connection the plugin makes to it, livestreams and two-way audio included. Streams read directly over RTSP aren't verified. Leave this off for a controller presenting the self-signed certificates it ships with. | false                            | No       |
 
 ### Where Your Older Settings Went
 
@@ -73,7 +74,7 @@ Two settings didn't move anywhere. They're retired, because in each case there's
 You don't need to hand-edit `config.json` to add a controller or change one. It's all in the plugin's **Settings** tab in the webUI:
 
   * **Adding a controller.** Use the **Add Controller** button at the top of the sidebar, just above the controller list. The login is checked against the controller before anything is saved.
-  * **Editing a controller.** Select the controller in the sidebar and open **Controller connection settings**, which sits just beneath its details. That's where you change its address, username, or password.
+  * **Editing a controller.** Select the controller in the sidebar and open **Controller connection settings**, which sits just beneath its details. That's where you change its address, username, password, or TLS certificate verification.
   * **Removing a controller.** Same place...the editor offers removal alongside saving.
 
 A controller HBUP can't reach gets the same editor, on the connection error its page shows instead of the usual details. That's deliberate: a controller you can't connect to is exactly the one you most need to correct or remove, whether the password changed, the address moved, or the console is simply switched off.

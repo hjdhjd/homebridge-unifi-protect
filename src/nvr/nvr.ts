@@ -87,6 +87,9 @@ export type ProtectNvrConnect = (options: ConnectOptions) => Promise<ProtectClie
 // The default port: the real client. Wrapped rather than referenced so the static's own this binding stays with its class.
 const defaultConnect: ProtectNvrConnect = async (options) => ProtectClient.connect(options);
 
+// The marker the TLS certificate verification line opens with: the closed padlock, the sign people know for a verified connection.
+const TLS_VERIFICATION_MARKER = "\u{1F512}\u{FE0F}";
+
 /* The user-readable reason carried by a line of unifi-protect's in its structured context, or undefined where it carries none. Everything else a context holds is a raw
  * object or a value that means nothing outside a debug transcript, so a reason is the one member lifted out of one: unifi-protect composes it from the failure's own
  * cause chain, which makes it a sentence fragment already addressed to the user. The search walks every trailing parameter rather than the first alone, because a line is
@@ -705,7 +708,11 @@ export class ProtectNvr {
             return;
           }
 
-          log[severity]("Unable to connect to the Protect controller, and will keep trying: %s.", reason);
+          // A certificate that did not verify is a setting the user can change, so the line names both remedies after its reason.
+          const remedy = (type === "certificate") ?
+            " Turn off certificate verification for this controller in the plugin settings, or install a trusted certificate on your console." : "";
+
+          log[severity]("Unable to connect to the Protect controller, and will keep trying: %s." + remedy, reason);
         }, (): ConnectFailureType => type);
       }
     });
@@ -718,7 +725,7 @@ export class ProtectNvr {
           recoveryPolicy: (context) => livestreamRecoveryDecision(context,
             { healthState: this.health.state, isHealthy: this.client.connection.isHealthy, isThrottled: this.client.connection.isThrottled, phase: this.phase },
             this.episodeCameraReachable(context.cameraId)), signal,
-          username: this.config.username });
+          username: this.config.username, verifyTls: this.config.verifyTls === true });
 
         /* A controller can answer its bootstrap with no record, or a record with no version or a MAC that is no string, and the client resolves with what it was given. A
          * MAC that is no string makes the debug gate throw from inside unifi-protect's own lines. The record is read here, inside the attempt, so that answer is a failed
@@ -793,6 +800,12 @@ export class ProtectNvr {
 
     // We successfully connected.
     this.log.info("Connected to %s (UniFi Protect %s running on UniFi OS %s).", this.config.address, version, this.ufp.firmwareVersion);
+
+    // Certificate verification is off by default, so a controller that has it on says so beside its connect line, where a certificate problem is first looked for.
+    if(this.config.verifyTls === true) {
+
+      this.log.info("%s TLS certificate verification enabled.", TLS_VERIFICATION_MARKER);
+    }
 
     return true;
   }

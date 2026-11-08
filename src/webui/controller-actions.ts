@@ -41,16 +41,18 @@ export interface LoginOutcome {
 export type ControllerLogin = { devices: Record<string, unknown>[]; kind: "passed" } | { kind: "failed"; outcome: LoginOutcome } | { kind: "retired" };
 
 /**
- * The controller login check: given a card's address and login and the signal of the action it runs under, it answers what came of validating that login. The page
- * builds one with makeControllerLogin and hands it to every surface that checks a login, the controller save among them.
+ * The controller login check: given a card's connection - its address, its login, and whether it verifies the controller's TLS certificate - and the signal of the
+ * action it runs under, it answers what came of validating that login. The page builds one with makeControllerLogin and hands it to every surface that checks a
+ * login, the controller save among them.
  */
-export type ControllerLoginRequest = (request: { address: string; password: string; signal: AbortSignal; username: string }) => Promise<ControllerLogin>;
+export type ControllerLoginRequest = (request: { address: string; password: string; signal: AbortSignal; username: string;
+  verifyTls: boolean; }) => Promise<ControllerLogin>;
 
 /** The part of a connection card an action reads: its save flow, what the user has entered, and the verdict line a save's outcome and a removal's failure paint on. */
 export interface ControllerCard {
 
   flow: SaveFlow<ProtectConfig>;
-  values: () => { address: string; password: string; username: string };
+  values: () => { address: string; password: string; username: string; verifyTls: boolean };
   verdict: { render: (options?: { detail?: string; lines?: string[]; tone?: string }) => void };
 }
 
@@ -283,7 +285,9 @@ export const makeControllerActions = ({ commitConfig, controllerListedElsewhere,
    */
   const saveController = async ({ card, originalAddress }: { card: ControllerCard; originalAddress?: string }): Promise<string | null> => {
 
-    const { address, password, username } = card.values();
+    // The card's connection, read once at the press and handed whole to the login check and the write, so neither can carry a field the other did not.
+    const connection = card.values();
+    const { address } = connection;
     const replaced = Boolean(originalAddress) && (originalAddress !== address);
 
     // This press's delivery, kept from its check so a press the write rejects still speaks under the press's own rule, and the restore its composer answers once
@@ -318,13 +322,13 @@ export const makeControllerActions = ({ commitConfig, controllerListedElsewhere,
 
           // A login that answers retired belongs to a press a newer act on the card has already retired, and the flow answers that press superseded before it
           // reads what the check returned, so every declined answer the flow reads carries a login the controller refused.
-          const login = await requestControllerLogin({ address, password, signal: context.signal, username });
+          const login = await requestControllerLogin({ ...connection, signal: context.signal });
 
           return (login.kind === "passed") ? { kind: "passed", value: login.devices } : { kind: "declined", reason: login as FailedLogin };
         },
         compose: (platform, devices) => {
 
-          const patch = withControllerSaved(platform, { address, originalAddress, password, username });
+          const patch = withControllerSaved(platform, { ...connection, originalAddress });
 
           if(patch === null) {
 
@@ -495,10 +499,10 @@ export interface ControllerLoginDependencies {
  * apart. The browser cannot reach the Protect controller directly, so the request bridges through the plugin's UI server.
  *
  * It answers an outcome and reports nothing itself: passed with the controller's device list, failed with the sentences and the detail that a missing field, a
- * rejected login, a controller reporting no version or one below the plugin's version floor, or a request that threw calls for, or retired when the signal it was handed
- * aborted before the answer arrived. Each caller delivers the outcome under its own rule: the validate control and the first-run submit through the action they started,
- * which paints while the card presents it and drops it otherwise, and a Save through its press's delivery, which still reaches the user through the host's toast once
- * the card no longer presents the press.
+ * rejected login, a controller reporting no version or one below the plugin's version floor, a TLS certificate that did not verify, or a request that threw calls
+ * for, or retired when the signal it was handed aborted before the answer arrived. Each caller delivers the outcome under its own rule: the validate control and the
+ * first-run submit through the action they started, which paints while the card presents it and drops it otherwise, and a Save through its press's delivery, which
+ * still reaches the user through the host's toast once the card no longer presents the press.
  *
  * The signal is the caller's action's own, so an edit to the card's fields or a newer act on the card retires the request. Starting that action is the caller's
  * act, because the caller speaks through it once this answers, and because a Save and the first-run submit each ask whether the address is already listed before
@@ -517,14 +521,15 @@ export interface ControllerLoginDependencies {
  * @returns The login check.
  */
 export const makeControllerLogin = ({ deadline, readDeviceListAnswer, request, withDeadline }: ControllerLoginDependencies): ControllerLoginRequest => async ({ address,
-  password, signal, username }) => {
+  password, signal, username, verifyTls }) => {
 
   if(!address.length || !username.length || !password.length) {
 
     return { kind: "failed", outcome: { lines: ["Please enter a valid UniFi Protect controller address, username and password."] } };
   }
 
-  const [settled] = await Promise.allSettled([withDeadline({ promise: request("/getDevices", { address, password, username }), seconds: deadline, signal })]);
+  const [settled] = await Promise.allSettled([withDeadline({ promise: request("/getDevices", { address, password, username, verifyTls }), seconds: deadline,
+    signal })]);
 
   // An edit to this card's fields, or a newer validation or Save on it, retires this one. A retired request answers nothing to show, whether the bridge answered
   // or failed, so it never paints over what the newer input or action is showing, and a Save waiting on it writes nothing.
@@ -548,6 +553,13 @@ export const makeControllerLogin = ({ deadline, readDeviceListAnswer, request, w
 
       return { kind: "failed", outcome: { detail: verdict.message, lines: [ "Unable to login to the UniFi Protect controller.",
         "Please check your controller address, username, and password." ] } };
+    }
+
+    // The controller's TLS certificate did not verify. The connection failure's headline and the certificate's own guidance frame it, because the address and the
+    // login are not what to check, and the detail is unifi-protect's sentence saying what the platform found wrong with the certificate, rendered as text.
+    case "certificate": {
+
+      return { kind: "failed", outcome: { detail: verdict.message, lines: [ verdict.headline, verdict.guidance ] } };
     }
 
     // The UI server failing to start, failing to respond within the bound, or answering in a shape it never writes lands here. Answering the specific failure keeps

@@ -101,6 +101,7 @@ interface LoginRequest {
   password: string;
   signal: AbortSignal;
   username: string;
+  verifyTls: boolean;
 }
 
 // What a row stands the module up over. Every member has a default, so a row names only what it is about.
@@ -114,7 +115,7 @@ interface StandOptions {
   platform?: ProtectConfig;
   presented?: boolean;
   retireDuringLogin?: boolean;
-  values?: { address: string; password: string; username: string };
+  values?: { address: string; password: string; username: string; verifyTls: boolean };
   writes?: WriteStep[];
 }
 
@@ -183,7 +184,7 @@ function only<T>(list: T[], message: string): T {
  * @returns The module and every recorder beneath it.
  */
 function stand({ hold = Promise.resolve(), login = passed(), malformedStarter = false, onWrite, pageConfig = {}, platform = { controllers: [] },
-  presented = true, retireDuringLogin = false, values = { ...LOGIN, address: ADDRESS }, writes = [] }: StandOptions = {}): Stand {
+  presented = true, retireDuringLogin = false, values = { ...LOGIN, address: ADDRESS, verifyTls: false }, writes = [] }: StandOptions = {}): Stand {
 
   const composed: unknown[] = [];
   const control = { disabled: false };
@@ -544,21 +545,21 @@ describe("controller save, the check, the composer, and the rename", () => {
 
   test("the login request receives the card's values as they stood at the press and the press's own signal", async () => {
 
-    const values = { address: ADDRESS, password: "a secret typed at the press", username: "press@example.com" };
+    const values = { address: ADDRESS, password: "a secret typed at the press", username: "press@example.com", verifyTls: true };
     const s = stand({ platform: { controllers: [{ ...LOGIN, address: ORIGINAL_ADDRESS }] }, values });
 
     assert.equal(await s.actions.saveController({ card: s.card, originalAddress: ORIGINAL_ADDRESS }), ADDRESS, "the address-changing edit writes");
 
     const request = only(s.loginCalls, "the press made one login request");
 
-    assert.deepEqual({ address: request.address, password: request.password, username: request.username }, values,
-      "the request carries the card's written address, password, and username, not the address the edit replaced");
+    assert.deepEqual({ address: request.address, password: request.password, username: request.username, verifyTls: request.verifyTls }, values,
+      "the request carries the card's written address, password, username, and TLS verification preference, not the address the edit replaced");
     assert.equal(request.signal, only(s.signals, "the press began one action"), "and the signal of the action the press began");
   });
 
   test("a listed address with a blank field answers the listed sentence and makes no login request", async () => {
 
-    const s = stand({ pageConfig: { controllers: [{ ...LOGIN, address: ADDRESS }] }, values: { address: ADDRESS, password: "", username: "" } });
+    const s = stand({ pageConfig: { controllers: [{ ...LOGIN, address: ADDRESS }] }, values: { address: ADDRESS, password: "", username: "", verifyTls: false } });
 
     assert.equal(await s.actions.saveController({ card: s.card }), null, "the save answers null");
     assert.deepEqual(s.paints, [{ lines: [LISTED], tone: "text-warning" }], "the listed sentence is what the card says, ahead of any missing-field sentence");
@@ -630,10 +631,19 @@ describe("controller save, the check, the composer, and the rename", () => {
 
   test("an edit that keeps its address declares no rename", async () => {
 
-    const s = stand({ platform: { controllers: [{ ...LOGIN, address: ADDRESS }] }, values: { ...LOGIN, address: ADDRESS, password: "new secret" } });
+    const s = stand({ platform: { controllers: [{ ...LOGIN, address: ADDRESS }] }, values: { ...LOGIN, address: ADDRESS, password: "new secret", verifyTls: false } });
 
     assert.equal(await s.actions.saveController({ card: s.card, originalAddress: ADDRESS }), ADDRESS, "the edit answers its address");
     assert.deepEqual(s.renames, [], "and declares no rename, because no sidebar key moved");
+  });
+
+  test("a save with TLS verification on writes it onto the item its composer writes", async () => {
+
+    const s = stand({ values: { ...LOGIN, address: ADDRESS, verifyTls: true } });
+
+    assert.equal(await s.actions.saveController({ card: s.card }), ADDRESS, "the add writes");
+    assert.deepEqual(s.composed, [{ controllers: [{ ...LOGIN, address: ADDRESS, verifyTls: true }] }],
+      "and its composer writes the card's TLS verification preference beside its address and login");
   });
 });
 
@@ -767,6 +777,12 @@ describe("controller removal", () => {
 const MISSING_FIELD = "Please enter a valid UniFi Protect controller address, username and password.";
 const LOGIN_REFUSED = [ "Unable to login to the UniFi Protect controller.", "Please check your controller address, username, and password." ];
 const LOGIN_UNVALIDATED = "Unable to validate your controller login.";
+const CERTIFICATE_REFUSED = [ "Unable to connect to the UniFi Protect controller.",
+  "This controller's TLS certificate could not be verified. Turn off certificate verification for this controller, or install a trusted certificate on your console." ];
+
+// The reason the server captures for a certificate that did not verify, in the sentence unifi-protect's certificate error carries.
+const CERTIFICATE_REASON = "The UniFi Protect controller at 10.0.0.1 presented a certificate that could not be verified: self-signed certificate " +
+  "(DEPTH_ZERO_SELF_SIGNED_CERT).";
 
 // The sentence the framework's deadline rejects with on expiry, for a check built with a thirty-second bound.
 const DEADLINE_EXPIRED = "The request did not complete within 30 seconds.";
@@ -843,7 +859,7 @@ function standLogin({ answer, expiry, onRequest, seconds = 30 }: LoginStandOptio
 // The card's values and a signal no act retires, each of which a row overrides where the row is about it.
 function loginRequest(overrides: Partial<LoginRequest> = {}): LoginRequest {
 
-  return { ...LOGIN, address: ADDRESS, signal: new AbortController().signal, ...overrides };
+  return { ...LOGIN, address: ADDRESS, signal: new AbortController().signal, verifyTls: false, ...overrides };
 }
 
 describe("controller login check", () => {
@@ -852,7 +868,7 @@ describe("controller login check", () => {
 
     test("a missing " + field + " answers failed with the field sentence and makes no request", async () => {
 
-      const s = standLogin({ answer: async () => ({ devices: LISTED_DEVICES, error: "" }) });
+      const s = standLogin({ answer: async () => ({ devices: LISTED_DEVICES, kind: "connected" }) });
 
       assert.deepEqual(await s.check(loginRequest({ [field]: "" })), { kind: "failed", outcome: { lines: [MISSING_FIELD] } },
         "a blank " + field + " answers the field sentence");
@@ -862,16 +878,33 @@ describe("controller login check", () => {
 
   test("a device list answers passed with the devices, and the request carries the card's values", async () => {
 
-    const s = standLogin({ answer: async () => ({ devices: LISTED_DEVICES, error: "" }) });
+    const s = standLogin({ answer: async () => ({ devices: LISTED_DEVICES, kind: "connected" }) });
 
     assert.deepEqual(await s.check(loginRequest()), { devices: LISTED_DEVICES, kind: "passed" }, "a list answers passed with the controller's devices");
-    assert.deepEqual(s.requests, [{ path: "/getDevices", payload: { ...LOGIN, address: ADDRESS } }],
-      "and the one request asks the UI server for the devices with the address, password, and username alone");
+    assert.deepEqual(s.requests, [{ path: "/getDevices", payload: { ...LOGIN, address: ADDRESS, verifyTls: false } }],
+      "and the one request asks the UI server for the devices with the address, password, username, and TLS verification preference alone");
   });
 
-  test("an empty list with the server's reason answers failed with the login sentences and the reason as detail", async () => {
+  test("the request carries the card's TLS verification preference as the card holds it", async () => {
 
-    const s = standLogin({ answer: async () => ({ devices: [], error: "Invalid username or password." }) });
+    const s = standLogin({ answer: async () => ({ devices: LISTED_DEVICES, kind: "connected" }) });
+
+    assert.deepEqual(await s.check(loginRequest({ verifyTls: true })), { devices: LISTED_DEVICES, kind: "passed" }, "a list answers passed");
+    assert.deepEqual(s.requests, [{ path: "/getDevices", payload: { ...LOGIN, address: ADDRESS, verifyTls: true } }],
+      "and verification turned on reaches the UI server, which connects requiring a certificate that verifies");
+  });
+
+  test("a certificate failure answers failed with the connection headline, the certificate guidance, and the reason", async () => {
+
+    const s = standLogin({ answer: async () => ({ kind: "certificate", message: CERTIFICATE_REASON }) });
+
+    assert.deepEqual(await s.check(loginRequest({ verifyTls: true })), { kind: "failed", outcome: { detail: CERTIFICATE_REASON, lines: CERTIFICATE_REFUSED } },
+      "a certificate that did not verify names what fixes it rather than sending the user after the address and the login, with the controller's reason as detail");
+  });
+
+  test("a failure with the server's reason answers failed with the login sentences and the reason as detail", async () => {
+
+    const s = standLogin({ answer: async () => ({ kind: "error", message: "Invalid username or password." }) });
 
     assert.deepEqual(await s.check(loginRequest()), { kind: "failed", outcome: { detail: "Invalid username or password.", lines: LOGIN_REFUSED } },
       "a controller that refused the login is the refused-login outcome carrying the controller's own reason");
@@ -887,7 +920,7 @@ describe("controller login check", () => {
 
   test("the deadline is handed the request's own promise, the seconds the check was built with, and the caller's signal itself", async () => {
 
-    const answered = Promise.resolve({ devices: LISTED_DEVICES, error: "" });
+    const answered = Promise.resolve({ devices: LISTED_DEVICES, kind: "connected" });
     const s = standLogin({ answer: () => answered, seconds: 17 });
     const request = loginRequest();
 
@@ -909,7 +942,7 @@ describe("controller login check", () => {
   });
 
   // The card retires the check while its request is in flight, which is the moment a newer act on the card lands in practice.
-  for(const [ settlement, answer ] of [ [ "fulfilled", async (): Promise<unknown> => ({ devices: LISTED_DEVICES, error: "" }) ],
+  for(const [ settlement, answer ] of [ [ "fulfilled", async (): Promise<unknown> => ({ devices: LISTED_DEVICES, kind: "connected" }) ],
     [ "rejected", async (): Promise<unknown> => Promise.reject(new Error("The UI server did not respond.")) ] ] as [ string, () => Promise<unknown> ][]) {
 
     test("a signal aborted before the settlement is read answers retired where the request " + settlement, async () => {

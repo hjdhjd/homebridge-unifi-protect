@@ -7,7 +7,7 @@
  */
 "use strict";
 
-import { ProtectClient, isDeviceAdopted, noopLog } from "unifi-protect";
+import { ProtectCertificateError, ProtectClient, isDeviceAdopted, noopLog } from "unifi-protect";
 import { UNREPORTED_CONTROLLER_RECORD, UNSUPPORTED_PROTECT_VERSION, isSupportedProtectVersion } from "../dist/nvr/nvr-policy.js";
 import { featureOptionCategories, featureOptions } from "../dist/options.js";
 import { HomebridgePluginUiServer } from "@homebridge/plugin-ui-utils";
@@ -35,8 +35,8 @@ class PluginUiServer extends HomebridgePluginUiServer {
     // Retrieve the list of devices from a Protect controller to populate the feature options device picker.
     this.onRequest("/getDevices", async (controller) => {
 
-      // The connection outcome is probe-local state that travels back with the device list: a failed probe fills this with a user-facing message and the response
-      // returns it alongside an empty device array, so the webUI reads the failure from the response it belongs to.
+      // The connection outcome is probe-local state that travels back in the answer: a failed probe fills this with a user-facing message, and the answer tagged
+      // as a failure carries it, so the webUI reads the failure from the answer it belongs to.
       let errorInfo = "";
 
       // A quiet logging shim for the short-lived client: debug/info/warn stay silent (noopLog), while error captures the message so the probe can return the most
@@ -64,7 +64,7 @@ class PluginUiServer extends HomebridgePluginUiServer {
         // guarantees the client and its realtime connection are released on every exit path, success or throw. We disable the periodic refresh failsafe since this is a
         // one-shot discovery probe. When the engines floor reaches Node 24, an `await using` declaration is the preferred form.
         const client = await ProtectClient.connect({ host: address, log: log, password: controller.password, refreshIntervalMs: false,
-          username: controller.username });
+          username: controller.username, verifyTls: controller.verifyTls === true });
 
         try {
 
@@ -93,10 +93,10 @@ class PluginUiServer extends HomebridgePluginUiServer {
           const adopted = (devices) => devices.map(device => device.config).filter(isDeviceAdopted).map(config => ({ ...config, homeKitName: deviceDisplayName(config) }))
             .sort((a, b) => a.homeKitName.localeCompare(b.homeKitName));
 
-          // Return the controller first, then the adopted devices by category, paired with an empty error. The controller is element 0 - the controller-as-device
-          // entry the feature options webUI selects on initial load.
+          // Return the controller first, then the adopted devices by category, tagged as a connection. The controller is element 0 - the controller-as-device entry
+          // the feature options webUI selects on initial load.
           return { devices: [ client.nvr.config, ...adopted(client.cameras), ...adopted(client.chimes), ...adopted(client.fobs), ...adopted(client.lights),
-            ...adopted(client.relays), ...adopted(client.sensors), ...adopted(client.viewers) ], error: "" };
+            ...adopted(client.relays), ...adopted(client.sensors), ...adopted(client.viewers) ], kind: "connected" };
         } finally {
 
           // Release the client and its realtime connection on every exit path... the raw-JavaScript equivalent of an `await using` declaration's scope-bound disposal.
@@ -116,7 +116,9 @@ class PluginUiServer extends HomebridgePluginUiServer {
           console.error(errorInfo);
         }
 
-        return { devices: [], error: errorInfo };
+        // A certificate that did not verify is tagged as its own kind of failure, so the page can say what to change rather than reading unifi-protect's sentence for
+        // it. The class is read off the thrown error, which the connect rethrows as it is, rather than off errorInfo, which is text.
+        return { kind: (error instanceof ProtectCertificateError) ? "certificate" : "error", message: errorInfo };
       }
     });
   }

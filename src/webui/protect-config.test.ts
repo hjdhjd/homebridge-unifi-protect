@@ -18,12 +18,13 @@
  * controller's own.
  */
 import type { Assert, Equal } from "homebridge-plugin-utils/testing";
+import { CONTROLLER_KEYS, deviceListResult, makeControllerList, makeProtectConfig, readDeviceListAnswer, staleSelectionVerdict } from "./protect-config.ts";
 import { FeatureOptions, addressListedElsewhere, addressListingForm, displayedName, mqttConnectionSettings } from "homebridge-plugin-utils";
 import { PROTECT_DOORBELL_RING_DELAY, PROTECT_MQTT_TOPIC } from "../settings.ts";
 import type { ProtectConfig, ProtectConfigPatch, ProtectControllerConfig } from "./protect-config.ts";
 import { describe, test } from "node:test";
-import { deviceListResult, makeControllerList, makeProtectConfig, readDeviceListAnswer, staleSelectionVerdict } from "./protect-config.ts";
 import { featureOptionCategories, featureOptions } from "../options.ts";
+import type { ProtectNvrOptions } from "../options.ts";
 import assert from "node:assert/strict";
 
 // The controller these pins migrate, a sibling that proves one controller's entries never answer for another, and a camera beneath the first for the scope corner.
@@ -50,7 +51,7 @@ const UNRESOLVED = new Map<string, string>();
 // display-name rules, imported here from the package root that is compiled from the same source as the page's browser copy, the real engine class, and the real served
 // catalog.
 const { controllerListedElsewhere, controllers, controllersAwaitingMigration, hasValidCredentials, primaryListedElsewhere, withControllerRemoved, withControllerSaved,
-  withPrimaryCredentials } = makeControllerList({ addressListedElsewhere, addressListingForm });
+  withPrimaryConnection } = makeControllerList({ addressListedElsewhere, addressListingForm });
 const protectConfig = makeProtectConfig({ FeatureOptions, catalog: { categories: featureOptionCategories, options: featureOptions }, controllers, displayedName });
 
 /* Compile-time shape exercise for the HBPU pieces the factories are built over. It never runs - the function is never called, and its leading underscore marks it,
@@ -269,6 +270,39 @@ describe("protect webUI legacy-settings migration, per-controller tier", () => {
     assert.equal(engineWith(patch.options).value("Mqtt.Url", undefined, CONTROLLER_MAC), LEGACY_BROKER, "its broker moves onto the controller's MAC address");
     assert.deepEqual(patch.controllers, [padded], "and its item slims to the connection triple, keeping its address as stored");
   });
+
+  test("a TLS verification preference survives the rebuild of a controller whose settings migrate", () => {
+
+    const patch = migrated({ controllers: [{ ...CREDENTIALS, mqttUrl: LEGACY_BROKER, verifyTls: true }] }, RESOLVED);
+
+    assert.deepEqual(patch.controllers?.[0], { ...CREDENTIALS, verifyTls: true },
+      "TLS verification is a connection-establishment fact, so losing it in the rebuild would change how the plugin connects");
+  });
+
+  test("the controller allowlist accounts for every property the controller options type declares", () => {
+
+    /* The compile-time half of this check is the annotated assignments below, which read the allowlist against the type in each direction - the runtime assertions
+     * after them only name what the annotations already enforce. The first proves every allowlisted key is a property ProtectNvrOptions declares. The second proves
+     * the only properties the allowlist omits are the ones that migrate, so a controller property added to the type without joining the allowlist fails this file's
+     * typecheck rather than being silently dropped from every rebuilt item at runtime.
+     */
+    const anyControllerKey = (): keyof ProtectNvrOptions => "address";
+    const allowlisted: readonly Exclude<keyof ProtectNvrOptions, "mqttTopic" | "mqttUrl" | "overrideAddress">[] = CONTROLLER_KEYS;
+    const accountedFor: (typeof CONTROLLER_KEYS)[number] | "mqttTopic" | "mqttUrl" | "overrideAddress" = anyControllerKey();
+
+    assert.deepEqual([...allowlisted].sort(), [ "address", "password", "username", "verifyTls" ],
+      "the allowlist is exactly the controller properties that stay in the configuration file");
+    assert.equal(typeof accountedFor, "string", "every property the controller options type declares is allowlisted or is one of the migrating properties");
+  });
+
+  test("a controller awaiting migration carries its TLS verification preference to the probe, and one holding none carries no key for it", () => {
+
+    const sibling = { address: "10.0.0.2", password: "sibling secret", username: "sibling@example.com" };
+    const config: TestConfig = { controllers: [ { ...CREDENTIALS, mqttUrl: LEGACY_BROKER, verifyTls: true }, { ...sibling, mqttUrl: LEGACY_BROKER } ] };
+
+    assert.deepEqual(controllersAwaitingMigration(config), [ { ...CREDENTIALS, verifyTls: true }, sibling ],
+      "each probe reaches its controller as the plugin's own connect does, and an item holding no preference projects none");
+  });
 });
 
 describe("protect webUI controller writers, saving", () => {
@@ -326,6 +360,38 @@ describe("protect webUI controller writers, saving", () => {
 
     assert.ok(patch, "an edit writing exactly the address its item stores is never refused");
     assert.equal(patch.controllers[1], other, "an item the write does not name is carried across by reference, so nothing about it can be reshaped in passing");
+  });
+
+  test("an add with TLS verification on writes it as true, and an add with it off writes no key for it", () => {
+
+    const added = { address: "10.0.0.9", password: "another secret", username: "another@example.com" };
+    const on = withControllerSaved({ controllers: [{ ...CREDENTIALS }] }, { ...added, verifyTls: true });
+    const off = withControllerSaved({ controllers: [{ ...CREDENTIALS }] }, { ...added, verifyTls: false });
+
+    assert.ok(on && off, "an add at a free address is written");
+    assert.deepEqual(on.controllers, [ CREDENTIALS, { ...added, verifyTls: true } ], "verification turned on is written as true");
+    assert.deepEqual(off.controllers, [ CREDENTIALS, added ], "and verification turned off writes no key, because an absent preference and a false one read alike");
+  });
+
+  test("an edit turning TLS verification off deletes it, and leaves the stored item it started from as it was", () => {
+
+    const item = { ...CREDENTIALS, verifyTls: true };
+    const patch = withControllerSaved({ controllers: [item] }, { ...CREDENTIALS, originalAddress: ADDRESS, verifyTls: false });
+
+    assert.ok(patch, "an edit writing exactly the address its item stores is never refused");
+    assert.deepEqual(patch.controllers[0], CREDENTIALS, "verification turned off leaves the item with no key for it");
+    assert.equal(item.verifyTls, true, "and the stored item keeps its own value, because the write composes a new item rather than editing the one the page holds");
+  });
+
+  test("first run writes TLS verification onto the primary when it is on, and deletes it from the primary when it is off", () => {
+
+    const primary = { ...CREDENTIALS, verifyTls: true };
+    const on = withPrimaryConnection({ controllers: [{ ...CREDENTIALS }] }, { ...CREDENTIALS, verifyTls: true });
+    const off = withPrimaryConnection({ controllers: [primary] }, { ...CREDENTIALS, verifyTls: false });
+
+    assert.deepEqual(on?.controllers, [{ ...CREDENTIALS, verifyTls: true }], "verification turned on is written onto the primary as true");
+    assert.deepEqual(off?.controllers, [CREDENTIALS], "verification turned off leaves the primary with no key for it");
+    assert.equal(primary.verifyTls, true, "and the stored primary keeps its own value, because the write composes a new item rather than editing it");
   });
 });
 
@@ -483,7 +549,7 @@ describe("protect webUI controller writers, the listed-address rule", () => {
 
     const later = { ...LOGIN, address: ADDRESS, mqttUrl: LEGACY_BROKER };
     const primary = { address: "10.0.0.9", name: "Front Gate", password: "old secret", username: CREDENTIALS.username };
-    const written = withPrimaryCredentials({ controllers: [ primary, { ...LOGIN, address: "10.0.0.2" } ] }, { ...LOGIN, address: "10.0.0.8" });
+    const written = withPrimaryConnection({ controllers: [ primary, { ...LOGIN, address: "10.0.0.2" } ] }, { ...LOGIN, address: "10.0.0.8" });
 
     assert.ok(written, "an address no other controller holds is written onto the primary");
     assert.deepEqual(written.controllers, [ { ...primary, ...LOGIN, address: "10.0.0.8" }, { ...LOGIN, address: "10.0.0.2" } ],
@@ -491,7 +557,7 @@ describe("protect webUI controller writers, the listed-address rule", () => {
     assert.equal(primaryListedElsewhere({ controllers: [ primary, { ...LOGIN, address: "10.0.0.2" } ] }, { address: "10.0.0.8" }), false,
       "and the early check agrees");
 
-    assert.equal(withPrimaryCredentials({ controllers: [ primary, later ] }, { ...CREDENTIALS }), null, "an address a later controller holds is refused");
+    assert.equal(withPrimaryConnection({ controllers: [ primary, later ] }, { ...CREDENTIALS }), null, "an address a later controller holds is refused");
     assert.equal(primaryListedElsewhere({ controllers: [ primary, later ] }, { address: ADDRESS }), true, "and the early check agrees");
 
     // The usual first run writes the address the primary already stores, alone or beside a later entry repeating it, and neither may be refused. The page reads
@@ -500,7 +566,7 @@ describe("protect webUI controller writers, the listed-address rule", () => {
 
       const config: TestConfig = { controllers: [ { ...CREDENTIALS }, ...others ] };
       const label = others.length ? " beside a later entry repeating it" : " alone";
-      const own = withPrimaryCredentials(config, { ...CREDENTIALS, password: "new secret" });
+      const own = withPrimaryConnection(config, { ...CREDENTIALS, password: "new secret" });
 
       assert.ok(own, "the primary's own stored address is accepted" + label);
       assert.deepEqual(own.controllers, [{ ...CREDENTIALS, password: "new secret" }], "and written onto the primary, which the write holds alone" + label);
@@ -513,7 +579,7 @@ describe("protect webUI controller writers, the listed-address rule", () => {
   test("first run accepts a case-only change of the primary's address, and beside a later entry at its form writes the primary alone", () => {
 
     const primary = { ...LOGIN, address: "unifi.local" };
-    const alone = withPrimaryCredentials({ controllers: [primary] }, { ...LOGIN, address: "UNIFI.LOCAL" });
+    const alone = withPrimaryConnection({ controllers: [primary] }, { ...LOGIN, address: "UNIFI.LOCAL" });
 
     assert.ok(alone, "a case-only change of the primary's address is accepted when no later controller holds its form");
     assert.deepEqual(alone.controllers, [{ ...LOGIN, address: "UNIFI.LOCAL" }], "and stored exactly as typed");
@@ -522,7 +588,7 @@ describe("protect webUI controller writers, the listed-address rule", () => {
     // A later entry at the primary's form repeats the primary, which the page reads as the primary alone, so the change is accepted and the write leaves the later
     // entry out.
     const shared: TestConfig = { controllers: [ primary, { ...LOGIN, address: "Unifi.Local" } ] };
-    const beside = withPrimaryCredentials(shared, { ...LOGIN, address: "UNIFI.LOCAL" });
+    const beside = withPrimaryConnection(shared, { ...LOGIN, address: "UNIFI.LOCAL" });
 
     assert.ok(beside, "a case-only change is accepted beside a later entry at the primary's form");
     assert.deepEqual(beside.controllers, [{ ...LOGIN, address: "UNIFI.LOCAL" }], "and the write holds the primary alone, stored exactly as typed");
@@ -554,7 +620,7 @@ describe("protect webUI configured controllers, one entry per listed address", (
 
       assert.equal(hasValidCredentials(config), false, label + " holds no valid credentials, so first run is required");
       assert.equal(primaryListedElsewhere(config, { address: ADDRESS }), false, label + " lists no address, and the early check answers without throwing");
-      assert.deepEqual(withPrimaryCredentials(config, { ...CREDENTIALS })?.controllers, [CREDENTIALS], label + " is written as a list holding the one new entry");
+      assert.deepEqual(withPrimaryConnection(config, { ...CREDENTIALS })?.controllers, [CREDENTIALS], label + " is written as a list holding the one new entry");
     }
   });
 
@@ -669,6 +735,12 @@ const CONNECTION_FAILURE_HEADLINE = "Unable to connect to the UniFi Protect cont
 const SERVER_FAILURE_HEADLINE = "The plugin's UI server did not answer as expected.";
 const SERVER_FAILURE_MESSAGE = "The plugin's UI server answered in an unrecognized shape.";
 const SERVER_FAILURE_GUIDANCE = "Reload this page. If it keeps happening, restart Homebridge and check its log for the reason.";
+const CERTIFICATE_FAILURE_GUIDANCE = "This controller's TLS certificate could not be verified. " +
+  "Turn off certificate verification for this controller, or install a trusted certificate on your console.";
+
+// The reason the server captures for a certificate that did not verify, in the sentence unifi-protect's certificate error carries.
+const CERTIFICATE_REASON = "The UniFi Protect controller at 10.0.0.1 presented a certificate that could not be verified: self-signed certificate " +
+  "(DEPTH_ZERO_SELF_SIGNED_CERT).";
 
 // The device list a reachable controller answers, opening with the controller's own record as every list the UI server answers does.
 const LISTED_DEVICES = [ { mac: CONTROLLER_MAC, modelKey: "nvr" }, { mac: CAMERA_MAC, modelKey: "camera" } ];
@@ -679,9 +751,9 @@ const rejected = (reason: unknown): PromiseSettledResult<unknown> => ({ reason, 
 
 describe("protect webUI device-list outcomes", () => {
 
-  test("a device list with an empty error is the list, and its result carries the devices and no copy at all", () => {
+  test("a connection is the list, and its result carries the devices and no copy at all", () => {
 
-    const verdict = readDeviceListAnswer(answered({ devices: LISTED_DEVICES, error: "" }));
+    const verdict = readDeviceListAnswer(answered({ devices: LISTED_DEVICES, kind: "connected" }));
     const result = deviceListResult(verdict);
 
     assert.deepEqual(verdict, { devices: LISTED_DEVICES, kind: "list", message: "" }, "the list reads as itself");
@@ -689,9 +761,9 @@ describe("protect webUI device-list outcomes", () => {
     assert.deepEqual(Object.keys(result).sort(), [ "devices", "error" ], "a success carries no headline and no guidance");
   });
 
-  test("an empty list with the server's reason is the unreachable controller, under its own headline and with no guidance", () => {
+  test("a failure with the server's reason is the unreachable controller, under its own headline and with no guidance", () => {
 
-    const verdict = readDeviceListAnswer(answered({ devices: [], error: "Invalid username or password." }));
+    const verdict = readDeviceListAnswer(answered({ kind: "error", message: "Invalid username or password." }));
     const result = deviceListResult(verdict);
 
     assert.deepEqual(verdict, { devices: [], headline: CONNECTION_FAILURE_HEADLINE, kind: "unreachable", message: "Invalid username or password." },
@@ -700,20 +772,30 @@ describe("protect webUI device-list outcomes", () => {
       "and its result carries no devices and no guidance, so the page's own guidance line stands beneath the server's text");
   });
 
-  test("an empty list with an empty error reads as unreachable and maps to an empty hook error", () => {
+  test("a failure with an empty reason reads as unreachable and maps to an empty hook error", () => {
 
-    const verdict = readDeviceListAnswer(answered({ devices: [], error: "" }));
+    const verdict = readDeviceListAnswer(answered({ kind: "error", message: "" }));
 
     assert.deepEqual(verdict, { devices: [], headline: CONNECTION_FAILURE_HEADLINE, kind: "unreachable", message: "" },
       "a failure whose reason the server could not capture is still the unreachable controller");
     assert.deepEqual(deviceListResult(verdict), { devices: [], error: "", headline: CONNECTION_FAILURE_HEADLINE },
-      "and its result carries no devices, an empty error, and no guidance, so the page shows what it shows for that answer from the server directly");
+      "and its result carries no devices, an empty error, and no guidance");
+  });
+
+  test("a certificate failure is its own verdict, under the connection headline and with the certificate's guidance", () => {
+
+    const verdict = readDeviceListAnswer(answered({ kind: "certificate", message: CERTIFICATE_REASON }));
+
+    assert.deepEqual(verdict, { devices: [], guidance: CERTIFICATE_FAILURE_GUIDANCE, headline: CONNECTION_FAILURE_HEADLINE, kind: "certificate",
+      message: CERTIFICATE_REASON }, "the verdict carries the server's own reason beside the guidance that names what fixes a certificate");
+    assert.deepEqual(deviceListResult(verdict), { devices: [], error: CERTIFICATE_REASON, guidance: CERTIFICATE_FAILURE_GUIDANCE,
+      headline: CONNECTION_FAILURE_HEADLINE }, "and its result hands the error view that guidance in place of the page's own");
   });
 
   test("an answer in any shape the server never writes is the UI server failure, carrying the unrecognized-shape sentence", () => {
 
-    const malformed: unknown[] = [ undefined, null, "a string", 42, [], {}, { error: "" }, { error: 42 }, { devices: "a string", error: "" },
-      { devices: [], error: 42 }, { devices: LISTED_DEVICES, error: "a reason beside a list" } ];
+    const malformed: unknown[] = [ undefined, null, "a string", 42, [], {}, { kind: "connected" }, { devices: "a string", kind: "connected" }, { kind: "error" },
+      { kind: "error", message: 42 }, { kind: "certificate" }, { kind: "unknown", message: "" }, { devices: LISTED_DEVICES, error: "" } ];
 
     for(const answer of malformed) {
 
@@ -757,7 +839,7 @@ describe("protect webUI device-list outcomes", () => {
 
     assert.notEqual(staleSelectionVerdict().devices, staleSelectionVerdict().devices, "every stale verdict composes a fresh array");
     assert.notEqual(readDeviceListAnswer(answered({})).devices, readDeviceListAnswer(answered({})).devices, "as does every UI server failure");
-    assert.notEqual(readDeviceListAnswer(answered({ devices: [], error: "" })).devices, readDeviceListAnswer(answered({ devices: [], error: "" })).devices,
+    assert.notEqual(readDeviceListAnswer(answered({ kind: "error", message: "" })).devices, readDeviceListAnswer(answered({ kind: "error", message: "" })).devices,
       "and every unreachable verdict");
   });
 });

@@ -19,7 +19,7 @@ import { webUi } from "homebridge-plugin-utils/webUi.mjs";
 // The configured controller list's interpreters, bound once over HBPU's listed-address rule, which is the rule the plugin skips a repeated controller by, so the
 // page lists, refuses, and writes controllers by the same reading of an address the plugin starts them by.
 const { controllerListedElsewhere, controllers, controllersAwaitingMigration, hasValidCredentials, primaryController, primaryListedElsewhere, withControllerRemoved,
-  withControllerSaved, withPrimaryCredentials } = makeControllerList({ addressListedElsewhere, addressListingForm });
+  withControllerSaved, withPrimaryConnection } = makeControllerList({ addressListedElsewhere, addressListingForm });
 
 /* The bound in seconds on each individual controller probe. This is not a worst-case bound and does not pretend to be one: the Protect transport caps each HTTP call
  * at three and a half seconds, and a probe's first-ever login runs up to four calls in sequence - a login attempt, a token fetch, the login retry, and then the
@@ -54,7 +54,8 @@ const firstRunOnStart = ({ config }) => {
 
   const controller = primaryController(config);
 
-  firstRunCard.populate({ address: controller?.address ?? "", password: controller?.password ?? "", username: controller?.username ?? "" });
+  firstRunCard.populate({ address: controller?.address ?? "", password: controller?.password ?? "", username: controller?.username ?? "",
+    verifyTls: controller?.verifyTls === true });
 
   return true;
 };
@@ -100,24 +101,25 @@ const renderVerdict = ({ detail = "", lines = [], row, tone = "" }) => {
 const requestControllerLogin = makeControllerLogin({ deadline: LOGIN_DEADLINE, readDeviceListAnswer, request: (path, body) => homebridge.request(path, body),
   withDeadline });
 
-// Validate our Protect credentials and commit them.
+// Validate our Protect controller connection and commit it. The card's connection is read once and handed whole to the login check and the write, so neither can
+// carry a field the other did not.
 const firstRunOnSubmit = async ({ commit, config }) => {
 
-  const { address, password, username } = firstRunCard.values();
+  const connection = firstRunCard.values();
   const action = firstRunCard.verdict.start();
 
   /* An address a controller after the primary already holds is refused before the login check, by the rule a controller save is refused under, because the
    * answer needs no controller and the user should not wait on a login whose result would be thrown away. The card's action is started first, as a save's is,
    * so a validation still in flight cannot paint over the refusal.
    */
-  if(primaryListedElsewhere(config, { address })) {
+  if(primaryListedElsewhere(config, connection)) {
 
     firstRunCard.verdict.render({ lines: [CONTROLLER_LISTED_WARNING], tone: "text-warning" });
 
     return false;
   }
 
-  const login = await requestControllerLogin({ address, password, signal: action.signal, username });
+  const login = await requestControllerLogin({ ...connection, signal: action.signal });
 
   // A failed login is delivered through the action the submit started, which paints while the card presents it, and a retired one says nothing.
   if(login.kind !== "passed") {
@@ -132,10 +134,10 @@ const firstRunOnSubmit = async ({ commit, config }) => {
 
   try {
 
-    // Persist the validated credentials through the session's single write hook. We own the shape of the write - credentials live under the primary controller, which
-    // withPrimaryCredentials encodes while preserving the additional controllers the configured list holds - and the session owns persistence and the preservation of
-    // sibling platform entries.
-    await commit(withPrimaryCredentials(config, { address, password, username }));
+    // Persist the validated connection through the session's single write hook. We own the shape of the write - the connection lives on the primary controller,
+    // which withPrimaryConnection encodes while preserving the additional controllers the configured list holds - and the session owns persistence and the
+    // preservation of sibling platform entries.
+    await commit(withPrimaryConnection(config, connection));
 
     return true;
   } catch(err) {
@@ -295,7 +297,7 @@ const getDevices = async (selectedController, { config }) => {
    * a hook that throws sends the user after the controller when the fault is the UI server's own.
    */
   const [settled] = await Promise.allSettled([homebridge.request("/getDevices", { address: controller.address, password: controller.password,
-    username: controller.username })]);
+    username: controller.username, verifyTls: controller.verifyTls })]);
   const verdict = readDeviceListAnswer(settled);
 
   processDeviceList({ address: controller.address, devices: verdict.devices });
@@ -685,11 +687,12 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
      * confirmation and blanks the verdict line: both describe whatever the card was showing a moment ago, and the card is now describing something else. It moves
      * the card to a new population and retires nothing, so an action still in flight goes on and the presentation rule in start() decides where its answers land.
      */
-    populate: ({ address, macs = [], password, username }) => {
+    populate: ({ address, macs = [], password, username, verifyTls }) => {
 
       fields.address.value = address;
       fields.password.value = password;
       fields.username.value = username;
+      fields.verifyTls.checked = verifyTls;
       removalMacs = macs;
       population++;
 
@@ -700,10 +703,12 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
       maskSecrets(card);
     },
 
-    // What the user has typed, which is what every validation and every write reads. The address is read trimmed, because the plugin reads a listed controller's
-    // address trimmed, so every reader of the card's address, the login check, the listed-elsewhere check, the write, its rename and the card's follow of what it
-    // saved among them, reads the address the plugin connects to.
-    values: () => ({ address: fields.address.value.trim(), password: fields.password.value, username: fields.username.value }),
+    /* What the user has entered, which is what every validation and every write reads. The address is read trimmed, because the plugin reads a listed controller's
+     * address trimmed, so every reader of the card's address, the login check, the listed-elsewhere check, the write, its rename and the card's follow of what it
+     * saved among them, reads the address the plugin connects to. The TLS verification preference is read from the checkbox's checked state, because its value
+     * reads "on" whether the box is ticked or not.
+     */
+    values: () => ({ address: fields.address.value.trim(), password: fields.password.value, username: fields.username.value, verifyTls: fields.verifyTls.checked }),
     verdict
   };
 
@@ -711,10 +716,11 @@ const mountConnectionCard = ({ container, heading, helper, noSweepReason = "", o
   // wiring changing, and the reveal lasts as long as the card does.
   mountSecretReveals({ root: card, signal: cardSignal });
 
-  // An edit to any credential retires the verdict standing beside it, so the line never describes anything but the current input.
+  // An edit to any field retires the verdict standing beside it, so the line never describes anything but the current input. A checkbox reports its toggle through
+  // "change", and a text field reports each keystroke through "input".
   for(const field of Object.values(fields)) {
 
-    field.addEventListener("input", () => verdict.retire(), { signal: cardSignal });
+    field.addEventListener((field.type === "checkbox") ? "change" : "input", () => verdict.retire(), { signal: cardSignal });
   }
 
   control("validate").addEventListener("click", () => void onValidateLogin({ button: control("validate"), card: surface }), { signal: cardSignal });
@@ -844,7 +850,8 @@ const mountControllerEditor = ({ collapsible = false, container, heading, helper
         address: address,
         macs: sweepable ? (answers.get(address)?.map((device) => device.mac).filter((mac) => typeof mac === "string") ?? []) : [],
         password: item?.password ?? "",
-        username: item?.username ?? ""
+        username: item?.username ?? "",
+        verifyTls: item?.verifyTls === true
       });
     }
   };
@@ -870,7 +877,7 @@ const showControllerErrorPanel = ({ controller, panel, signal }) => {
 
       container: panel,
       heading: "Controller connection settings",
-      helper: "Update this controller's address or login, or remove it from this plugin.",
+      helper: "Update this controller's address, login, or TLS certificate verification, or remove it from this plugin.",
       noSweepReason: "This controller cannot be reached, so the feature options set for its devices cannot be identified and will be left in place.",
       signal
     }), signal };
@@ -911,7 +918,7 @@ const showProtectDetails = ({ device, panel, signal }) => {
       collapsible: true,
       container: dock,
       heading: null,
-      helper: "Update this controller's address or login, or remove it from this plugin.",
+      helper: "Update this controller's address, login, or TLS certificate verification, or remove it from this plugin.",
       noSweepReason: "This controller has not answered with a device list in this session, so the feature options set for its devices cannot be identified and " +
         "will be left in place.",
       signal,
@@ -1243,7 +1250,7 @@ const wiringSignal = wiringController.signal;
  * that in-flight instant rather than closing it.
  *
  * When the envelope fails, nothing has been written and the page loads exactly as it otherwise would. No read this webUI performs consults the consolidated
- * settings - first run reads the connection triple, which stays in the configuration file - so a session whose fetches are failing still routes, still runs first
+ * settings - first run reads the connection, which stays in the configuration file - so a session whose fetches are failing still routes, still runs first
  * run, and simply leaves the migration to a session whose fetches succeed.
  */
 const wireProtectConfig = async () => {
@@ -1260,6 +1267,16 @@ const wireProtectConfig = async () => {
   // before the page opened. The name seeds the primary platform entry, and it is read from the same constant the framework is configured with so the two cannot drift.
   const session = await PluginConfigSession.open({ host: homebridge, name: webUiParams.name });
 
+  // One controller's device-list verdict, the probe each pass below sends with the controller's whole connection, so a probe reaches a controller exactly as the
+  // plugin's own connect does. A probe that throws or that its deadline overtakes reads as a verdict with no devices.
+  const probeController = async ({ address, password, username, verifyTls }) => {
+
+    const [settled] = await Promise.allSettled([withDeadline({ promise: homebridge.request("/getDevices", { address, password, username, verifyTls }),
+      seconds: PROBE_DEADLINE, signal: wiringSignal })]);
+
+    return readDeviceListAnswer(settled);
+  };
+
   /* Resolve a MAC address for each controller whose per-controller settings still need one. The probes run in parallel because each performs a full controller login
    * and bootstrap, and serializing them would multiply the open-time wait by the number of controllers configured.
    *
@@ -1271,18 +1288,15 @@ const wireProtectConfig = async () => {
    */
   const macByAddress = new Map();
 
-  await Promise.all(controllersAwaitingMigration(session.platform).map(async ({ address, password, username }) => {
-
-    const [settled] = await Promise.allSettled([withDeadline({ promise: homebridge.request("/getDevices", { address, password, username }),
-      seconds: PROBE_DEADLINE, signal: wiringSignal })]);
+  await Promise.all(controllersAwaitingMigration(session.platform).map(async (controller) => {
 
     // The controller reports itself as a device whose model key is "nvr", so it is found by that key rather than by its position in the list. A probe that failed
     // in any way reads as a verdict with no devices, so it finds nothing.
-    const mac = readDeviceListAnswer(settled).devices.find(isController)?.mac;
+    const mac = (await probeController(controller)).devices.find(isController)?.mac;
 
     if(mac) {
 
-      macByAddress.set(address, mac);
+      macByAddress.set(controller.address, mac);
     }
   }));
 
@@ -1308,11 +1322,9 @@ const wireProtectConfig = async () => {
    */
   if(composed?.remaining && !wiringSignal.aborted) {
 
-    const topology = (await Promise.all(controllers(session.platform).map(async ({ address, password, username }) => {
+    const topology = (await Promise.all(controllers(session.platform).map(async (controller) => {
 
-      const [settled] = await Promise.allSettled([withDeadline({ promise: homebridge.request("/getDevices", { address, password, username }),
-        seconds: PROBE_DEADLINE, signal: wiringSignal })]);
-      const { devices } = readDeviceListAnswer(settled);
+      const { devices } = await probeController(controller);
       const mac = devices.find(isController)?.mac;
 
       return mac ? { devices: devices.filter((device) => !isController(device) && device?.mac).map((device) => device.mac), id: mac } : null;

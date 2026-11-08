@@ -324,7 +324,7 @@ describe("connect retry policy", () => {
 describe("the reading of a failed connect", () => {
 
   // The shapes whose construction would not sit on a table row, each as unifi-protect raises it. The pool reset and the certificate refusal are hand-spelled, because no
-  // connect raises them...the plugin never asks unifi-protect to verify a certificate.
+  // connect in this suite raises them...the connect double dials nothing, so no handshake ever refuses a certificate here.
   const PROTOCOL_MESSAGE = "The UniFi Protect controller returned a response that could not be parsed as JSON.";
   const parseFailed = new ProtectBootstrapError("Unable to parse the UniFi Protect controller bootstrap.",
     { cause: new ProtectProtocolError(PROTOCOL_MESSAGE, { cause: new SyntaxError("Unexpected end of JSON input") }), stage: "parse" });
@@ -344,8 +344,8 @@ describe("the reading of a failed connect", () => {
   const refusedSession = new ProtectAuthError("Authentication with the UniFi Protect controller failed.", { statusCode: 401 });
 
   /* One row for each shape a connect can end in, spelled as unifi-protect raises it, its cause included, so a row reads what a real failure carries. The rows named
-   * hand-spelled are the exceptions: no connect raises that shape, and each holds an arm or a floor that no real shape reaches. The reading's last arm is a catch-all, so
-   * a shape nobody listed would read a level with no line in any diff, which is why each is listed rather than one standing for its class.
+   * hand-spelled are the exceptions: no connect in this suite raises that shape, and each is listed for the arm or the floor it holds. The reading's last arm is a
+   * catch-all, so a shape nobody listed would read a level with no line in any diff, which is why each is listed rather than one standing for its class.
    */
   const READINGS: readonly { error: unknown; level: ConnectFailure["level"]; name: string; type: ConnectFailureType }[] = [
 
@@ -1445,6 +1445,16 @@ describe("the controller root's report of a startup failure by its kind", () => 
     assert.deepEqual(linesAt(logEntries, "error"), [], "and nothing was said at error");
   });
 
+  test("a certificate that did not verify is said once at error with its reason and the remedies, because a person must act", async () => {
+
+    const failure = new ProtectCertificateError({ cause: errnoError("DEPTH_ZERO_SELF_SIGNED_CERT", "self-signed certificate"), host: "10.0.0.1:443" });
+    const logEntries = await loginFailing(Array.from({ length: 3 }, () => failure));
+
+    assert.deepEqual(linesAt(logEntries, "error"), [PREFIX + failedLine("The UniFi Protect controller at 10.0.0.1:443 presented a certificate that could not be " +
+      "verified: self-signed certificate (DEPTH_ZERO_SELF_SIGNED_CERT)") + " Turn off certificate verification for this controller in the plugin settings, or " +
+      "install a trusted certificate on your console."]);
+  });
+
   test("a wrapped 503 is said at warn in its whole sentence", async () => {
 
     const logEntries = await loginFailing([fetchFailed(answered(503))]);
@@ -2124,6 +2134,7 @@ interface LoggedInRoot {
   api: TestHomebridgeApi;
   clientLog: ProtectLogging;
   clock: TestClock;
+  connectOptions: ConnectOptions;
   connection: TestConnection;
   double: TestProtectNvr;
   logEntries: readonly TestLogEntry[];
@@ -2134,15 +2145,16 @@ interface LoggedInRoot {
   store: TestStateStore;
 }
 
-// What a row logs a root in with: the accessories restored onto the bridge, the camera records in the store, the MQTT a row asks for with how its double stands, and
-// the feature options. The MQTT options leave out the factory's clock, so each double's end grace runs on the system clock and a row advancing the root's test clock
-// never expires an end it holds.
+// What a row logs a root in with: the accessories restored onto the bridge, the camera records in the store, the MQTT a row asks for with how its double stands, the
+// feature options, and the TLS verification preference the controller's configuration holds, absent where the row names none. The MQTT options leave out the
+// factory's clock, so each double's end grace runs on the system clock and a row advancing the root's test clock never expires an end it holds.
 interface LogInOptions {
 
   accessories?: ProtectAccessory[];
   cameras?: ProtectCameraConfig[];
   mqtt?: { connected?: boolean; holdEnd?: Promise<void> };
   userOptions?: string[];
+  verifyTls?: boolean;
 }
 
 // A camera record the root adopts at login: the record makeCameraConfig builds, with the category and the adoption by this controller the membership reconcile reads
@@ -2183,7 +2195,8 @@ async function logIn(options: LogInOptions = {}): Promise<LoggedInRoot> {
   const client = makeConnectedClient({ nvrConfig, store });
   const { platform, shutdown } = makeRootPlatform(double);
   const connects: ConnectOptions[] = [];
-  const config = (options.mqtt === undefined) ? double.config : { ...double.config, mqttUrl: "mqtt://127.0.0.1:1" };
+  const brokered = (options.mqtt === undefined) ? double.config : { ...double.config, mqttUrl: "mqtt://127.0.0.1:1" };
+  const config = (options.verifyTls === undefined) ? brokered : { ...brokered, verifyTls: options.verifyTls };
   const root = new ProtectNvr(platform, config, async (connect: ConnectOptions): Promise<ProtectClient> => {
 
     connects.push(connect);
@@ -2205,17 +2218,18 @@ async function logIn(options: LogInOptions = {}): Promise<LoggedInRoot> {
     await root.login();
     await settle();
 
-    // The logger the root handed the library, which is the one way the library's lines reach it.
-    const clientLog = connects[0]?.log;
+    // The options the root's first connect handed the library, and the logger among them, which is the one way the library's lines reach the root.
+    const connectOptions = connects[0];
+    const clientLog = connectOptions?.log;
 
-    assert.ok(clientLog, "the root hands the library its logger at connect");
+    assert.ok(connectOptions && clientLog, "the root hands the library its logger at connect");
 
     const mqtt = factory.createCalls[0]?.client ?? null;
 
     assert.ok((options.mqtt === undefined) || mqtt, "a root given a broker builds its client through the platform's factory");
 
-    return { api, clientLog, clock, connection: client.connection as unknown as TestConnection, double, logEntries, mqtt, mqttCalls: factory.createCalls, root, stop,
-      store };
+    return { api, clientLog, clock, connectOptions, connection: client.connection as unknown as TestConnection, double, logEntries, mqtt, mqttCalls: factory.createCalls,
+      root, stop, store };
   } catch(error) {
 
     await stop();
@@ -2223,6 +2237,30 @@ async function logIn(options: LogInOptions = {}): Promise<LoggedInRoot> {
     throw error;
   }
 }
+
+describe("the controller root's connect", () => {
+
+  // The root asks unifi-protect to verify the controller's certificate exactly where its configuration turns verification on, and reads any other value as off. A
+  // root connected with verification on says so at info, since it differs from the default, and one connected with it off says nothing about it.
+  for(const [ verifyTls, expected ] of [ [ true, true ], [ false, false ], [ undefined, false ] ] as const) {
+
+    test(((verifyTls === undefined) ? "an absent TLS verification preference" : ("a configured TLS verification preference of " + String(verifyTls))) +
+      " connects with verification " + (expected ? "on" : "off"), async () => {
+
+      const { connectOptions, logEntries, stop } = await logIn({ verifyTls });
+
+      try {
+
+        assert.equal(connectOptions.verifyTls, expected, "the connect is handed verification as a boolean, true only for a preference of true");
+        assert.equal(loggedAt(logEntries, "info", "\u{1F512}\u{FE0F} TLS certificate verification enabled."), expected,
+          "the verification line is said exactly when verification is on");
+      } finally {
+
+        await stop();
+      }
+    });
+  }
+});
 
 describe("the controller root's MQTT client", () => {
 

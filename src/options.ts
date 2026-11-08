@@ -20,7 +20,12 @@ export interface ProtectOptions {
   videoProcessor: string;
 }
 
-// NVR configuration options.
+/* NVR configuration options.
+ *
+ * verifyTls lives here rather than in the feature options because TLS verification is a connection-establishment fact that must be known before the connect, while
+ * feature-option controller scoping resolves against the controller's MAC address, which exists only after one. An absent or false value means no verification,
+ * which is what a controller presenting a self-signed certificate requires; turn it on where a trusted certificate has been installed.
+ */
 export interface ProtectNvrOptions {
 
   address: string;
@@ -29,6 +34,7 @@ export interface ProtectNvrOptions {
   overrideAddress?: string;
   password: string;
   username: string;
+  verifyTls?: boolean;
 }
 
 // The plugin's webUI and documentation renderer make use of additional metadata to only surface the feature options relevant for a particular device. These properties

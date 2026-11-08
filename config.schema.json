@@ -42,6 +42,13 @@
               "required": true,
               "placeholder": "e.g. some-unifi-protect-user",
               "description": "UniFi Protect username for this controller. Creating a homebridge-specific local user is strongly encouraged for security and sanity."
+            },
+
+            "verifyTls": {
+              "type": "boolean",
+              "title": "Verify TLS Certificates",
+              "required": false,
+              "description": "Require this controller to present a TLS certificate that verifies, on every connection the plugin makes to it, livestreams and two-way audio included. Streams read directly over RTSP aren't verified. Leave this off for a controller presenting the self-signed certificates it ships with. Default: false."
             }
           }
         }

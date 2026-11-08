@@ -33,6 +33,7 @@ export interface ProtectControllerConfig {
   overrideAddress?: unknown;
   password?: unknown;
   username?: unknown;
+  verifyTls?: unknown;
 }
 
 /**
@@ -51,14 +52,16 @@ export interface ProtectConfig {
 }
 
 /**
- * The connection triple a caller needs in order to reach one controller. The values stay unknown because they are carried straight through from the configuration
- * without being validated: the UI server's own login is what finds out whether they work.
+ * The connection a caller needs in order to reach one controller: its address and login, and its TLS verification preference where the item holds one. The values
+ * stay unknown because they are carried straight through from the configuration without being validated: the UI server's own login is what finds out whether they
+ * work.
  */
-export interface ProtectControllerCredentials {
+export interface ProtectControllerConnection {
 
   address: unknown;
   password: unknown;
   username: unknown;
+  verifyTls?: unknown;
 }
 
 /**
@@ -140,8 +143,8 @@ export interface ProtectControllerList {
    */
   controllers: (config?: ProtectConfig) => ProtectControllerConfig[];
 
-  /** The configured controllers still carrying a per-controller legacy property, each reduced to the connection triple needed to reach it. */
-  controllersAwaitingMigration: (config?: ProtectConfig) => ProtectControllerCredentials[];
+  /** The configured controllers still carrying a per-controller legacy property, each reduced to the connection needed to reach it. */
+  controllersAwaitingMigration: (config?: ProtectConfig) => ProtectControllerConnection[];
 
   /** Whether valid Protect login credentials exist for the primary controller. */
   hasValidCredentials: (config?: ProtectConfig) => boolean;
@@ -153,7 +156,7 @@ export interface ProtectControllerList {
    * Whether the first-run save would be refused because a controller after the primary already holds the address it writes, by the rule a controller save is
    * refused under, with the primary as the save's target.
    */
-  primaryListedElsewhere: (config: ProtectConfig | null | undefined, credentials: { address?: unknown }) => boolean;
+  primaryListedElsewhere: (config: ProtectConfig | null | undefined, connection: { address?: unknown }) => boolean;
 
   /**
    * The patch that removes one controller, and - when a MAC set is supplied - strips every configured entry scoped to one of those MAC addresses. An empty or
@@ -163,28 +166,28 @@ export interface ProtectControllerList {
     options?: string[]; };
 
   /**
-   * The controllers patch that writes one controller's connection triple. An `originalAddress` naming a configured item replaces that item's credentials while
-   * carrying every other key it holds; an absent or unmatched one appends a new item instead. Null means the address is already listed and nothing is to be
-   * written.
+   * The controllers patch that writes one controller's connection. An `originalAddress` naming a configured item replaces that item's connection while carrying
+   * every other key it holds; an absent or unmatched one appends a new item instead. Null means the address is already listed and nothing is to be written.
    */
-  withControllerSaved: (config: ProtectConfig | undefined, controller: { address: string; originalAddress?: string; password: string; username: string }) =>
-    { controllers: ProtectControllerConfig[] } | null;
+  withControllerSaved: (config: ProtectConfig | undefined, controller: { address: string; originalAddress?: string; password: string; username: string;
+    verifyTls?: boolean; }) => { controllers: ProtectControllerConfig[] } | null;
 
   /**
-   * The controllers patch that writes the supplied credentials into the primary controller, preserving the additional controllers the configured list holds, one
+   * The controllers patch that writes the supplied connection onto the primary controller, preserving the additional controllers the configured list holds, one
    * entry per listed address, and the primary's other fields. Null means a controller after the primary already holds the address.
    */
-  withPrimaryCredentials: (config: ProtectConfig | undefined, credentials: { address: string; password: string; username: string }) =>
+  withPrimaryConnection: (config: ProtectConfig | undefined, connection: { address: string; password: string; username: string; verifyTls?: boolean }) =>
     { controllers: ProtectControllerConfig[] } | null;
 }
 
 /**
- * One reading of the UI server's device-list answer: the list itself, the controller the server could not reach or refused with the reason it captured, the UI server's
- * own failure, or a sidebar entry whose controller left the configuration. Every failure carries no devices and the headline its surfaces render it under.
+ * One reading of the UI server's device-list answer: the list itself, the controller the server could not reach or refused with the reason it captured, the
+ * controller whose TLS certificate did not verify, the UI server's own failure, or a sidebar entry whose controller left the configuration. Every failure carries
+ * no devices and the headline its surfaces render it under.
  */
 export type DeviceListVerdict = { devices: Record<string, unknown>[]; kind: "list"; message: string } |
   { devices: Record<string, unknown>[]; headline: string; kind: "unreachable"; message: string } |
-  { devices: Record<string, unknown>[]; guidance: string; headline: string; kind: "serverFailure" | "staleSelection"; message: string };
+  { devices: Record<string, unknown>[]; guidance: string; headline: string; kind: "certificate" | "serverFailure" | "staleSelection"; message: string };
 
 /** The result the framework's device-list hook answers, carrying a failure's own headline and guidance where it has them. */
 export interface DeviceListResult {
@@ -197,6 +200,11 @@ export interface DeviceListResult {
 
 // The headline for a controller the plugin could not reach or refused, rendered as the framework's error-view headline above the reason.
 const CONNECTION_FAILURE_HEADLINE = "Unable to connect to the UniFi Protect controller.";
+
+// What to do about a controller whose TLS certificate did not verify, rendered beneath the connection failure's headline in place of the page's own guidance, which
+// names no remedy for a certificate.
+const CERTIFICATE_FAILURE_GUIDANCE = "This controller's TLS certificate could not be verified. " +
+  "Turn off certificate verification for this controller, or install a trusted certificate on your console.";
 
 // The headline for a UI server that failed to answer or answered in a shape it never writes, rendered as the framework's error-view headline.
 const SERVER_FAILURE_HEADLINE = "The plugin's UI server did not answer as expected.";
@@ -221,19 +229,24 @@ const STALE_SELECTION_GUIDANCE = "Refresh the controller list to take it off the
 const serverFailure = (message: string = SERVER_FAILURE_MESSAGE): DeviceListVerdict => ({ devices: [], guidance: SERVER_FAILURE_GUIDANCE,
   headline: SERVER_FAILURE_HEADLINE, kind: "serverFailure", message: message.length ? message : SERVER_FAILURE_MESSAGE });
 
-// Whether a fulfilled answer is in the one shape the UI server writes for a device list: an object carrying a device array and an error string.
-const isDeviceListAnswer = (answer: unknown): answer is { devices: Record<string, unknown>[]; error: string } => (typeof answer === "object") && (answer !== null) &&
-  ("devices" in answer) && Array.isArray(answer.devices) && ("error" in answer) && (typeof answer.error === "string");
+// The answer the UI server writes for a device-list request, tagged by its outcome: a connection carrying the device list, or a failure carrying the reason it captured.
+interface DeviceListAnswer {
+
+  devices?: unknown;
+  kind?: unknown;
+  message?: unknown;
+}
 
 /* Read the UI server's answer to a device-list request, which is the one place that answer is interpreted, so the device view, the login check, and the
  * migration's probes cannot read one answer differently.
  *
- * The server answers a device list with an empty error when it reached a controller the plugin supports. It answers an empty list with the reason it captured when it
- * could not reach one, which is empty when it captured none, and with the plugin's own refusal for a controller that reports no version or one below the plugin's
- * version floor, which shares the connection failure's headline. Anything else is an answer in a shape the server never writes, and reads as the UI server's own failure
- * rather than as an empty controller, because guessing at it is how a malformed answer becomes a silently empty page. A request the bridge rejected is the UI server's
- * failure too, carrying the rejection's own message, or the unrecognized-shape sentence when it carried none. A failure verdict carries the headline its surfaces render
- * it under, and a guidance line only where the page's own standing guidance would send the user after the wrong thing.
+ * The server tags each answer with its outcome rather than leaving the page to infer one from its shape. A connection carries the device list of a controller the
+ * plugin supports. A failure carries the reason the server captured, which is empty when it captured none, and the plugin's own refusal for a controller that
+ * reports no version or one below the plugin's version floor reads the same way, under the connection failure's headline. A certificate failure is a controller
+ * whose TLS certificate did not verify, under that same headline. Anything else is an answer in a shape the server never writes, and reads as the UI server's own
+ * failure rather than as an empty controller, because guessing at it is how a malformed answer becomes a silently empty page. A request the bridge rejected is the UI
+ * server's failure too, carrying the rejection's own message, or the unrecognized-shape sentence when it carried none. A failure verdict carries the headline its
+ * surfaces render it under, and a guidance line only where the page's own standing guidance would send the user after the wrong thing.
  *
  * @param settlement - The request's settlement, in the shape Promise.allSettled answers: fulfilled with the server's answer, or rejected with what it threw.
  *
@@ -253,21 +266,35 @@ export const readDeviceListAnswer = (settlement: PromiseSettledResult<unknown>):
     return serverFailure((typeof message === "string") ? message : ((typeof reason === "string") ? reason : undefined));
   }
 
-  const answer = settlement.value;
+  const answer = ((typeof settlement.value === "object") && (settlement.value !== null)) ? settlement.value as DeviceListAnswer : {};
 
-  if(!isDeviceListAnswer(answer)) {
+  switch(answer.kind) {
 
-    return serverFailure();
+    case "connected": {
+
+      return Array.isArray(answer.devices) ? { devices: answer.devices as Record<string, unknown>[], kind: "list", message: "" } : serverFailure();
+    }
+
+    // A certificate that did not verify carries guidance of its own, naming the remedies that fix it, because the page's standing line names none of them.
+    case "certificate": {
+
+      return (typeof answer.message === "string") ?
+        { devices: [], guidance: CERTIFICATE_FAILURE_GUIDANCE, headline: CONNECTION_FAILURE_HEADLINE, kind: "certificate", message: answer.message } : serverFailure();
+    }
+
+    // The controller could not be reached, or it reports no version or one the plugin refuses. The page's own guidance line already sends the user to the connection
+    // editor beneath the error, so the verdict carries none of its own.
+    case "error": {
+
+      return (typeof answer.message === "string") ?
+        { devices: [], headline: CONNECTION_FAILURE_HEADLINE, kind: "unreachable", message: answer.message } : serverFailure();
+    }
+
+    default: {
+
+      return serverFailure();
+    }
   }
-
-  // The controller could not be reached, or it reports no version or one the plugin refuses. The page's own guidance line already sends the user to the connection
-  // editor beneath the error, so the verdict carries none of its own.
-  if(!answer.devices.length) {
-
-    return { devices: [], headline: CONNECTION_FAILURE_HEADLINE, kind: "unreachable", message: answer.error };
-  }
-
-  return answer.error.length ? serverFailure() : { devices: answer.devices, kind: "list", message: "" };
 };
 
 /* The verdict of a sidebar entry whose controller left the configuration after the sidebar was built. It is composed here beside the device-list verdicts because
@@ -280,7 +307,7 @@ export const staleSelectionVerdict = (): DeviceListVerdict => ({ devices: [], gu
 /* Map a device-list verdict onto the result the framework's device-list hook answers, with each outcome's own copy beside it. A success carries its devices and
  * an empty error, and a failure carries no devices, its message, its headline, and its guidance where it has one. Only the members an outcome carries are
  * written, because an absent member is how the framework's contract says its own wording applies. An unreachable controller whose reason the server could not
- * capture maps to an empty error, which the framework renders as it renders that answer from the server directly.
+ * capture maps to an empty error.
  *
  * No success needs a nothing-to-list notice: every device list the UI server answers opens with the controller's own record, so the shortest list a reachable
  * controller can produce still carries a node to select and an options table to render against it.
@@ -313,6 +340,26 @@ const isControllerEntry = (item: unknown): item is ProtectControllerConfig => (t
 // item holds. The writer and the early check find their target here alike, so they ask the rule about the same item.
 const saveTarget = (items: ProtectControllerConfig[], originalAddress: unknown): number => (originalAddress === undefined) ? -1 :
   items.findIndex((item) => item.address === originalAddress);
+
+/* Compose one controller item from a base item and the connection a save writes onto it, as a new object, because the base is a stored entry the page and its
+ * session hold. Every other key the base holds carries through, and TLS verification is written only when it is on, since an absent value and a false one read alike.
+ */
+const withConnectionApplied = (base: ProtectControllerConfig | undefined, { address, password, username, verifyTls }: { address: string; password: string;
+  username: string; verifyTls?: boolean; }): ProtectControllerConfig => {
+
+  const successor: ProtectControllerConfig = { ...base, address, password, username };
+
+  if(verifyTls === true) {
+
+    successor.verifyTls = true;
+
+    return successor;
+  }
+
+  delete successor.verifyTls;
+
+  return successor;
+};
 
 /* Whether one configured-options entry addresses a scope named by any of the supplied MAC addresses, and the whole of what the orphan sweep decides an entry on.
  *
@@ -410,19 +457,24 @@ interface ScopedSetting {
   value: unknown;
 }
 
-/* The keys a controllers[] item converges to: the connection triple the plugin logs in with, and nothing else. Each item's successor is rebuilt from this list rather
- * than edited down from the original, which is what retires a key by simply never carrying it - the per-controller display name and the doorbell message presets both
- * leave that way, as does any key a hand-edit left behind that neither the plugin nor its configuration schema reads. An item key therefore deletes by OMISSION,
- * which is the opposite of how a top-level property deletes, and the migration's assertions have to read the two differently.
+/**
+ * The keys a controllers[] item converges to: every controller property the plugin's own controller options type declares, except the ones that migrate into feature
+ * options. A key the plugin reads at its connect, the TLS verification preference among them, belongs here, because a rebuild that left one out would silently
+ * change how the plugin connects.
+ *
+ * Each item's successor is rebuilt from this list rather than edited down from the original, which is what retires a key by simply never carrying it - the
+ * per-controller display name and the doorbell message presets both leave that way, as does any key a hand-edit left behind that neither the plugin nor its
+ * configuration schema reads. An item key therefore deletes by OMISSION, which is the opposite of how a top-level property deletes, and the migration's assertions
+ * have to read the two differently.
  */
-const CONNECTION_KEYS = [ "address", "password", "username" ];
+export const CONTROLLER_KEYS = [ "address", "password", "username", "verifyTls" ] as const;
 
 // The feature option a device's custom HomeKit name is stored under, at the device's own scope, which is the one scope the option declares and where the plugin
 // reads it.
 const DEVICE_NAME_OPTION = "Device.Name";
 
 // Whether a rebuilt successor carries exactly what the item it replaces carried. This decides whether the controllers array rides the patch at all, and it is what
-// makes the rewrite converge: once every item is already its own connection triple, no successor differs and a later pass leaves the array alone.
+// makes the rewrite converge: once every item already holds only the keys its successor carries, no successor differs and a later pass leaves the array alone.
 const unchanged = (item: ProtectControllerConfig, successor: ProtectControllerConfig): boolean => {
 
   const keys = Object.keys(successor);
@@ -562,40 +614,40 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
    * onto the primary, so the primary is the rule's target, and a first run that writes the primary's own address in any spelling is never refused, because the
    * page reads one entry per listed address and no later entry it reads holds the primary's form.
    *
-   * @param config      - The platform configuration entry.
-   * @param credentials - The credentials the first-run form would write, of which only the address is read.
+   * @param config     - The platform configuration entry.
+   * @param connection - The connection the first-run form would write, of which only the address is read.
    *
    * @returns True when another configured controller already holds the written address.
    */
   const primaryListedElsewhere = (config: ProtectConfig | null | undefined, { address }: { address?: unknown }): boolean => heldElsewhere(controllers(config), 0,
     address);
 
-  /* Produce the controllers patch that writes the supplied credentials into the primary controller, preserving the additional controllers the configured list
-   * holds, one entry per listed address, and the primary's other fields. On a true first run controllers[0] is undefined; object spread of undefined is a safe
-   * no-op that yields just the credential fields, so no separate initialization is needed.
+  /* Produce the controllers patch that writes the supplied connection onto the primary controller, preserving the additional controllers the configured list
+   * holds, one entry per listed address, and the primary's other fields. On a true first run controllers[0] is undefined, and composing over an undefined base
+   * yields just the connection's fields, so no separate initialization is needed.
    *
-   * @param config      - The platform configuration entry.
-   * @param credentials - The connection triple to write onto the primary controller.
+   * @param config     - The platform configuration entry.
+   * @param connection - The connection to write onto the primary controller.
    *
    * @returns The `{ controllers }` patch for the session's commit to merge onto the platform entry, or null when a controller after the primary already holds the
    *          address, by the rule a controller save is refused under.
    */
-  const withPrimaryCredentials = (config: ProtectConfig | undefined, { address, password, username }: { address: string; password: string;
-    username: string; }): { controllers: ProtectControllerConfig[] } | null => {
+  const withPrimaryConnection = (config: ProtectConfig | undefined, connection: { address: string; password: string; username: string;
+    verifyTls?: boolean; }): { controllers: ProtectControllerConfig[] } | null => {
 
     const next = [...controllers(config)];
 
-    if(heldElsewhere(next, 0, address)) {
+    if(heldElsewhere(next, 0, connection.address)) {
 
       return null;
     }
 
-    next[0] = { ...next[0], address, password, username };
+    next[0] = withConnectionApplied(next[0], connection);
 
     return { controllers: next };
   };
 
-  /* Produce the controllers patch that writes one controller's connection triple, either onto the item it already has or as a new item at the end.
+  /* Produce the controllers patch that writes one controller's connection, either onto the item it already has or as a new item at the end.
    *
    * The item the write lands on is found by the address the caller started from, not by the address being written, so an edit that changes a controller's
    * address replaces that controller rather than adding a second one beside it. An `originalAddress` that names no configured item - and the absent one an add
@@ -606,33 +658,33 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
    * the page last read it.
    *
    * An edit carries every other key its item holds. A controller nobody has migrated yet still owns per-controller legacy settings, and the migration is the only
-   * thing that retires those; a credential edit that rebuilt the item from the triple alone would silently discard settings the plugin is still running on.
+   * thing that retires those; an edit that rebuilt the item from the connection alone would silently discard settings the plugin is still running on.
    *
    * @param config     - The platform configuration entry.
-   * @param controller - The connection triple to write, and the address of the item to write it onto.
+   * @param controller - The connection to write, and the address of the item to write it onto.
    *
    * @returns The `{ controllers }` patch for the session's commit to merge onto the platform entry, or null when the address is already listed and nothing is to
    *          be written.
    */
-  const withControllerSaved = (config: ProtectConfig | undefined, { address, originalAddress, password, username }: { address: string; originalAddress?: string;
-    password: string; username: string; }): { controllers: ProtectControllerConfig[] } | null => {
+  const withControllerSaved = (config: ProtectConfig | undefined, controller: { address: string; originalAddress?: string; password: string; username: string;
+    verifyTls?: boolean; }): { controllers: ProtectControllerConfig[] } | null => {
 
     const items = controllers(config);
-    const index = saveTarget(items, originalAddress);
+    const index = saveTarget(items, controller.originalAddress);
 
-    if(heldElsewhere(items, index, address)) {
+    if(heldElsewhere(items, index, controller.address)) {
 
       return null;
     }
 
     if(index === -1) {
 
-      return { controllers: [ ...items, { address, password, username } ] };
+      return { controllers: [ ...items, withConnectionApplied(undefined, controller) ] };
     }
 
     const next = [...items];
 
-    next[index] = { ...items[index], address, password, username };
+    next[index] = withConnectionApplied(items[index], controller);
 
     return { controllers: next };
   };
@@ -665,18 +717,18 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
     return { controllers: remaining, options: (Array.isArray(config?.options) ? config.options : []).filter((entry) => !addressesSweptScope(entry, swept)) };
   };
 
-  /* The configured controllers still carrying at least one per-controller legacy property, each reduced to the connection triple a caller needs in order to reach
-   * it. This is what lets the wiring probe exactly the controllers whose settings still need a MAC address, and skip the network entirely once every one of them
-   * has converged.
+  /* The configured controllers still carrying at least one per-controller legacy property, each reduced to the connection a caller needs in order to reach it.
+   * This is what lets the wiring probe exactly the controllers whose settings still need a MAC address, and skip the network entirely once every one of them has
+   * converged. The TLS verification preference is carried where the item holds one, so the probe verifies a certificate exactly where the plugin's own connect will.
    *
    * A configuration we cannot parse answers the empty array rather than throwing, on the same terms the migration declines one: the caller's next move is a
    * network probe, and there is nothing here worth probing for.
    *
    * @param config - The platform configuration entry.
    *
-   * @returns The connection triple of each controller whose per-controller settings have not migrated yet.
+   * @returns The connection of each controller whose per-controller settings have not migrated yet.
    */
-  const controllersAwaitingMigration = (config?: ProtectConfig): ProtectControllerCredentials[] => {
+  const controllersAwaitingMigration = (config?: ProtectConfig): ProtectControllerConnection[] => {
 
     if(!Array.isArray(config?.controllers)) {
 
@@ -685,11 +737,12 @@ export const makeControllerList = ({ addressListedElsewhere, addressListingForm 
 
     // The controllers as the page reads them, one entry per listed address, so a repeated address is probed for the entry the plugin uses and for no other.
     return controllers(config).filter((item) => TIER_TWO_SETTINGS.some(({ property }) => item[property] !== undefined))
-      .map((item) => ({ address: item.address, password: item.password, username: item.username }));
+      .map((item) => ({ address: item.address, password: item.password, username: item.username,
+        ...((item.verifyTls === undefined) ? {} : { verifyTls: item.verifyTls }) }));
   };
 
   return { controllerListedElsewhere, controllers, controllersAwaitingMigration, hasValidCredentials, primaryController, primaryListedElsewhere, withControllerRemoved,
-    withControllerSaved, withPrimaryCredentials };
+    withControllerSaved, withPrimaryConnection };
 };
 
 /**
@@ -893,7 +946,7 @@ export const makeProtectConfig = ({ FeatureOptions, catalog, controllers, displa
       }
 
       /* The per-controller tier and the controllers[] rewrite happen together, because they are one pass over the same items. Each successor is rebuilt from the
-       * connection triple rather than edited down from the original, so a retired key, an unknown key, and a consumed legacy key all leave the same way: by never
+       * controller keys rather than edited down from the original, so a retired key, an unknown key, and a consumed legacy key all leave the same way: by never
        * being carried.
        *
        * The items are the controllers as the page reads them, one entry per listed address, so at a repeated address a pass reads, composes, and carries forward
@@ -905,7 +958,7 @@ export const makeProtectConfig = ({ FeatureOptions, catalog, controllers, displa
         const mac = macByAddress?.get(item.address);
         const successor: ProtectControllerConfig = {};
 
-        for(const key of CONNECTION_KEYS) {
+        for(const key of CONTROLLER_KEYS) {
 
           if(item[key] !== undefined) {
 
