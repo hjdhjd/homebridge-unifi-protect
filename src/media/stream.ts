@@ -11,7 +11,7 @@ import type { CameraController, CameraControllerOptions, CameraStreamingDelegate
   SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { Clock, HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
 import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
-import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_PROBESIZE_OVERRIDE_MAX,
+import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_LIVE_VIEW_START_DEADLINE_MS, PROTECT_PROBESIZE_OVERRIDE_MAX,
   PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectReservedNames, isPackageCameraContext } from "../types.ts";
 import { controllerIdentityOf, recordingAdvertisementOf, streamingSamplerates } from "./stream-delegate.ts";
@@ -634,6 +634,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   // Launch the Protect video (and audio) stream.
   private async startStream(request: StartStreamRequest, callback: StreamRequestCallback): Promise<void> {
 
+    // The moment HomeKit's start request reached us, which is when HAP's own timer for answering it began. The livestream wait below is bounded against it.
+    const requestedAt = this.platform.clock.monotonic();
     const sessionInfo = this.pendingSessions.get(request.sessionID);
 
     if(!sessionInfo) {
@@ -1077,10 +1079,17 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       // Drive the segment iterator in the background.
       void this.consumeStreamSegments(ffmpegStream, subscription, segmentWriter, tsBuffer);
 
-      // Wait for the session to establish. If it fails (provisioning deadline expired), dispose the prepared session and bail. The FFmpeg was spawned above before this
-      // await, so it must be torn down here rather than left to sit until its returnPort watchdog fires; aborting the umbrella controller inside the disposal helper
-      // cascades through the shared signal to the FFmpeg, the writer, and the subscription, so no separate manual teardown of the three is needed.
-      if(!(await subscription.whenEstablished())) {
+      /* Wait for the session to establish, within the live view's start deadline. HomeKit's answer comes from the FFmpeg ready bridge above, and FFmpeg says nothing
+       * until video reaches it, so a livestream that never delivers would otherwise hold HomeKit's request until HAP times it out. The deadline is measured from
+       * HomeKit's start request, where HAP's own timer began, so the work ahead of this wait counts against it on any host.
+       *
+       * If the session fails or misses the deadline, dispose the prepared session and bail. The FFmpeg was spawned above before this await, so it must be torn down here
+       * rather than left to sit until its returnPort watchdog fires; aborting the umbrella controller inside the disposal helper cascades through the shared signal to
+       * the FFmpeg, the writer, and the subscription, so no separate manual teardown of the three is needed, and the FFmpeg's abort settles the ready bridge, which
+       * answers HomeKit with an error exactly once.
+       */
+      if(!(await establishedWithin({ clock: this.platform.clock, established: subscription.whenEstablished(),
+        withinMs: PROTECT_LIVE_VIEW_START_DEADLINE_MS - (this.platform.clock.monotonic() - requestedAt) }))) {
 
         this.disposePreparedSession(request.sessionID, sessionInfo);
 
@@ -1490,6 +1499,33 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
   public get probesize(): number {
 
     return this.probesizeTuning.effective;
+  }
+}
+
+/**
+ * Wait for a livestream to establish, giving up at a deadline. The establishment's own answer wins when it arrives first, and the deadline passing first answers
+ * false, so a caller holding a time budget treats a livestream that is late exactly as one that failed. The deadline's timer is released as soon as the wait settles,
+ * so an establishment that answers in time leaves nothing armed behind it.
+ *
+ * @param options             - Wait inputs.
+ * @param options.clock       - The clock the deadline is armed on.
+ * @param options.established - The livestream's establishment answer.
+ * @param options.withinMs    - How long to wait, in milliseconds. A budget already spent answers false on the clock's next turn.
+ *
+ * @returns Whether the livestream established before the deadline.
+ */
+export async function establishedWithin(options: { clock: Clock; established: Promise<boolean>; withinMs: number }): Promise<boolean> {
+
+  const { clock, established, withinMs } = options;
+  const { promise: expired, resolve: expire } = Promise.withResolvers<boolean>();
+  const deadline = clock.schedule(() => expire(false), Math.max(0, withinMs));
+
+  try {
+
+    return await Promise.race([ established, expired ]);
+  } finally {
+
+    deadline[Symbol.dispose]();
   }
 }
 

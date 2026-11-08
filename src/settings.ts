@@ -70,6 +70,12 @@ export const PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS = 0;
 // stall detection past that window.
 export const PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS = 2000;
 
+// How long a live view waits for its livestream to deliver video, in milliseconds, measured from HomeKit's start request. HAP answers a start request we have not
+// answered within nine seconds with a timeout of its own, so we give up a second ahead of it and answer HomeKit with an error ourselves...the margin covers the
+// teardown and the answer on a slow host, while the window leaves generous room for a slow network or a busy controller. A healthy livestream delivers its first video
+// well inside it.
+export const PROTECT_LIVE_VIEW_START_DEADLINE_MS = 8000;
+
 // Shadow reserve-depth urgency telemetry parameters for HKSV recovery. These constants are NOT a live recovery policy: they exist only so the telemetry
 // teardown log can report, side by side with the shipped fixed urgency, what a reserve-depth-adaptive urgency would have declared given the reserve depth the
 // event actually observed. The shadow formula is reserveMs = meanReserve * segmentLength; shadowUrgency = clamp(reserveMs - reconnectTime - safety, FLOOR,

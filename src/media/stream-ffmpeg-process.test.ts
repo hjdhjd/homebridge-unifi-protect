@@ -1,7 +1,8 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * stream-ffmpeg-process.test.ts: A spawn-free truth-table for the live-path failed-teardown policy classifier, the live view's audio-filter arguments, the SRTP
- * destination each live-view sink sends to, the destination two-way audio sends to directly, and whether a camera's FFmpeg processes log verbosely.
+ * destination each live-view sink sends to, the destination two-way audio sends to directly, whether a camera's FFmpeg processes log verbosely, and the live view's
+ * bounded wait for its livestream.
  *
  * classifyTeardownFailure is the pure, exported decision the live-path FFmpeg streaming process delegates to in its logFailedTeardown override: given the accumulated
  * stderr and whether this instance suppresses livestream-API hiccups, it returns one of the protocol verdicts. Lifting that decision out of the spawn-on-construction
@@ -16,9 +17,10 @@
  * That dispatch is trivial glue verified by inspection, and homebridge-plugin-utils' own process tests cover the base super.logFailedTeardown dump.
  */
 import { TestCameraProjection, makeCameraConfig } from "../devices/testing.helpers.ts";
+import { TestClock, settle } from "homebridge-plugin-utils/testing";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
-import { isFfmpegVerbose, liveAudioFilterArgs, srtpDestination, talkbackDestination } from "./stream.ts";
+import { establishedWithin, isFfmpegVerbose, liveAudioFilterArgs, srtpDestination, talkbackDestination } from "./stream.ts";
 import type { Camera } from "unifi-protect";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
@@ -28,7 +30,6 @@ import { classifyTeardownFailure } from "./stream-ffmpeg-process.ts";
 import { configured } from "../devices/device-base.ts";
 import { makeTestCameraHost } from "./testing.helpers.ts";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
-import { settle } from "homebridge-plugin-utils/testing";
 
 describe("classifyTeardownFailure - the live-path failed-teardown policy", () => {
 
@@ -237,5 +238,54 @@ describe("isFfmpegVerbose - whether a camera's FFmpeg processes log verbosely", 
   test("the platform's verbose FFmpeg setting turns verbose logging on", () => {
 
     assert.equal(isFfmpegVerbose(hostWith({ verboseFfmpeg: true })), true);
+  });
+});
+
+describe("establishedWithin - the live view's bounded wait for its livestream", () => {
+
+  // An establishment that answers inside the deadline is the wait's answer, true and false alike, and the deadline's timer is released with it.
+  test("an establishment that answers in time is the answer, and leaves no timer armed", async () => {
+
+    const clock = new TestClock();
+
+    assert.equal(await establishedWithin({ clock, established: Promise.resolve(true), withinMs: 8000 }), true);
+    assert.equal(await establishedWithin({ clock, established: Promise.resolve(false), withinMs: 8000 }), false);
+    assert.equal(clock.pending, 0, "no deadline timer outlives a settled wait");
+  });
+
+  // A livestream that never answers is given up on exactly at the deadline: still waiting a millisecond before it, and false the moment it passes.
+  test("a livestream that never answers is given up on at the deadline", async () => {
+
+    const clock = new TestClock();
+    const outcome: { answer?: boolean } = {};
+
+    void establishedWithin({ clock, established: Promise.withResolvers<boolean>().promise, withinMs: 8000 }).then((answer): void => { outcome.answer = answer; });
+
+    clock.advance(7999);
+
+    await settle();
+
+    assert.equal(outcome.answer, undefined, "still waiting a millisecond before the deadline");
+
+    clock.advance(1);
+
+    await settle();
+
+    assert.equal(outcome.answer, false);
+  });
+
+  // A budget the work ahead of the wait has already spent answers false on the clock's next turn rather than arming a timer in the past.
+  test("a budget already spent answers false on the clock's next turn", async () => {
+
+    const clock = new TestClock();
+    const outcome: { answer?: boolean } = {};
+
+    void establishedWithin({ clock, established: Promise.withResolvers<boolean>().promise, withinMs: -500 }).then((answer): void => { outcome.answer = answer; });
+
+    clock.advance(0);
+
+    await settle();
+
+    assert.equal(outcome.answer, false);
   });
 });
