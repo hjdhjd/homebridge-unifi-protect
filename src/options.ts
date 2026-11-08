@@ -45,10 +45,14 @@ export interface ProtectNvrOptions {
 // choiceLabels:        The display name each of a picker's values reads as, keyed by the value itself. The webUI's resolver renders these rather than deriving copy
 //                      from a wire spelling, so a picker offers the same names the logs and the HomeKit accessories use.
 // hasAccessFeature:    Properties in the UniFi Access metadata featureFlags object that must be enabled for this option to be exposed.
+// hasAirQualityMetric: Air-quality readings that must be live on a sensor for this option to be exposed. A sensor's record carries every reading whether or not its
+//                      hardware measures it, so a reading counts only when it is something other than the controller's not-capable form.
 // hasCameraFeature:    Properties in the featureFlags object on cameras that must be enabled for this option to be exposed.
 // hasFeature:          Properties in the featureFlags object that must be enabled for this option to be exposed.
 // hasLightProperty:    Properties that must exist on the device object for a light device for this option to be exposed.
 // hasProperty:         Properties that must exist on the device object for this option to be exposed.
+// hasSensorFeature:    Properties in the featureFlags object on sensors that must be present for this option to be exposed. A sensor advertises each piece of
+//                      hardware it carries there, while its settings blocks appear on every sensor whatever its hardware.
 // hasSensorProperty:   Properties that must exist on the device object for a sensor device for this option to be exposed.
 // hasSmartObjectType:  Smart object detection capability that must exist for this option to be exposed.
 // modelKey:            Device categories that the option applies to, or "all" for any device type.
@@ -57,10 +61,12 @@ export interface ProtectOptionMeta {
   choiceDomain?: string[];
   choiceLabels?: Readonly<Record<string, string>>;
   hasAccessFeature?: string[];
+  hasAirQualityMetric?: string[];
   hasCameraFeature?: string[];
   hasFeature?: string[];
   hasLightProperty?: string[];
   hasProperty?: string[];
+  hasSensorFeature?: string[];
   hasSensorProperty?: string[];
   hasSmartObjectType?: string[];
   modelKey?: string[];
@@ -71,7 +77,7 @@ export interface ProtectOptionMeta {
 // featureByModel:  Per device-model featureFlags that must be enabled for the category to be exposed on that model. For example { sensor: ["motion"] } gates the
 //                  category on a sensor's "motion" feature flag.
 // modelKey:        Device categories that the category applies to, or "all" for any device type.
-interface ProtectCategoryMeta {
+export interface ProtectCategoryMeta {
 
   featureByModel?: Record<string, string[]>;
   modelKey?: string[];
@@ -210,7 +216,7 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
     { default: false, description: "Add a switch accessory to control the status indicator light in HomeKit.", meta: { hasCameraFeature: ["hasLedStatus"], hasLightProperty: ["lightDeviceSettings"], hasSensorProperty: ["ledSettings"], modelKey: [ "camera", "light", "relay", "sensor" ] }, name: "StatusLed.Switch" },
     { default: true, description: "Enable the night vision indicator light for this device in HomeKit.", meta: { hasFeature: ["hasLedIr"], modelKey: ["camera"] }, name: "NightVision" },
     { default: false, description: "Add a dimmer accessory to control the night vision state in HomeKit.", meta: { hasFeature: ["hasLedIr"], modelKey: ["camera"] }, name: "NightVision.Dimmer" },
-    { default: true, description: "Enable the ambient light sensor for this device in HomeKit.", meta: { hasCameraFeature: ["hasLuxCheck"], hasSensorProperty: ["lightSettings"], modelKey: [ "camera", "sensor" ] }, name: "AmbientLightSensor" },
+    { default: true, description: "Enable the ambient light sensor for this device in HomeKit.", meta: { hasCameraFeature: ["hasLuxCheck"], hasSensorFeature: ["light"], modelKey: [ "camera", "sensor" ] }, name: "AmbientLightSensor" },
     { default: false, description: "Make this a standalone device in HomeKit that will need to be added to HomeKit through the Home app.", name: "Standalone" },
     { default: true, description: "Attempt to restart misbehaving devices. This is always done very conservatively and only after periods of extended device-specific issues.", meta: { modelKey: ["camera"] }, name: "SelfHealing" },
     { default: false, defaultValue: "", description: "Custom HomeKit name for this device and its parts. It always applies, so a rename in the Home app yields to it wherever HomeKit allows.", inputSize: 30, name: "Name", scopes: ["device"] },
@@ -291,8 +297,8 @@ export const featureOptions: Record<string, FeatureOptionEntry<ProtectOptionMeta
   // Sensor options.
   "Sensor": [
 
-    { default: false, description: "Add a contact sensor that opens when the sensor detects vaping.", name: "Vape" },
-    { default: false, description: "Expose the Protect leak sensor as a contact sensor instead of a leak sensor. This is useful for automation scenarios since HomeKit contact sensors offer more flexible automation options than leak sensors, which are primarily designed for alerts.", name: "MoistureSensor" }
+    { default: false, description: "Add a contact sensor that opens when the sensor detects vaping.", meta: { hasAirQualityMetric: ["vape"] }, name: "Vape" },
+    { default: false, description: "Expose the Protect leak sensor as a contact sensor instead of a leak sensor. This is useful for automation scenarios since HomeKit contact sensors offer more flexible automation options than leak sensors, which are primarily designed for alerts.", meta: { hasSensorFeature: ["waterLeak"] }, name: "MoistureSensor" }
   ],
 
   // UniFi Access options.
@@ -372,22 +378,25 @@ const capabilityMap: Record<string, string> = {
   "isPirMotionDetected": "Protect devices that have a motion sensor",
   "ledSettings": "Protect sensors that have a status indicator light",
   "licensePlate": "Protect devices that support license plate smart detection",
+  "light": "Protect sensors that have an ambient light sensor",
   "lightDeviceSettings": "Protect lights",
-  "lightSettings": "Protect sensors that have an ambient light sensor",
-  "supportUnlock": "Protect cameras paired with a UniFi Access reader that supports remote unlock"
+  "supportUnlock": "Protect cameras paired with a UniFi Access reader that supports remote unlock",
+  "vape": "Protect sensors that detect vaping",
+  "waterLeak": "Protect sensors that have a leak sensor"
 };
 
 // The capability keys an option can be gated on, in the ranks the option hook reads them. The property gate, which applies to every device model, reads ahead of
 // the per-family gates, so an option scoped across device models that also gates cameras on a camera feature names its cross-model scope rather than the narrower
 // camera phrase. The per-family gates share one rank because each gates a different device family, so an option carrying several of them names every family it
 // applies to.
-type ProtectScopeKey = "hasAccessFeature" | "hasCameraFeature" | "hasFeature" | "hasLightProperty" | "hasProperty" | "hasSensorProperty" | "hasSmartObjectType";
+type ProtectScopeKey = "hasAccessFeature" | "hasAirQualityMetric" | "hasCameraFeature" | "hasFeature" | "hasLightProperty" | "hasProperty" | "hasSensorFeature" |
+  "hasSensorProperty" | "hasSmartObjectType";
 
 const scopeRanks: readonly (readonly ProtectScopeKey[])[] = [
 
   ["hasFeature"],
   ["hasProperty"],
-  [ "hasCameraFeature", "hasLightProperty", "hasSensorProperty" ],
+  [ "hasAirQualityMetric", "hasCameraFeature", "hasLightProperty", "hasSensorFeature", "hasSensorProperty" ],
   ["hasSmartObjectType"],
   ["hasAccessFeature"]
 ];

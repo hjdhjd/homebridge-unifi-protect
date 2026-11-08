@@ -442,6 +442,33 @@ describe("the settings page scoping of the motion surface", () => {
   });
 });
 
+describe("the settings page scoping of the sensor surface", () => {
+
+  /* Every sensor record carries the light, leak, and air-quality settings blocks whatever its hardware, so a sensor option gates on what the sensor advertises: the
+   * light and water-leak hardware in its feature flags, and a vape reading the settings server names as live. Each entry's meta is held whole, so a gate a later edit
+   * adds or drops shows here rather than in the webUI alone.
+   */
+  test("the ambient light, leak, and vape options gate on the sensor's hardware rather than its settings blocks", () => {
+
+    assert.deepEqual(optionEntry("Device", "AmbientLightSensor")?.meta,
+      { hasCameraFeature: ["hasLuxCheck"], hasSensorFeature: ["light"], modelKey: [ "camera", "sensor" ] },
+      "the ambient light sensor shows for a camera with a light sensor and a sensor advertising light hardware");
+    assert.deepEqual(optionEntry("Sensor", "MoistureSensor")?.meta, { hasSensorFeature: ["waterLeak"] }, "the leak contact sensor shows for a sensor with leak hardware");
+    assert.deepEqual(optionEntry("Sensor", "Vape")?.meta, { hasAirQualityMetric: ["vape"] }, "the vape contact sensor shows for a sensor reporting vape readings");
+  });
+
+  // The generated documentation names the hardware each sensor option depends on.
+  test("the scope prose names the hardware the leak and vape options depend on", () => {
+
+    const leak = optionEntry("Sensor", "MoistureSensor");
+    const vape = optionEntry("Sensor", "Vape");
+
+    assert.ok(leak && vape, "the leak and vape options exist");
+    assert.equal(describeOptionScope(leak), " <BR>*Supported on Protect sensors that have a leak sensor.*", "the leak option names leak sensors");
+    assert.equal(describeOptionScope(vape), " <BR>*Supported on Protect sensors that detect vaping.*", "the vape option names vape-detecting sensors");
+  });
+});
+
 describe("the option reference's scope prose", () => {
 
   // An option gated per device family names each family through that family's own gate, so the published reference lists every kind of device the option reaches

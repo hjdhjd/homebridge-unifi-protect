@@ -10,6 +10,7 @@ import { addressListedElsewhere, addressListingForm } from "homebridge-plugin-ut
 import { createActionGuard, withDeadline } from "homebridge-plugin-utils/webUi-liveness.mjs";
 import { makeControllerActions, makeControllerLogin } from "./lib/webui/controller-actions.js";
 import { maskSecrets, mountSecretReveals } from "homebridge-plugin-utils/webUi-secret.mjs";
+import { validOption, validOptionCategory } from "./lib/webui/option-scope.js";
 import { FeatureOptions } from "homebridge-plugin-utils/featureOptions.js";
 import { PluginConfigSession } from "homebridge-plugin-utils/pluginConfigSession.mjs";
 import { createSaveFlow } from "homebridge-plugin-utils/webui/saveflow.js";
@@ -396,87 +397,6 @@ const landConfigInterpreter = (catalog) => {
   repaintDeviceLinks();
 
   return configInterpreter;
-};
-
-// Only show feature options that are valid for the capabilities of this device.
-const validOption = (device, option) => {
-
-  // Each device's capability metadata takes a different shape, so five independent meta-gates test for exclusion below, and any one hiding the option is
-  // enough: hasAccessFeature reads the Access device's feature flags, hasFeature reads the Protect device's feature flags, hasProperty checks whether the
-  // named property is merely present on the device, modelKey compares the device's own model against the option's supported models, and hasSmartObjectType
-  // compares the device's smart-detection capabilities against the option's supported smart-object types.
-  if(device && (device.modelKey !== "nvr") && (
-    (option.meta?.hasAccessFeature && (!device.accessDeviceMetadata?.featureFlags ||
-      !option.meta?.hasAccessFeature.some(x => device.accessDeviceMetadata.featureFlags[x]))) ||
-    (option.meta?.hasFeature && (!device.featureFlags || !option.meta?.hasFeature.some(x => device.featureFlags[x]))) ||
-    (option.meta?.hasProperty && !option.meta?.hasProperty.some(x => x in device)) ||
-    (option.meta?.modelKey && (option.meta?.modelKey !== "all") && !option.meta?.modelKey.includes(device.modelKey)) ||
-    (option.meta?.hasSmartObjectType && device.featureFlags?.smartDetectTypes &&
-      !option.meta?.hasSmartObjectType.some(x => device.featureFlags.smartDetectTypes.includes(x))))) {
-
-    return false;
-  }
-
-  // Test for device class-specific features and properties.
-  switch(device?.modelKey) {
-
-    case "camera":
-
-      if(option.meta?.hasCameraFeature && !option.meta?.hasCameraFeature.some(x => device.featureFlags[x])) {
-
-        return false;
-      }
-
-      break;
-
-    case "light":
-
-      if(option.meta?.hasLightProperty && !option.meta?.hasLightProperty.some(x => x in device)) {
-
-        return false;
-      }
-
-      break;
-
-    case "sensor":
-
-      if(option.meta?.hasSensorProperty && !option.meta?.hasSensorProperty.some(x => x in device)) {
-
-        return false;
-      }
-
-      break;
-
-    default:
-
-      break;
-  }
-
-  return true;
-};
-
-// Only show feature option categories that are valid for a particular device type.
-const validOptionCategory = (device, category) => {
-
-  // Always show all options at the global and controller level.
-  if(!device || (device?.modelKey === "nvr")) {
-
-    return true;
-  }
-
-  // Only show device categories we're explicitly interested in.
-  if(!category.meta?.modelKey?.some(model => [ "all", device.modelKey ].includes(model))) {
-
-    return false;
-  }
-
-  // Test for the feature availability on a specific device type.
-  if(category.meta?.featureByModel?.[device.modelKey]?.some(x => !device.featureFlags?.[x])) {
-
-    return false;
-  }
-
-  return true;
 };
 
 /* Build one row of the device-stats grid. We construct DOM nodes directly via createElement / textContent rather than concatenating into innerHTML so any HTML
