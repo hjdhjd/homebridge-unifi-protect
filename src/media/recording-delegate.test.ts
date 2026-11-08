@@ -21,7 +21,7 @@ import type { CameraRecordingConfiguration, RecordingPacket } from "homebridge";
 import { Characteristic, Service, TestStreamingDelegate } from "../testing.helpers.ts";
 import { PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { after, describe, test } from "node:test";
-import { makeChannelProfile, makeTestCameraHost } from "./testing.helpers.ts";
+import { makeChannelProfile, makeControllableLivestreamDouble, makeTestCameraHost } from "./testing.helpers.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import { ProtectRecordingDelegate } from "./record.ts";
 import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
@@ -106,6 +106,54 @@ describe("recording delegate decline-path behavior", () => {
     assert.equal(first[0]?.isLast, true);
     assert.equal(second.length, 1);
     assert.equal(second[0]?.isLast, true);
+  });
+
+  /* A recording request that arrives while the buffer's start is still establishing declines at once rather than waiting for that start.
+   *
+   * The livestream holds its establishment open, so the reconcile pass that arming recording began stays in flight. The request finds the buffer not running, kicks the
+   * supervisor once and yields its single end-of-stream marker while the establishment is still held...waiting on the pass instead would hold HomeKit's recording stream
+   * open until the livestream established or gave up. Releasing the establishment afterwards shows the start the request left running still commits, so the next event
+   * finds the buffer up.
+   */
+  test("a request while the buffer is still establishing declines at once and leaves the start running", async (t) => {
+
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    const livestream = makeControllableLivestreamDouble({ deferEstablishment: true });
+
+    host.stream = new TestStreamingDelegate();
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host);
+    host.livestreamSubscriptions = [livestream];
+
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+    const delegate = new ProtectRecordingDelegate(host, supervisor);
+
+    delegate.updateRecordingConfiguration(makeRecordingConfig());
+    delegate.updateRecordingActive(true);
+
+    await settle();
+
+    assert.equal(supervisor.buffer.isStarted, false, "the buffer's start is held at its establishment");
+
+    const reconcileSpy = t.mock.method(supervisor, "reconcile");
+    const drained: { packets?: RecordingPacket[] } = {};
+
+    void drainRecordingStream(delegate, 1, new AbortController().signal).then((packets): void => { drained.packets = packets; });
+
+    await settle();
+
+    assert.ok(drained.packets, "the request completed while the establishment was still held");
+    assert.equal(drained.packets.length, 1);
+    assert.equal(drained.packets[0]?.isLast, true);
+    assert.equal(reconcileSpy.mock.callCount(), 1, "the request kicked the supervisor once");
+
+    livestream.releaseEstablishment();
+
+    await settle();
+
+    assert.equal(supervisor.buffer.isStarted, true, "the start the request left running committed");
   });
 });
 

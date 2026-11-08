@@ -168,11 +168,16 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
 
     let lastYieldTime = this.session.pacingStartTime;
 
-    // If we are recording HKSV events but the timeshift buffer is not currently running, reconcile now. This covers cases where an earlier configureTimeshifting
-    // attempt failed (offline camera, establishment timeout) and no subsequent lifecycle event re-triggered the reconciler.
+    /* If we are recording HKSV events but the timeshift buffer is not currently running, ask the supervisor to reconcile. This covers cases where an earlier start
+     * failed (offline camera, establishment timeout) and no subsequent lifecycle event re-triggered the reconciler, so the next event finds the buffer running.
+     *
+     * We never wait for the reconcile here. A buffer that starts now holds a fraction of a second of media, far short of the depth the transmit gate below requires, so
+     * this event declines whether or not the start succeeds...and waiting would hold HomeKit's recording stream open past its close for as long as the livestream takes
+     * to establish or give up. The reconcile's promise never rejects, so discarding it cannot float a rejection.
+     */
     if(!this.accessory.context.hksvRecordingDisabled && this.isRecording && !this.timeshift.isStarted) {
 
-      await this.configureTimeshifting();
+      void this.configureTimeshifting();
     }
 
     // If HKSV is disabled, the timeshift buffer is restarting, the camera is offline, the buffer isn't full, or transmission setup fails, we're done. The timeshift.time
@@ -374,7 +379,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
     this.stopTransmitting(reason);
   }
 
-  // Reconcile the timeshift buffer against current demand - the delegate-facing join for the recording-request lazy backstop and the test suites. A direct
+  // Reconcile the timeshift buffer against current demand - the delegate-facing entry for the recording request's reconcile kick and the test suites. A direct
   // synchronous return of the supervisor's promise: no async wrapper, so a caller joining here holds the very promise every other caller of the pass in flight
   // holds, with no added microtask boundary.
   public configureTimeshifting(): Promise<void> {

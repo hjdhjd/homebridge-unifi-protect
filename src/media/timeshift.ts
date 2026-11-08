@@ -421,8 +421,9 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   public transmitStart(startIndex?: number): Nullable<number> {
 
     // Precondition: the timeshift buffer must already be started and have received its initialization segment before transmission can begin. The HKSV recording
-    // delegate reconciles via configureTimeshifting before invoking transmitStart, so reaching this method without the timeshift running indicates a contract
-    // violation or a livestream that failed to establish. Surfacing this as an error preserves the single-entry rule the reconciler relies on.
+    // delegate invokes transmitStart only once the buffer holds a committed channel profile and a full window of media, so reaching this method without the timeshift
+    // running indicates a contract violation or a livestream that died after that check. Surfacing this as an error preserves the single-entry rule the reconciler
+    // relies on.
     if(!this.subscription?.initSegment) {
 
       this.log.error("HKSV event recording unavailable: the livestream connection is not ready. This can occur when the Protect controller or camera is " +
