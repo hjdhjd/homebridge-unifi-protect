@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 8.2.1 (2026-11-08)
+  * New feature: TLS certificate verification for each controller. If you've installed a trusted certificate on your console, turn on certificate verification in that controller's connection settings in the webUI, and HBUP will require a certificate that verifies on every connection it makes to the controller, livestreams and two-way audio included. If one doesn't verify, the log tells you why and how to fix it. Verification is off by default, which is what a console using the self-signed certificate it ships with needs, and streams read directly over RTSP aren't verified. Livestreams and two-way audio now also connect through your console at the address you've configured, port included, so they work wherever that address does.
+  * Improvement: a live view whose livestream doesn't start in time now ends promptly and cleanly, rather than leaving HomeKit waiting until it gives up.
+  * Improvement: the controller CPU temperature sensor now reports whole degrees, so HomeKit isn't updated several times a minute over a tenth of a degree. MQTT still carries the full-precision reading.
+  * Fix: a HomeKit Secure Video recording request that arrives while a camera's timeshift buffer is still starting is now declined right away, rather than held open until the livestream finishes starting...the buffer carries on starting for the events that follow.
+  * Fix: the settings webUI offers the ambient light, leak sensor, and vape detection options only on sensors that have that hardware.
+  * Housekeeping.
+
 ## 8.2.0 (2026-11-06)
   * **Note: HBUP now requires UniFi Protect v7 or later as of this release. Earlier versions of Protect are no longer supported.**
   * Behavior change: MQTT now follows what you've enabled. A feature you've turned off in HBUP no longer publishes, answers, or accepts commands over MQTT...if an automation relies on a topic for something you've hidden from HomeKit, turn that feature back on. MQTT settings follow one rule now, too: a broker or topic feature option you've turned off, or left without a value, turns MQTT off for that controller even if the older per-controller fields still have values, and an empty topic field uses the default `unifi/protect` prefix instead of turning MQTT off.
