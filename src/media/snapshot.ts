@@ -2,7 +2,7 @@
  *
  * snapshot.ts: UniFi Protect HomeKit snapshot class.
  */
-import type { Clock, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import type { Clock, FfmpegOptions, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { FfmpegExec, composeSignals, runWithAbort } from "homebridge-plugin-utils";
 import { PROTECT_MAX_SOURCE_HEIGHT, PROTECT_MAX_SOURCE_WIDTH } from "../settings.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
@@ -354,33 +354,8 @@ export class ProtectSnapshot {
       "-q:v", "2"
     ];
 
-    // Build the video filter chain. We assemble it as an array of individual filters and join them with commas. When cropping is enabled, we apply it before scaling so
-    // the crop coordinates (which use relative iw/ih multipliers) operate on the source resolution, and the subsequent scale+pad fits the cropped region into HomeKit's
-    // requested dimensions.
-    const filters: string[] = [];
-
-    // Apply the crop filter if configured. The crop coordinates use relative iw/ih multipliers, making them resolution-independent and safe to apply at any point in the
-    // filter chain. We place it before scale so the aspect ratio calculations in scale+pad reflect the cropped region rather than the full frame.
-    if(this.protectCamera.hints.crop) {
-
-      filters.push(this.protectCamera.stream.ffmpegOptions.cropFilter);
-    }
-
-    // Scale to the requested dimensions, preserving the aspect ratio and letterboxing where needed.
-    if(request) {
-
-      filters.push(
-
-        [ "scale=" + request.width.toString(), request.height.toString(), "force_original_aspect_ratio=decrease" ].join(":"),
-        [ "pad=" + request.width.toString(), request.height.toString(), "(ow-iw)/2", "(oh-ih)/2" ].join(":")
-      );
-    }
-
-    // Apply the filter chain if we have any filters.
-    if(filters.length) {
-
-      commandLineOptions.push("-filter:v", filters.join(","));
-    }
+    // Crop the frame as configured and fit it inside the requested size, each when it applies. snapshotFilterArgs states why the crop leads and the fit rule.
+    commandLineOptions.push(...snapshotFilterArgs({ cropping: this.protectCamera.hints.crop, ffmpegOptions: this.protectCamera.stream.ffmpegOptions, request }));
 
     // -f image2pipe        Specifies the output format to use a pipe, since we are outputting to stdout and want to consume the data directly.
     // -c:v mjpeg           Specify the MJPEG encoder to get a JPEG file.
@@ -529,6 +504,28 @@ interface AttemptAnswer {
 export function snapshotCutoff({ cropping, startedAt }: { cropping: boolean; startedAt: number }): number {
 
   return startedAt + PROTECT_SNAPSHOT_TIMEOUT - PROTECT_SNAPSHOT_REAPING_RESERVE - (cropping ? PROTECT_SNAPSHOT_CROP_ALLOWANCE : 0);
+}
+
+/**
+ * The video filter arguments an FFmpeg snapshot runs with: the configured crop when cropping is on, then the fit to the requested size when the request names one,
+ * joined into one -filter:v chain, or nothing when neither applies. The crop leads because its coordinates are relative to the frame's own width and height, so it
+ * cuts the configured region from the full source frame, and the fit after it sizes that region by its own shape. The fit is the rule a transcoded live view or
+ * recording scales by: the image keeps its aspect ratio, fits inside the requested width and height, and is never enlarged past its source, so a request of another
+ * shape is answered with an image smaller than the request on one side. Pure over its options, so the chain a snapshot spawns with is testable without spawning one.
+ *
+ * @param options               - Filter inputs.
+ * @param options.cropping      - Whether the camera's snapshots are cropped.
+ * @param options.ffmpegOptions - The camera's FFmpeg options, which build the crop and fit filters.
+ * @param options.request       - The size HomeKit requested, when it named one.
+ *
+ * @returns The -filter:v pair, or an empty list when no filter applies.
+ */
+export function snapshotFilterArgs({ cropping, ffmpegOptions, request }: { cropping: boolean; ffmpegOptions: Pick<FfmpegOptions, "cropFilter" | "fitFilter">;
+  request?: SnapshotRequest; }): string[] {
+
+  const filters = [ ...(cropping ? [ffmpegOptions.cropFilter] : []), ...(request ? [ffmpegOptions.fitFilter(request)] : []) ];
+
+  return filters.length ? [ "-filter:v", filters.join(",") ] : [];
 }
 
 /**

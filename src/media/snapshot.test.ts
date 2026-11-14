@@ -1,24 +1,25 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * snapshot.test.ts: Behavior coverage of ProtectSnapshot's multi-source acquisition: the timeshift-freshness branch (finding #5), the package-camera ordering, the cache
- * window, and the hedge that runs a slow RTSP attempt beside a delayed controller-API attempt.
+ * window, the hedge that runs a slow RTSP attempt beside a delayed controller-API attempt, and the video filter chain an FFmpeg snapshot runs.
  *
  * The acquisition chain tries the timeshift buffer first, then RTSP with the controller command hedged beside it once RTSP runs long, then the cache. The hedge's
  * timing and abort rules are driven directly through the exported hedgeSnapshotAttempts on the host's TestClock, with each attempt a controllable double, because
- * a real RTSP attempt spawns FFmpeg. The rest of this suite drives the whole chain over doubles and asserts
+ * a real RTSP attempt spawns FFmpeg. The video filter chain is read the same way, through the exported snapshotFilterArgs over a double of the camera's FFmpeg
+ * options, because only a spawned FFmpeg runs it. The rest of this suite drives the whole acquisition chain over doubles and asserts
  * SOURCE SELECTION - which source the chain uses - never a real FFmpeg spawn: the timeshift buffer's snapshotSource is steered to "stale" or "empty" so the buffer
  * declines before the FFmpeg pipeline, and the RTSP and controller sources are wired to decline too (no channel to select, the controller command rejects), so the whole
  * chain resolves without producing (or caching) any image. The assertions that matter are that a STALE buffer declines and notes it at debug (so a stalled buffer never
  * serves, and then caches, a frozen image), that an EMPTY buffer declines SILENTLY (no staleness to claim), and that in both cases the chain moves past the buffer to the
  * next source. The freshness DECISION itself - whether the buffer reads fresh, stale, or empty - is covered directly over ProtectTimeshiftBuffer in timeshift.test.ts.
  */
+import type { FfmpegOptions, Nullable } from "homebridge-plugin-utils";
 import type { HedgedSnapshot, SnapshotAttempt } from "./snapshot.ts";
-import { ProtectSnapshot, hedgeSnapshotAttempts, snapshotCutoff } from "./snapshot.ts";
+import { ProtectSnapshot, hedgeSnapshotAttempts, snapshotCutoff, snapshotFilterArgs } from "./snapshot.ts";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestStreamingDelegate, makeTimeshiftSupervisorDouble } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
 import { logCount, settle, settleUntil } from "homebridge-plugin-utils/testing";
-import type { Nullable } from "homebridge-plugin-utils";
 import type { SnapshotSource } from "./timeshift.ts";
 import type { StreamingDelegate } from "./stream-delegate.ts";
 import type { TestCameraHost } from "./testing.helpers.ts";
@@ -602,5 +603,39 @@ describe("hedgeSnapshotAttempts - a slow RTSP attempt hedged by a delayed contro
 
     assert.equal(await resolved(run), null, "the hedge answers nothing once the acquisition has ended");
     assert.deepEqual(run.atResolve, { apiAborted: true, apiSettled: true, rtspAborted: true, rtspSettled: true }, "every attempt ended with the acquisition");
+  });
+});
+
+/* The video filter chain an FFmpeg snapshot runs, read over a double whose crop is a sentinel and whose fit writes the width and height it was handed, so each row
+ * reads the chain's order and the size the fit received. The fit's own filter text is HBPU's, and HBPU's suite holds it.
+ */
+describe("snapshotFilterArgs - the configured crop, then the fit inside the requested size, as one -filter:v", () => {
+
+  const ffmpegOptions: Pick<FfmpegOptions, "cropFilter" | "fitFilter"> = {
+
+    cropFilter: "crop=test",
+    fitFilter: ({ height, width }): string => "fit=" + width.toString() + "x" + height.toString()
+  };
+
+  const request = { height: 1280, width: 960 };
+
+  test("cropping on with a request crops first and then fits the cropped frame inside the request", () => {
+
+    assert.deepEqual(snapshotFilterArgs({ cropping: true, ffmpegOptions, request }), [ "-filter:v", "crop=test,fit=960x1280" ], "the crop leads and the fit follows it");
+  });
+
+  test("cropping off with a request fits the frame inside the request alone", () => {
+
+    assert.deepEqual(snapshotFilterArgs({ cropping: false, ffmpegOptions, request }), [ "-filter:v", "fit=960x1280" ], "the fit alone, at the requested size");
+  });
+
+  test("cropping on without a request crops alone", () => {
+
+    assert.deepEqual(snapshotFilterArgs({ cropping: true, ffmpegOptions }), [ "-filter:v", "crop=test" ], "the crop alone, with no fit");
+  });
+
+  test("cropping off without a request runs no filter", () => {
+
+    assert.deepEqual(snapshotFilterArgs({ cropping: false, ffmpegOptions }), [], "no filter arguments at all");
   });
 });

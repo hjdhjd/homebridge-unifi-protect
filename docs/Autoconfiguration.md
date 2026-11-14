@@ -58,6 +58,9 @@ That list holds every resolution the camera itself streams, the standard sizes i
 portrait doorbell is offered portrait sizes), and the landscape resolutions HomeKit requires of a camera of its aspect ratio (the 16:9 ones for a square camera or
 one of no standard shape). HBUP builds the list when it starts up, so a camera whose streams change in Protect keeps its list until you restart Homebridge.
 
+Whenever HBUP resizes a live view, a recording, or a snapshot, the picture keeps its own shape: it fits inside the size the Apple device asked for, with no black
+bars, and is never enlarged past the stream it comes from. A portrait doorbell asked for a landscape size still sends a portrait picture.
+
 #### How HBUP Selects Stream Quality
 
 Protect offers up to three stream qualities per camera - High, Medium, and Low. When HBUP transcodes, here's how it picks which one to draw from.
