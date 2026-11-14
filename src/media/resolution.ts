@@ -12,7 +12,8 @@
  * Every comparison of sizes reads pixel area: which catalog sizes a camera advertises, the channel each size maps to, the sort, the pixel cap, and the selector. A
  * portrait channel and a landscape size of the same area therefore compare as equals, which is what lets a portrait camera serve the landscape sizes HomeKit requires
  * of every camera from the channel whose pixel count matches them. Width and height are read only by the selector's exact-dimensions match, which a request for a
- * channel's own size takes ahead of any area comparison, by the sort's tie-breaks between sizes of equal area, and by the advertised list's set, which is keyed by them.
+ * channel's own size takes ahead of any area comparison, by the sort's tie-breaks between sizes of equal area, by the advertised list's set, which is keyed by them,
+ * and by the labels that gather a list's frame rates under each size.
  *
  * The selection model is a discriminated union, SelectRequest: a "name" request takes the named channel (the user's explicit streaming/recording-quality preference),
  * and a "size" request takes a channel for a target resolution under a posture, ChannelBias, that names the need it serves. Bias lower takes the highest channel at
@@ -106,6 +107,11 @@ export const STANDARD_SIZES: readonly StandardSize[] = [
 // configuration as HAP prints it, each a size HomeKit requires of a camera.
 const REQUIRED_SIZES = STANDARD_SIZES.filter((row) => [ "16:9", "4:3" ].includes(row.family) && row.sources.includes("stream-configuration"));
 
+// The frame rates every advertised size is offered at, high to low. HomeKit's recording configuration names 15, 24 and 30 fps and asks a camera to advertise every
+// rate it supports at each size, and the client picks the rate it wants, so a size is offered at each of them whatever its channel's own rate: a transcode and a
+// recording encode at the rate HomeKit selects, while copy mode passes the channel's own rate through.
+const ADVERTISED_FRAME_RATES: readonly number[] = [ 30, 24, 15 ];
+
 // How far a frame's long side over its short side may sit from a standard ratio, as a fraction of that ratio, and still belong to its family. A near-3:4 top such as
 // 3024x4096 sits 1.6 percent off and reads 3:4, a 32:9 panorama such as 7680x2160 reads "other", and the value stays far inside the gap between neighboring ratios, so
 // no frame sits within it of two of them.
@@ -177,27 +183,10 @@ export function standardSizesFor(family: AspectFamily): readonly StandardSize[] 
   return STANDARD_SIZES.filter((row) => (row.family === family));
 }
 
-// The frame rate an entry advertises for a channel's own rate. HomeKit accepts 15, 24 and 30 fps and a Protect channel can run at another rate, so a rate above 24
-// advertises 30, one above 15 advertises 24, and any other advertises 15, which leaves each accepted rate as it is. The advertised rate does not choose the stream that
-// records, but it decides whether HomeKit attempts the camera for HomeKit Secure Video at all.
-function advertisedFrameRate(fps: number): number {
-
-  if(fps > 24) {
-
-    return 30;
-  }
-
-  if(fps > 15) {
-
-    return 24;
-  }
-
-  return 15;
-}
-
 // Comparator that sorts entries from high to low: by pixel area, then by width, height and frame rate, so a landscape size sorts ahead of the portrait size of the
-// same area. A built list needs no channel key beside these, because every size maps to the highest channel at or under its own area, or to the lowest channel when
-// none is, so a list sorted by its sizes already runs its channels high to low. Pure - no `this`.
+// same area and a size's entries run from its highest rate to its lowest. A size holds one entry for each channel that serves it at each rate, and a built list needs
+// no channel key beside these, because every size maps to the highest channel at or under its own area, or to the lowest channel when none is, so a list sorted by its
+// sizes already runs its channels high to low. Pure - no `this`.
 export function sortByResolutions(a: ChannelProfile, b: ChannelProfile): number {
 
   const [ aWidth, aHeight, aFps ] = a.resolution;
@@ -206,10 +195,25 @@ export function sortByResolutions(a: ChannelProfile, b: ChannelProfile): number 
   return (pixelArea(bWidth, bHeight) - pixelArea(aWidth, aHeight)) || (bWidth - aWidth) || (bHeight - aHeight) || (bFps - aFps);
 }
 
+// Format a frame's size for display, as "WIDTHxHEIGHT", the one spelling the resolution labels and the advertised list's set key share.
+function formatSize(width: number, height: number): string {
+
+  return width.toString() + "x" + height.toString();
+}
+
 // Format a resolution tuple for display, as "WIDTHxHEIGHT@FPSfps".
 export function formatResolution(resolution: Resolution): string {
 
-  return resolution[0].toString() + "x" + resolution[1].toString() + "@" + resolution[2].toString() + "fps";
+  return formatSize(resolution[0], resolution[1]) + "@" + resolution[2].toString() + "fps";
+}
+
+// Format a list of resolutions for display with each size labeled once, its rates joined in the order the list holds them, as in "1920x1080@30/24/15fps". The sizes
+// keep the order in which each first appears.
+export function formatSizeRates(resolutions: readonly Resolution[]): string[] {
+
+  const sizes = Map.groupBy(resolutions, (resolution) => formatSize(resolution[0], resolution[1]));
+
+  return [...sizes].map(([ size, group ]) => size + "@" + group.map((resolution) => resolution[2].toString()).join("/") + "fps");
 }
 
 // Compose a channel's RTSP URL from host, port, and alias. Pure string composition - the host and port are supplied by the caller (the device owns the host chain), and
@@ -391,10 +395,11 @@ export function selectSubstrateChannelFrom(entries: readonly ChannelProfile[], i
 
 /**
  * Build the advertised list HomeKit receives, for its stream configuration and its recording configuration alike, from a camera's native channel entries. The list holds
- * every native channel, each its own entry so every channel stays reachable by name, channels of equal size included; the catalog rows of the native top's aspect
- * family, whatever source names them, at or under the native top's pixel count; and every size HomeKit requires of a camera, whatever its shape. Each size that is not
- * a native one maps to the highest channel at or under its own area, the bias-lower selection, and falls back to the lowest channel when none is. Every entry advertises
- * its channel's frame rate as HomeKit accepts it, or the fixed rate the caller names.
+ * every native channel's size, each channel with entries of its own so every channel stays reachable by name, channels of equal size included; the catalog rows of the
+ * native top's aspect family, whatever source names them, at or under the native top's pixel count; and every size HomeKit requires of a camera, whatever its shape.
+ * Each size that is not a native one maps to the highest channel at or under its own area, the bias-lower selection, and falls back to the lowest channel when none is.
+ * Every size is offered at each rate in ADVERTISED_FRAME_RATES whatever the rate of the channel that serves it, or at the one fixed rate the caller names, so a size
+ * holds one entry for each channel that serves it at each rate.
  *
  * The list is a set keyed by width and height: a size joins only when no entry holds it, the set is computed once, and the list is sorted once at the end. The build is
  * preference-free: the direct-RTSP quality preference (the Video.Rtsp.Only setting) is a request-time concern the selectChannel wrapper applies when a stream starts,
@@ -402,7 +407,7 @@ export function selectSubstrateChannelFrom(entries: readonly ChannelProfile[], i
  * their resolution tuples are never written.
  *
  * @param nativeEntries    - The camera's native channel entries, in any order.
- * @param options.fixedFps - The frame rate every entry advertises in place of its channel's own, when given.
+ * @param options.fixedFps - The one frame rate every size is offered at, when given, rather than each rate in ADVERTISED_FRAME_RATES.
  *
  * @returns The advertised entries, sorted high to low, or an empty list when there is no native entry to build from.
  */
@@ -420,24 +425,24 @@ export function buildAdvertisedProfiles(nativeEntries: readonly ChannelProfile[]
 
   const [ topWidth, topHeight ] = top.resolution;
   const topArea = pixelArea(topWidth, topHeight);
-  const sizeKey = (width: number, height: number): string => width.toString() + "x" + height.toString();
+  const frameRates = (fixedFps === undefined) ? ADVERTISED_FRAME_RATES : [fixedFps];
 
-  // An entry advertising a size from a native: the native's channel, name, URL and lens, with a resolution tuple of its own.
-  const entryFor = (native: ChannelProfile, width: number, height: number): ChannelProfile => {
+  // The entries advertising a size from a native, one per frame rate: the native's channel, name, URL and lens, each with a resolution tuple of its own.
+  const entriesFor = (native: ChannelProfile, width: number, height: number): ChannelProfile[] => {
 
-    return { ...native, resolution: [ width, height, fixedFps ?? advertisedFrameRate(native.channel.fps) ] };
+    return frameRates.map((fps) => ({ ...native, resolution: [ width, height, fps ] }));
   };
 
-  // Every native channel, keyed by its size. Natives of equal size share a key and each keeps its own entry.
-  const advertised = Map.groupBy(natives.map((native) => entryFor(native, native.resolution[0], native.resolution[1])),
-    (entry) => sizeKey(entry.resolution[0], entry.resolution[1]));
+  // Every native channel, keyed by its size. Natives of equal size share a key and each keeps its own entries.
+  const advertised = Map.groupBy(natives.flatMap((native) => entriesFor(native, native.resolution[0], native.resolution[1])),
+    (entry) => formatSize(entry.resolution[0], entry.resolution[1]));
 
   // The family's catalog rows within the native top's pixel count, then every size HomeKit requires of a camera.
   const candidates = [ ...standardSizesFor(classifyAspect(topWidth, topHeight)).filter((row) => (pixelArea(row.width, row.height) <= topArea)), ...REQUIRED_SIZES ];
 
   for(const { height, width } of candidates) {
 
-    const key = sizeKey(width, height);
+    const key = formatSize(width, height);
 
     // We already advertise this size.
     if(advertised.has(key)) {
@@ -454,7 +459,7 @@ export function buildAdvertisedProfiles(nativeEntries: readonly ChannelProfile[]
       continue;
     }
 
-    advertised.set(key, [entryFor(native, width, height)]);
+    advertised.set(key, entriesFor(native, width, height));
   }
 
   return [...advertised.values()].flat().toSorted(sortByResolutions);

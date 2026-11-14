@@ -4,9 +4,10 @@
  * durable golden-master for the resolution-selection surface.
  *
  * The corpus checks in the typed channel sets of real shipping Protect models, landscape and portrait, with a doorbell's package channel, beside a
- * deep-low-resolution witness whose native top is 640x480. For each it checks in the EXACT advertised list the production buildAdvertisedProfiles must produce,
- * projected to a stable {channelId, lens, name, resolution, url} shape, and the package camera's list beside them. Every expected list is traced by hand from its
- * channel set under the advertised-list rules in resolution.ts, and the golden-master test asserts the production output still equals it.
+ * deep-low-resolution witness whose native top is 640x480. For each it checks in the advertised list the production buildAdvertisedProfiles must produce, written
+ * once per size as a {channelId, lens, name, size, url} row that atEveryRate expands, from a rate list of its own, into the stable {channelId, lens, name,
+ * resolution, url} entry the list holds at each frame rate, and the package camera's list beside them. Every row is traced by hand from its channel set under the
+ * advertised-list rules in resolution.ts, and the golden-master test asserts the production output still equals the expanded list.
  *
  * When a later change intentionally alters that behavior, the diff lands HERE as a reviewed change to a checked-in value - the
  * golden-master flags exactly the rows that move, and nothing else.
@@ -29,6 +30,13 @@ export interface EntryProjection {
   name: string;
   resolution: Resolution;
   url: string;
+}
+
+// One row of a golden-master list as the fixtures write it: an entry's projection with the size it advertises in place of its resolution tuple, which atEveryRate
+// completes with each frame rate.
+interface SizeProjection extends Omit<EntryProjection, "resolution"> {
+
+  size: [ number, number ];
 }
 
 // A named camera fixture: the model label, its channels, and the expected advertised list (the golden-master).
@@ -171,6 +179,16 @@ function fixtureUrl(id: number): string {
   return "rtsps://" + FIXTURE_HOST + ":" + FIXTURE_RTSPS_PORT.toString() + "/alias" + id.toString() + "?enableSrtp";
 }
 
+// The frame rates the advertised list offers every size at, high to low. They are written out here rather than read from resolution.ts, so a rate the builder drops,
+// adds or reorders reddens every golden master.
+const FIXTURE_FRAME_RATES = [ 30, 24, 15 ];
+
+// Expand rows written once per size into the entries the advertised list holds: each row at every frame rate in turn.
+function atEveryRate(rows: SizeProjection[]): EntryProjection[] {
+
+  return rows.flatMap(({ size, ...row }) => FIXTURE_FRAME_RATES.map((fps): EntryProjection => ({ ...row, resolution: [ size[0], size[1], fps ] })));
+}
+
 // The parent-camera golden-master fixtures. Each expected list is the production advertised list (preference-free - the streaming-quality preference is a request-time
 // concern, not a list-construction input), projected to the comparison shape. The names carry the SELECTED channel's native dimensions (the synthetic entries inherit
 // the matched channel's name), which is the production advertised-list behavior these fixtures lock in.
@@ -183,25 +201,25 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
     // The UA G2 PRO's channels: a portrait 3:4 camera with a 30fps High and Medium and a 15fps Low. Its 3:4 rows within its native area join the sizes HomeKit
     // requires. 1920x1080 maps to High, 1280x960 to Medium, whose 960x1280 holds the same area, and 1280x720, 1024x768 and every smaller size to the 15fps Low, the
     // highest channel at or under them, the sizes below Low reaching it as the lowest channel.
-    expected: [
+    expected: atEveryRate([
 
-      { channelId: 0, lens: undefined, name: "1200x1600@30fps (High)", resolution: [ 1920, 1080, 30 ], url: fixtureUrl(0) },
-      { channelId: 0, lens: undefined, name: "1200x1600@30fps (High)", resolution: [ 1200, 1600, 30 ], url: fixtureUrl(0) },
-      { channelId: 1, lens: undefined, name: "960x1280@30fps (Medium)", resolution: [ 1280, 960, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "960x1280@30fps (Medium)", resolution: [ 960, 1280, 30 ], url: fixtureUrl(1) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 1280, 720, 15 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 1024, 768, 15 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 768, 1024, 15 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 640, 480, 15 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 480, 640, 15 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 640, 360, 15 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 480, 360, 15 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 360, 480, 15 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 480, 270, 15 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 320, 240, 15 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 240, 320, 15 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 320, 180, 15 ], url: fixtureUrl(2) }
-    ],
+      { channelId: 0, lens: undefined, name: "1200x1600@30fps (High)", size: [ 1920, 1080 ], url: fixtureUrl(0) },
+      { channelId: 0, lens: undefined, name: "1200x1600@30fps (High)", size: [ 1200, 1600 ], url: fixtureUrl(0) },
+      { channelId: 1, lens: undefined, name: "960x1280@30fps (Medium)", size: [ 1280, 960 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "960x1280@30fps (Medium)", size: [ 960, 1280 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", size: [ 1280, 720 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", size: [ 1024, 768 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", size: [ 768, 1024 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", size: [ 640, 480 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", size: [ 480, 640 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", size: [ 640, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", size: [ 480, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", size: [ 360, 480 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", size: [ 480, 270 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", size: [ 320, 240 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", size: [ 240, 320 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", size: [ 320, 180 ], url: fixtureUrl(2) }
+    ]),
     model: "G2 Pro"
   },
   {
@@ -209,114 +227,114 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
     channels: AI_PRO_CHANNELS,
 
     // AI Pro is a 16:9 4K camera with a 1280x720 middle and a 640x360 low. Its 16:9 rows within its native area, 2560x1440 among them, join the sizes HomeKit
-    // requires: 2560x1440 down to 1280x720 map to Medium, and 1024x768 and every smaller size map to Low. Every channel runs at 30fps, so no frame rate moves.
-    expected: [
+    // requires: 2560x1440 down to 1280x720 map to Medium, and 1024x768 and every smaller size map to Low.
+    expected: atEveryRate([
 
-      { channelId: 0, lens: undefined, name: "3840x2160@30fps (High)", resolution: [ 3840, 2160, 30 ], url: fixtureUrl(0) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 2560, 1440, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1920, 1080, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 960, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 720, 30 ], url: fixtureUrl(1) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 1024, 768, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 480, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 360, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 360, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 270, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 240, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 180, 30 ], url: fixtureUrl(2) }
-    ],
+      { channelId: 0, lens: undefined, name: "3840x2160@30fps (High)", size: [ 3840, 2160 ], url: fixtureUrl(0) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 2560, 1440 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 1920, 1080 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 1280, 960 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 1280, 720 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 1024, 768 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 640, 480 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 640, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 480, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 480, 270 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 320, 240 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 320, 180 ], url: fixtureUrl(2) }
+    ]),
     model: "AI Pro"
   },
   {
 
     channels: G5_FLEX_CHANNELS,
-    expected: [
+    expected: atEveryRate([
 
-      { channelId: 0, lens: undefined, name: "2688x1512@30fps (High)", resolution: [ 2688, 1512, 30 ], url: fixtureUrl(0) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 2560, 1440, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1920, 1080, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 960, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 720, 30 ], url: fixtureUrl(1) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 1024, 768, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 480, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 360, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 360, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 270, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 240, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 180, 30 ], url: fixtureUrl(2) }
-    ],
+      { channelId: 0, lens: undefined, name: "2688x1512@30fps (High)", size: [ 2688, 1512 ], url: fixtureUrl(0) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 2560, 1440 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 1920, 1080 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 1280, 960 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 1280, 720 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 1024, 768 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 640, 480 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 640, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 480, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 480, 270 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 320, 240 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 320, 180 ], url: fixtureUrl(2) }
+    ]),
     model: "G5 Flex"
   },
   {
 
     channels: G5_PTZ_CHANNELS,
-    expected: [
+    expected: atEveryRate([
 
-      { channelId: 0, lens: undefined, name: "2688x1512@30fps (High)", resolution: [ 2688, 1512, 30 ], url: fixtureUrl(0) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 2560, 1440, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1920, 1080, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 960, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 720, 30 ], url: fixtureUrl(1) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 1024, 768, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 480, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 360, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 360, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 270, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 240, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 180, 30 ], url: fixtureUrl(2) }
-    ],
+      { channelId: 0, lens: undefined, name: "2688x1512@30fps (High)", size: [ 2688, 1512 ], url: fixtureUrl(0) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 2560, 1440 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 1920, 1080 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 1280, 960 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 1280, 720 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 1024, 768 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 640, 480 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 640, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 480, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 480, 270 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 320, 240 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 320, 180 ], url: fixtureUrl(2) }
+    ]),
     model: "G5 PTZ"
   },
   {
 
     channels: G6_INSTANT_CHANNELS,
-    expected: [
+    expected: atEveryRate([
 
-      { channelId: 0, lens: undefined, name: "3840x2160@30fps (High)", resolution: [ 3840, 2160, 30 ], url: fixtureUrl(0) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 2560, 1440, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1920, 1080, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 960, 30 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 720, 30 ], url: fixtureUrl(1) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 1024, 768, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 480, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 360, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 360, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 270, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 240, 30 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 180, 30 ], url: fixtureUrl(2) }
-    ],
+      { channelId: 0, lens: undefined, name: "3840x2160@30fps (High)", size: [ 3840, 2160 ], url: fixtureUrl(0) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 2560, 1440 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 1920, 1080 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 1280, 960 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", size: [ 1280, 720 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 1024, 768 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 640, 480 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 640, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 480, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 480, 270 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 320, 240 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", size: [ 320, 180 ], url: fixtureUrl(2) }
+    ]),
     model: "G6 Instant"
   },
   {
 
     channels: G6_PRO_ENTRY_CHANNELS,
 
-    // G6 Pro Entry is a portrait 3:4 doorbell at the controller's 3024x4032 top, whose channels run at a native 20fps. 20 is not a rate HomeKit accepts, so every entry
-    // advertises 24. Every 3:4 row sits within its native area and joins the sizes HomeKit requires: 2400x3200 and 1536x2048 map to Medium, and every smaller size,
-    // 1920x1080 included, maps to Low, since Medium's 1440x1920 holds more pixels. Its Package Camera channel is filtered out of this parent list.
-    expected: [
+    // G6 Pro Entry is a portrait 3:4 doorbell at the controller's 3024x4032 top, whose channels run at a native 20fps. Every 3:4 row sits within its native area and
+    // joins the sizes HomeKit requires: 2400x3200 and 1536x2048 map to Medium, and every smaller size, 1920x1080 included, maps to Low, since Medium's 1440x1920 holds
+    // more pixels. Its Package Camera channel is filtered out of this parent list.
+    expected: atEveryRate([
 
-      { channelId: 0, lens: undefined, name: "3024x4032@20fps (High)", resolution: [ 3024, 4032, 24 ], url: fixtureUrl(0) },
-      { channelId: 1, lens: undefined, name: "1440x1920@20fps (Medium)", resolution: [ 2400, 3200, 24 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1440x1920@20fps (Medium)", resolution: [ 1536, 2048, 24 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1440x1920@20fps (Medium)", resolution: [ 1440, 1920, 24 ], url: fixtureUrl(1) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 1920, 1080, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 1200, 1600, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 1280, 960, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 960, 1280, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 1280, 720, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 1024, 768, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 768, 1024, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 640, 480, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 480, 640, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 640, 360, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 480, 360, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 360, 480, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 480, 270, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 320, 240, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 240, 320, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 320, 180, 24 ], url: fixtureUrl(2) }
-    ],
+      { channelId: 0, lens: undefined, name: "3024x4032@20fps (High)", size: [ 3024, 4032 ], url: fixtureUrl(0) },
+      { channelId: 1, lens: undefined, name: "1440x1920@20fps (Medium)", size: [ 2400, 3200 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1440x1920@20fps (Medium)", size: [ 1536, 2048 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1440x1920@20fps (Medium)", size: [ 1440, 1920 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 1920, 1080 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 1200, 1600 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 1280, 960 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 960, 1280 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 1280, 720 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 1024, 768 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 768, 1024 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 640, 480 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 480, 640 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 640, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 480, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 360, 480 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 480, 270 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 320, 240 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 240, 320 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", size: [ 320, 180 ], url: fixtureUrl(2) }
+    ]),
     model: "G6 Pro Entry"
   },
   {
@@ -325,29 +343,29 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
 
     // The Doorbell Lite is a portrait 3:4 doorbell whose channels run at 24fps. 2400x3200 holds more pixels than its native top and stays out; the 3:4 rows within its
     // native area join the sizes HomeKit requires. Every size from 1536x2048 down to 768x1024 maps to Medium, and every size from 640x480 down maps to Low.
-    expected: [
+    expected: atEveryRate([
 
-      { channelId: 0, lens: undefined, name: "1920x2560@24fps (High)", resolution: [ 1920, 2560, 24 ], url: fixtureUrl(0) },
-      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 1536, 2048, 24 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 1920, 1080, 24 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 1200, 1600, 24 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 1280, 960, 24 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 960, 1280, 24 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 1280, 720, 24 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 1024, 768, 24 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 768, 1024, 24 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 672, 896, 24 ], url: fixtureUrl(1) },
-      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 640, 480, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 480, 640, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 640, 360, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 480, 360, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 360, 480, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 336, 448, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 480, 270, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 320, 240, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 240, 320, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 320, 180, 24 ], url: fixtureUrl(2) }
-    ],
+      { channelId: 0, lens: undefined, name: "1920x2560@24fps (High)", size: [ 1920, 2560 ], url: fixtureUrl(0) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", size: [ 1536, 2048 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", size: [ 1920, 1080 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", size: [ 1200, 1600 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", size: [ 1280, 960 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", size: [ 960, 1280 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", size: [ 1280, 720 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", size: [ 1024, 768 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", size: [ 768, 1024 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", size: [ 672, 896 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", size: [ 640, 480 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", size: [ 480, 640 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", size: [ 640, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", size: [ 480, 360 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", size: [ 360, 480 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", size: [ 336, 448 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", size: [ 480, 270 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", size: [ 320, 240 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", size: [ 240, 320 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", size: [ 320, 180 ], url: fixtureUrl(2) }
+    ]),
     model: "Doorbell Lite"
   },
   {
@@ -357,19 +375,19 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
     // The deep-low-resolution witness: a 640x480 4:3 native top with every size HomeKit requires above 640x480 still advertised. Those sizes, 1920x1080 down to
     // 1024x768, map to High, the highest channel the camera has; 640x360 maps to Low, and 480x270 and every smaller size fall back to Low as the lowest channel. Every
     // channel runs at 15fps.
-    expected: [
+    expected: atEveryRate([
 
-      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", resolution: [ 1920, 1080, 15 ], url: fixtureUrl(0) },
-      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", resolution: [ 1280, 960, 15 ], url: fixtureUrl(0) },
-      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", resolution: [ 1280, 720, 15 ], url: fixtureUrl(0) },
-      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", resolution: [ 1024, 768, 15 ], url: fixtureUrl(0) },
-      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", resolution: [ 640, 480, 15 ], url: fixtureUrl(0) },
-      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", resolution: [ 640, 360, 15 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", resolution: [ 480, 360, 15 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", resolution: [ 480, 270, 15 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", resolution: [ 320, 240, 15 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", resolution: [ 320, 180, 15 ], url: fixtureUrl(1) }
-    ],
+      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", size: [ 1920, 1080 ], url: fixtureUrl(0) },
+      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", size: [ 1280, 960 ], url: fixtureUrl(0) },
+      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", size: [ 1280, 720 ], url: fixtureUrl(0) },
+      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", size: [ 1024, 768 ], url: fixtureUrl(0) },
+      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", size: [ 640, 480 ], url: fixtureUrl(0) },
+      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", size: [ 640, 360 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", size: [ 480, 360 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", size: [ 480, 270 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", size: [ 320, 240 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", size: [ 320, 180 ], url: fixtureUrl(1) }
+    ]),
     model: "C5 Witness 640x480"
   }
 ];

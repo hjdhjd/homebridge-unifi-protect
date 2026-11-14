@@ -13,7 +13,7 @@ import { PROTECT_FFMPEG_AUDIO_FILTER_FFTNR, PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_
 import type { ProtectAccessory, ProtectPersistedContextState, ProtectServiceNaming } from "../../types.ts";
 import { RECORDING_AUDIO_STAND_IN, describeAudioFormat, livestreamAudioFormat } from "../../media/stream-delegate.ts";
 import { STREAM_QUALITY_TIERS, smartDetectLabel } from "../../options.ts";
-import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPrimaryChannel, rtspUrl, selectSubstrateChannelFrom } from "../../media/resolution.ts";
+import { buildAdvertisedProfiles, buildChannelProfile, formatSizeRates, isPrimaryChannel, rtspUrl, selectSubstrateChannelFrom } from "../../media/resolution.ts";
 import { canBackHksv, shouldDeliverBareMotion } from "./motion-policy.ts";
 import { capabilityReconcileAction, isFeatureFlagsDrain } from "./capability-reconcile-policy.ts";
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
@@ -1629,12 +1629,15 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
    */
   public onStreamingEstablish(derived: AdvertisedStreams): void {
 
-    // Inform users about our RTSP entry mapping, if we're debugging.
+    // Inform users about our RTSP entry mapping, if we're debugging. Each channel's sizes are labeled once, with every rate the list offers them at.
     if(this.hasFeature("Debug.Video.Startup")) {
 
-      for(const entry of derived.profiles) {
+      for(const [ name, entries ] of Map.groupBy(derived.profiles, (entry) => entry.name)) {
 
-        this.log.info("Mapping resolution: %s.", formatResolution(entry.resolution) + " => " + entry.name + " [" + this.videoCodecName + "]");
+        for(const label of formatSizeRates(entries.map((entry) => entry.resolution))) {
+
+          this.log.info("Mapping resolution: %s.", label + " => " + name + " [" + this.videoCodecName + "]");
+        }
       }
     }
 

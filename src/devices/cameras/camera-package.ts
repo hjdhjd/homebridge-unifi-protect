@@ -4,7 +4,7 @@
  */
 import type { CharacteristicValue, Service } from "homebridge";
 import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../../types.ts";
-import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPackageChannel } from "../../media/resolution.ts";
+import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, formatSizeRates, isPackageChannel } from "../../media/resolution.ts";
 import type { AdvertisedStreams } from "./camera.ts";
 import type { ChannelProfile } from "../../media/resolution.ts";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -211,9 +211,9 @@ export class ProtectCameraPackage extends ProtectCamera {
     // Inform users about our RTSP entry mapping, if we're debugging.
     if(this.hasFeature("Debug.Video.Startup")) {
 
-      for(const entry of derived.resolutions) {
+      for(const label of formatSizeRates(derived.resolutions)) {
 
-        this.log.info("Mapping resolution: %s.", formatResolution(entry) + " => " + formatResolution(nativeTop));
+        this.log.info("Mapping resolution: %s.", label + " => " + formatResolution(nativeTop));
       }
     }
   }
