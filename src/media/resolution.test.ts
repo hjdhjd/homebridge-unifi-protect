@@ -18,8 +18,8 @@
 import { AI_PRO_CHANNELS, C5_WITNESS_CHANNELS, CAMERA_FIXTURES, DOORBELL_LITE_CHANNELS, FIXTURE_HOST, FIXTURE_RTSPS_PORT, G2_PRO_CHANNELS, G5_FLEX_CHANNELS,
   G6_PRO_ENTRY_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS, PACKAGE_FIXTURES, SANITY_FAIL_CHANNELS, makeChannel } from "../camera.fixtures.ts";
 import type { AspectFamily, ChannelBias, ChannelProfile, SelectChannelOptions, SelectRequest } from "./resolution.ts";
-import { STANDARD_SIZES, buildAdvertisedProfiles, buildChannelProfile, capByPixels, classifyAspect, formatSizeRates, isPrimaryChannel, rtspUrl,
-  selectChannelProfile, selectSubstrateChannelFrom, standardSizesFor } from "./resolution.ts";
+import { STANDARD_SIZES, buildAdvertisedProfiles, buildChannelProfile, capByPixels, classifyAspect, formatSizeRates, isPrimaryChannel, requiredSizesFor, rtspUrl,
+  selectChannelProfile, selectSubstrateChannelFrom, sortByResolutions, standardSizesFor } from "./resolution.ts";
 import { describe, test } from "node:test";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { PackageFixture } from "../camera.fixtures.ts";
@@ -80,9 +80,18 @@ function selectChannelViaWrapper(entries: ChannelProfile[], rtspDefault: string,
   return selectChannelProfile(capped, request);
 }
 
-// The sizes HAP's stream configuration requires of every camera, as HAP prints them. They are written out here rather than read from the catalog, so a row the catalog
-// loses or mistags reddens the rows that read them.
-const STREAM_CONFIGURATION_SIZES = [ "1920x1080", "1280x720", "640x360", "480x270", "320x180", "1280x960", "1024x768", "640x480", "480x360", "320x240" ];
+// The sizes HAP's stream configuration requires, as HAP prints them under each landscape aspect ratio. They are written out here rather than read from the catalog,
+// so a row the catalog loses or mistags reddens the rows that read them.
+const STREAM_CONFIGURATION_SIZES: Readonly<Record<"16:9" | "4:3", readonly string[]>> = {
+
+  "16:9": [ "1920x1080", "1280x720", "640x360", "480x270", "320x180" ],
+  "4:3": [ "1280x960", "1024x768", "640x480", "480x360", "320x240" ]
+};
+
+// The landscape family whose stream-configuration sizes each aspect family takes: its own when it is landscape, its transposed ratio's when it is portrait, and 16:9
+// when it is square or matches no standard ratio. It is written out here rather than read from the module, so a lookup that maps a family elsewhere reddens the rows
+// that read it. The record is typed over every family, so a family added to the union fails the typecheck here until its row is written.
+const REQUIRED_FAMILY: Readonly<Record<AspectFamily, "16:9" | "4:3">> = { "16:9": "16:9", "1:1": "16:9", "3:4": "4:3", "4:3": "4:3", "9:16": "16:9", "other": "16:9" };
 
 // A resolution as its width and height, the form the membership rows compare on.
 function dims(resolution: Resolution): string {
@@ -96,12 +105,16 @@ function advertisedSizes(channels: ProtectCameraChannelConfig[]): string[] {
   return [...new Set(buildAdvertisedProfiles(nativeEntries(channels)).map((entry) => dims(entry.resolution)))];
 }
 
+// The package camera's one native entry for a package fixture, its channel against the fixture host.
+function packageProfile(fixture: PackageFixture): ChannelProfile {
+
+  return buildChannelProfile(fixture.channel, { lens: 2, rtspPort: FIXTURE_RTSPS_PORT, urlHost: FIXTURE_HOST });
+}
+
 // The package camera's advertised list for a package fixture, built as the package derivation builds it: the one builder over the package channel at a fixed 15fps.
 function packageResolutions(fixture: PackageFixture): Resolution[] {
 
-  const profile = buildChannelProfile(fixture.channel, { lens: 2, rtspPort: FIXTURE_RTSPS_PORT, urlHost: FIXTURE_HOST });
-
-  return buildAdvertisedProfiles([profile], { fixedFps: 15 }).map((entry) => entry.resolution);
+  return buildAdvertisedProfiles([packageProfile(fixture)], { fixedFps: 15 }).map((entry) => entry.resolution);
 }
 
 // A 2592x1944 4:3 camera with a 704x480 low channel, a shape the corpus otherwise lacks: its native area admits the larger 4:3 rows.
@@ -255,15 +268,15 @@ describe("resolution: selector per-request mapping through the selectChannel wra
 
 describe("resolution: the deep-low-resolution camera (a native top below sizes HomeKit requires, exercised through the full list-build)", () => {
 
-  // The 640x480 4:3 witness sits below several sizes HomeKit requires of every camera. Those sizes are still advertised above the native top, each served by High, the
-  // highest channel the camera has. The golden-master fixture above already locks in the exact list; here we additionally name its order and that mapping in a test.
+  // The 640x480 4:3 witness sits below the larger of the 4:3 sizes HomeKit requires of a camera of its shape. Those sizes are still advertised above the native top,
+  // each served by High, the highest channel the camera has. The golden-master fixture above already locks in the exact list; here we additionally name its order and
+  // that mapping in a test.
   test("the deep-low-resolution 4:3 camera advertises the required sizes above its native top, served by its highest channel", () => {
 
     const produced = buildAdvertisedProfiles(nativeEntries(C5_WITNESS_CHANNELS));
 
-    // Every required size lands, those above the native top among them, and the list is sorted high to low by area, each size read once.
-    assert.deepEqual([...new Set(produced.map((e) => dims(e.resolution)))],
-      [ "1920x1080", "1280x960", "1280x720", "1024x768", "640x480", "640x360", "480x360", "480x270", "320x240", "320x180" ]);
+    // Every 4:3 required size lands, those above the native top among them, and no 16:9 one does. The list is sorted high to low by area, each size read once.
+    assert.deepEqual([...new Set(produced.map((e) => dims(e.resolution)))], STREAM_CONFIGURATION_SIZES["4:3"]);
 
     // Every size at or above the native top's area maps to High.
     assert.equal(produced.filter((e) => ((e.resolution[0] * e.resolution[1]) >= (640 * 480))).every((e) => (e.channel.id === 0)), true);
@@ -291,7 +304,7 @@ describe("resolution: the advertised list is streaming-preference-free", () => {
     const list = buildAdvertisedProfiles(nativeEntries(AI_PRO_CHANNELS));
 
     // Each size's channel, repeated for the entry at each of its frame rates.
-    assert.deepEqual(list.map((e) => e.channel.id), [ 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2 ].flatMap((id) => [ id, id, id ]));
+    assert.deepEqual(list.map((e) => e.channel.id), [ 0, 1, 1, 1, 2, 2, 2 ].flatMap((id) => [ id, id, id ]));
 
     // The same published list, queried at request time with a HIGH preference, resolves by name to the High channel (id 0) - the preference's only remaining home.
     assert.equal(outcome(selectChannelViaWrapper(list, "HIGH", 640, 360, { bias: "nearest" }))?.id, 0);
@@ -340,30 +353,85 @@ describe("resolution: the aspect family and the size catalog", () => {
       assert.equal(classifyAspect(row.width, row.height), row.family, row.width.toString() + "x" + row.height.toString() + " classifies as its own family");
     }
   });
+
+  // Each aspect family takes the stream configuration's sizes of the one landscape family REQUIRED_FAMILY names for it.
+  test("requiredSizesFor gives each aspect family the stream configuration's sizes of the landscape family its shape takes", () => {
+
+    for(const family of Object.keys(REQUIRED_FAMILY) as AspectFamily[]) {
+
+      assert.deepEqual(requiredSizesFor(family).map((row) => dims([ row.width, row.height, 0 ])), STREAM_CONFIGURATION_SIZES[REQUIRED_FAMILY[family]],
+        family + " takes the " + REQUIRED_FAMILY[family] + " sizes");
+    }
+  });
 });
 
 describe("resolution: the advertised list's membership and frame rates", () => {
 
-  test("every fixture's list and the package's carry every size the stream configuration requires", () => {
+  // Each list carries the stream configuration's sizes of the landscape family its native top's shape takes, and none of the other landscape family's unless one of the
+  // camera's own channels streams that size. The expected sizes come from the tables written out above, never from the module's own lookup, so a lookup that hands a
+  // camera the other family's sizes reddens this row.
+  test("every fixture's list and the package's carry the required sizes of the landscape family its shape takes, and none of the other's but a native size", () => {
 
-    for(const fixture of CAMERA_FIXTURES) {
+    const cameras = [ ...CAMERA_FIXTURES.map((fixture) => ({ model: fixture.model, natives: nativeEntries(fixture.channels), sizes: advertisedSizes(fixture.channels) })),
+      ...PACKAGE_FIXTURES.map((fixture) => ({ model: fixture.model, natives: [packageProfile(fixture)], sizes: packageResolutions(fixture).map(dims) })) ];
 
-      const sizes = advertisedSizes(fixture.channels);
+    for(const { model, natives, sizes } of cameras) {
 
-      for(const size of STREAM_CONFIGURATION_SIZES) {
+      const top = natives.toSorted(sortByResolutions)[0];
 
-        assert.equal(sizes.includes(size), true, fixture.model + " advertises " + size);
+      assert.ok(top, model + " has a native channel");
+
+      const required = STREAM_CONFIGURATION_SIZES[REQUIRED_FAMILY[classifyAspect(top.resolution[0], top.resolution[1])]];
+      const nativeSizes = natives.map((entry) => dims(entry.resolution));
+
+      for(const size of required) {
+
+        assert.equal(sizes.includes(size), true, model + " advertises " + size);
+      }
+
+      for(const size of Object.values(STREAM_CONFIGURATION_SIZES).flat().filter((candidate) => !required.includes(candidate) && !nativeSizes.includes(candidate))) {
+
+        assert.equal(sizes.includes(size), false, model + " leaves out " + size);
       }
     }
+  });
 
-    for(const fixture of PACKAGE_FIXTURES) {
+  // A square camera and a portrait 9:16 camera take the 16:9 sizes the stream configuration requires, and neither carries a 4:3 one.
+  test("a square camera and a 9:16 camera each take the 16:9 required sizes", () => {
 
-      const sizes = packageResolutions(fixture).map(dims);
+    const cameras = [ { channels: [makeChannel({ fps: 30, height: 1440, id: 0, name: "High", width: 1440 })], model: "a 1440x1440 camera" },
+      { channels: [makeChannel({ fps: 30, height: 1920, id: 0, name: "High", width: 1080 })], model: "a 1080x1920 camera" } ];
 
-      for(const size of STREAM_CONFIGURATION_SIZES) {
+    for(const { channels, model } of cameras) {
 
-        assert.equal(sizes.includes(size), true, fixture.model + " advertises " + size);
+      const sizes = advertisedSizes(channels);
+
+      for(const size of STREAM_CONFIGURATION_SIZES["16:9"]) {
+
+        assert.equal(sizes.includes(size), true, model + " advertises " + size);
       }
+
+      for(const size of STREAM_CONFIGURATION_SIZES["4:3"]) {
+
+        assert.equal(sizes.includes(size), false, model + " leaves out " + size);
+      }
+    }
+  });
+
+  // A native channel's size stays in its list though it belongs to the other landscape family, so a 4:3 camera with a 1280x720 channel keeps that size, served by that
+  // channel, while it takes no other 16:9 required size.
+  test("a 4:3 camera with a 1280x720 native channel keeps 1280x720", () => {
+
+    const list = buildAdvertisedProfiles(nativeEntries([ makeChannel({ fps: 30, height: 1200, id: 0, name: "High", width: 1600 }),
+      makeChannel({ fps: 30, height: 720, id: 1, name: "Medium", width: 1280 }) ]));
+    const sizes = [...new Set(list.map((entry) => dims(entry.resolution)))];
+
+    assert.deepEqual([...new Set(list.filter((entry) => (dims(entry.resolution) === "1280x720")).map((entry) => entry.channel.id))], [1],
+      "1280x720 is advertised, served by its own channel");
+
+    for(const size of STREAM_CONFIGURATION_SIZES["16:9"].filter((candidate) => (candidate !== "1280x720"))) {
+
+      assert.equal(sizes.includes(size), false, "the 4:3 camera leaves out " + size);
     }
   });
 
@@ -375,6 +443,7 @@ describe("resolution: the advertised list's membership and frame rates", () => {
     const g6ProEntry = advertisedSizes(G6_PRO_ENTRY_CHANNELS);
     const doorbellLite = advertisedSizes(DOORBELL_LITE_CHANNELS);
     const large4x3 = advertisedSizes(LARGE_4X3_CHANNELS);
+    const largest4x3 = advertisedSizes([makeChannel({ fps: 30, height: 3072, id: 0, name: "High", width: 4096 })]);
 
     assert.equal(aiPro.includes("2560x1440"), true, "the AI Pro advertises the 2560x1440 the stream tiers name");
     assert.equal(aiPro.includes("3840x2160"), true, "the AI Pro keeps its 3840x2160 native");
@@ -385,6 +454,9 @@ describe("resolution: the advertised list's membership and frame rates", () => {
     assert.equal(doorbellLite.includes("2400x3200"), false, "the Doorbell Lite leaves out 2400x3200, above its native area");
     assert.equal(large4x3.includes("2048x1536"), true, "a 2592x1944 camera advertises 2048x1536");
     assert.equal(large4x3.includes("1440x1080"), true, "a 2592x1944 camera advertises the 1440x1080 the stream tiers name");
+    assert.equal(large4x3.includes("3200x2400"), false, "a 2592x1944 camera leaves out 3200x2400, above its native area");
+    assert.deepEqual(largest4x3.slice(0, 4), [ "4096x3072", "4056x3040", "3200x2400", "2880x2160" ],
+      "a 4:3 camera above 4056x3040 advertises every large 4:3 row the stream tiers name beneath its native top");
 
     const lists = [ ...CAMERA_FIXTURES.map((fixture) => advertisedSizes(fixture.channels)), ...PACKAGE_FIXTURES.map((fixture) => packageResolutions(fixture).map(dims)),
       large4x3 ];
@@ -451,12 +523,12 @@ describe("resolution: the advertised list's membership and frame rates", () => {
     assert.deepEqual(reversed.map((entry) => entry.channel.id), [ 2, 1, 0 ], "the caller's array keeps its own order");
   });
 
-  // A camera of no standard shape advertises its native and the sizes the stream configuration requires, and nothing else.
-  test("a single 7680x2160 channel advertises its native and exactly the stream configuration's sizes", () => {
+  // A camera of no standard shape advertises its native and the stream configuration's 16:9 sizes, and nothing else.
+  test("a single 7680x2160 channel advertises its native and exactly the stream configuration's 16:9 sizes", () => {
 
     const sizes = advertisedSizes([makeChannel({ fps: 15, height: 2160, id: 0, name: "High", width: 7680 })]);
 
-    assert.deepEqual(sizes.toSorted(), [ "7680x2160", ...STREAM_CONFIGURATION_SIZES ].toSorted());
+    assert.deepEqual(sizes.toSorted(), [ "7680x2160", ...STREAM_CONFIGURATION_SIZES["16:9"] ].toSorted());
   });
 
   // Channels that share a size each keep entries of their own, so a name request still finds each.

@@ -182,8 +182,9 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(controllerEvents(accessory).length, 1, "the controller was not configured again on the re-run");
     assert.equal(projection.updateCalls.length, 0, "the fully-RTSP-enabled push issues no enable write on the re-run either");
 
-    // The production selectChannel forwards the caller's posture to the selector. The G6 Pro Entry's 1920x1080 sits closer in area to Medium's 1440x1920 than to Low's
-    // 480x640, while Low is the highest channel at or under it, so the postures part here and a wrapper that read nearest as lower would answer Low to each call.
+    // The production selectChannel forwards the caller's posture to the selector. A 1920x1080 request sits closer in area to the G6 Pro Entry's Medium 1440x1920 than
+    // to its Low 480x640, while Low is the highest channel at or under it, so the postures part here and a wrapper that read nearest as lower would answer Low to each
+    // call.
     assert.equal(camera.selectChannel(1920, 1080, { bias: "nearest" })?.channel.id, 1, "copy mode's nearest posture takes Medium, the closest channel by area");
     assert.equal(camera.selectChannel(1920, 1080, { bias: "lower" })?.channel.id, 2, "the lower posture takes Low, the highest channel at or under the request");
   });

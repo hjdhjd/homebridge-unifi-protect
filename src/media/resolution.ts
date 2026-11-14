@@ -11,8 +11,8 @@
  *
  * Every comparison of sizes reads pixel area: which catalog sizes a camera advertises, the channel each size maps to, the sort, the pixel cap, and the selector. A
  * portrait channel and a landscape size of the same area therefore compare as equals, which is what lets a portrait camera serve the landscape sizes HomeKit requires
- * of every camera from the channel whose pixel count matches them. Width and height are read only by the selector's exact-dimensions match, which a request for a
- * channel's own size takes ahead of any area comparison, by the sort's tie-breaks between sizes of equal area, by the advertised list's set, which is keyed by them,
+ * of its transposed ratio from the channel whose pixel count matches them. Width and height are read only by the selector's exact-dimensions match, which a request for
+ * a channel's own size takes ahead of any area comparison, by the sort's tie-breaks between sizes of equal area, by the advertised list's set, which is keyed by them,
  * and by the labels that gather a list's frame rates under each size.
  *
  * The selection model is a discriminated union, SelectRequest: a "name" request takes the named channel (the user's explicit streaming/recording-quality preference),
@@ -43,8 +43,9 @@ export interface ChannelProfile {
   url: string;
 }
 
-// The source that names a standard size, spelled as the HAP characteristic or table it comes from: the stream configuration's sizes, every one of which HomeKit
-// requires of a camera; the recording configuration's sizes; and the stream tiers the HomeKit Secure Video compatibility guide's resolution table names.
+// The source that names a standard size, spelled as the HAP characteristic or table it comes from: the stream configuration's sizes, each of which HomeKit requires
+// of a camera of the aspect ratio HAP labels it with; the recording configuration's sizes; and the stream tiers, the sizes the HomeKit Secure Video compatibility
+// guide names in its minimum requirements' table of resolutions by aspect ratio and in its Supported Video Stream Tiers table of common resolutions.
 export type SizeSource = "stream-configuration" | "recording-configuration" | "stream-tiers";
 
 // A frame's shape: the standard ratio it matches, in landscape or portrait, or "other" when it matches none within the tolerance below.
@@ -72,15 +73,17 @@ export const STANDARD_SIZES: readonly StandardSize[] = [
   { family: "16:9", height: 360, sources: [ "stream-configuration", "recording-configuration", "stream-tiers" ], width: 640 },
   { family: "16:9", height: 270, sources: ["stream-configuration"], width: 480 },
   { family: "16:9", height: 180, sources: ["stream-configuration"], width: 320 },
+  { family: "4:3", height: 3040, sources: ["stream-tiers"], width: 4056 },
+  { family: "4:3", height: 2400, sources: ["stream-tiers"], width: 3200 },
   { family: "4:3", height: 2160, sources: ["stream-tiers"], width: 2880 },
   { family: "4:3", height: 1536, sources: [ "recording-configuration", "stream-tiers" ], width: 2048 },
   { family: "4:3", height: 1200, sources: [ "recording-configuration", "stream-tiers" ], width: 1600 },
   { family: "4:3", height: 1080, sources: ["stream-tiers"], width: 1440 },
   { family: "4:3", height: 960, sources: [ "stream-configuration", "recording-configuration" ], width: 1280 },
-  { family: "4:3", height: 768, sources: [ "stream-configuration", "recording-configuration" ], width: 1024 },
+  { family: "4:3", height: 768, sources: [ "stream-configuration", "recording-configuration", "stream-tiers" ], width: 1024 },
   { family: "4:3", height: 480, sources: [ "stream-configuration", "recording-configuration", "stream-tiers" ], width: 640 },
-  { family: "4:3", height: 360, sources: ["stream-configuration"], width: 480 },
-  { family: "4:3", height: 240, sources: ["stream-configuration"], width: 320 },
+  { family: "4:3", height: 360, sources: [ "stream-configuration", "stream-tiers" ], width: 480 },
+  { family: "4:3", height: 240, sources: [ "stream-configuration", "stream-tiers" ], width: 320 },
   { family: "9:16", height: 3840, sources: [ "recording-configuration", "stream-tiers" ], width: 2160 },
   { family: "9:16", height: 2560, sources: ["stream-tiers"], width: 1440 },
   { family: "9:16", height: 1920, sources: [ "stream-configuration", "recording-configuration", "stream-tiers" ], width: 1080 },
@@ -103,9 +106,17 @@ export const STANDARD_SIZES: readonly StandardSize[] = [
   { family: "1:1", height: 480, sources: ["stream-tiers"], width: 480 }
 ];
 
-// The sizes every camera advertises whatever its shape, above its native top included: the stream-configuration rows of the landscape families, the stream
-// configuration as HAP prints it, each a size HomeKit requires of a camera.
-const REQUIRED_SIZES = STANDARD_SIZES.filter((row) => [ "16:9", "4:3" ].includes(row.family) && row.sources.includes("stream-configuration"));
+// The landscape family whose stream-configuration rows a camera of each aspect family takes, which requiredSizesFor reads. The record is typed over every family, so a
+// family added to the union fails the typecheck until it is mapped here.
+const REQUIRED_LANDSCAPE_FAMILY: Readonly<Record<AspectFamily, "16:9" | "4:3">> = {
+
+  "16:9": "16:9",
+  "1:1": "16:9",
+  "3:4": "4:3",
+  "4:3": "4:3",
+  "9:16": "16:9",
+  "other": "16:9"
+};
 
 // The frame rates every advertised size is offered at, high to low. HomeKit's recording configuration names 15, 24 and 30 fps and asks a camera to advertise every
 // rate it supports at each size, and the client picks the rate it wants, so a size is offered at each of them whatever its channel's own rate: a transcode and a
@@ -181,6 +192,14 @@ export function classifyAspect(width: number, height: number): AspectFamily {
 export function standardSizesFor(family: AspectFamily): readonly StandardSize[] {
 
   return STANDARD_SIZES.filter((row) => (row.family === family));
+}
+
+// The sizes HomeKit requires of a camera of one aspect family, offered whatever the camera's native area. HAP's stream configuration labels each size it requires with
+// its aspect ratio, so a camera takes the required sizes of the landscape ratio matching its shape: a landscape camera its own ratio's, a portrait camera its transposed
+// ratio's, and a square camera or one of no standard ratio the 16:9 rows.
+export function requiredSizesFor(family: AspectFamily): readonly StandardSize[] {
+
+  return standardSizesFor(REQUIRED_LANDSCAPE_FAMILY[family]).filter((row) => row.sources.includes("stream-configuration"));
 }
 
 // Comparator that sorts entries from high to low: by pixel area, then by width, height and frame rate, so a landscape size sorts ahead of the portrait size of the
@@ -396,10 +415,10 @@ export function selectSubstrateChannelFrom(entries: readonly ChannelProfile[], i
 /**
  * Build the advertised list HomeKit receives, for its stream configuration and its recording configuration alike, from a camera's native channel entries. The list holds
  * every native channel's size, each channel with entries of its own so every channel stays reachable by name, channels of equal size included; the catalog rows of the
- * native top's aspect family, whatever source names them, at or under the native top's pixel count; and every size HomeKit requires of a camera, whatever its shape.
- * Each size that is not a native one maps to the highest channel at or under its own area, the bias-lower selection, and falls back to the lowest channel when none is.
- * Every size is offered at each rate in ADVERTISED_FRAME_RATES whatever the rate of the channel that serves it, or at the one fixed rate the caller names, so a size
- * holds one entry for each channel that serves it at each rate.
+ * native top's aspect family, whatever source names them, at or under the native top's pixel count; and the landscape sizes HomeKit requires of a camera of that
+ * family, above the native top included, as requiredSizesFor reads them. Each size that is not a native one maps to the highest channel at or under its own area, the
+ * bias-lower selection, and falls back to the lowest channel when none is. Every size is offered at each rate in ADVERTISED_FRAME_RATES whatever the rate of the
+ * channel that serves it, or at the one fixed rate the caller names, so a size holds one entry for each channel that serves it at each rate.
  *
  * The list is a set keyed by width and height: a size joins only when no entry holds it, the set is computed once, and the list is sorted once at the end. The build is
  * preference-free: the direct-RTSP quality preference (the Video.Rtsp.Only setting) is a request-time concern the selectChannel wrapper applies when a stream starts,
@@ -425,6 +444,7 @@ export function buildAdvertisedProfiles(nativeEntries: readonly ChannelProfile[]
 
   const [ topWidth, topHeight ] = top.resolution;
   const topArea = pixelArea(topWidth, topHeight);
+  const family = classifyAspect(topWidth, topHeight);
   const frameRates = (fixedFps === undefined) ? ADVERTISED_FRAME_RATES : [fixedFps];
 
   // The entries advertising a size from a native, one per frame rate: the native's channel, name, URL and lens, each with a resolution tuple of its own.
@@ -437,8 +457,8 @@ export function buildAdvertisedProfiles(nativeEntries: readonly ChannelProfile[]
   const advertised = Map.groupBy(natives.flatMap((native) => entriesFor(native, native.resolution[0], native.resolution[1])),
     (entry) => formatSize(entry.resolution[0], entry.resolution[1]));
 
-  // The family's catalog rows within the native top's pixel count, then every size HomeKit requires of a camera.
-  const candidates = [ ...standardSizesFor(classifyAspect(topWidth, topHeight)).filter((row) => (pixelArea(row.width, row.height) <= topArea)), ...REQUIRED_SIZES ];
+  // The family's catalog rows within the native top's pixel count, then the sizes HomeKit requires of a camera of that family, above the native top included.
+  const candidates = [ ...standardSizesFor(family).filter((row) => (pixelArea(row.width, row.height) <= topArea)), ...requiredSizesFor(family) ];
 
   for(const { height, width } of candidates) {
 

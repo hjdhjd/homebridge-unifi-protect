@@ -187,7 +187,7 @@ export class ProtectCameraPackage extends ProtectCamera {
     }
 
     // The package camera advertises the one builder's list over its single fixed channel, every entry at a fixed 15 fps whatever the channel's own rate: its native
-    // size, the standard sizes of its shape within its pixel count, and every size HomeKit requires of a camera.
+    // size, the standard sizes of its shape within its pixel count, and the landscape sizes HomeKit requires of a camera of its aspect ratio.
     //
     // The package advertises the recording audio stand-in and runs no probe, because its derivation is synchronous by contract and a probe would await the stream. A
     // package recording whose stream differs from the stand-in is transcoded to it.

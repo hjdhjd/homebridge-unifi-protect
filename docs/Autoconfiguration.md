@@ -55,8 +55,8 @@ HBUP doesn't decide what size your live view or recording comes in...the Apple d
 resolutions HBUP offers HomeKit for that camera, and HBUP serves that request from the best stream it has.
 
 That list holds every resolution the camera itself streams, the standard sizes in the camera's own shape up to the camera's own resolution by pixel count (so a
-portrait doorbell is offered portrait sizes), and every resolution HomeKit requires of a camera, whatever its shape. HBUP builds the list when it starts up, so a
-camera whose streams change in Protect keeps its list until you restart Homebridge.
+portrait doorbell is offered portrait sizes), and the landscape resolutions HomeKit requires of a camera of its aspect ratio (the 16:9 ones for a square camera or
+one of no standard shape). HBUP builds the list when it starts up, so a camera whose streams change in Protect keeps its list until you restart Homebridge.
 
 #### How HBUP Selects Stream Quality
 
