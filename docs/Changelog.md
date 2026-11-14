@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 8.2.2 (2026-11-14)
+  * Improvement: portrait cameras are now detected more reliably, and every camera is offered a fuller range of resolutions in its own shape, so the Apple device viewing it can ask for a size that matches the camera.
+  * Improvement: a live view HBUP passes through without transcoding now uses the camera stream closest in size to what your Apple device asked for, rather than the largest one that fits under it.
+  * Improvement: live views, HomeKit Secure Video recordings, and snapshots that HBUP resizes now keep the camera's own shape...they fit inside the size your Apple device asked for, with no black bars, and are never enlarged past the stream they come from.
+  * Improvement: when your hardware video decoder can't open a camera's stream, HBUP now notices as the camera starts up and decodes that camera in software instead, keeping hardware encoding on where you use it, rather than letting its live views and recordings fail. The log tells you when it does.
+  * Housekeeping.
+
 ## 8.2.1 (2026-11-08)
   * New feature: TLS certificate verification for each controller. If you've installed a trusted certificate on your console, turn on certificate verification in that controller's connection settings in the webUI, and HBUP will require a certificate that verifies on every connection it makes to the controller, livestreams and two-way audio included. If one doesn't verify, the log tells you why and how to fix it. Verification is off by default, which is what a console using the self-signed certificate it ships with needs, and streams read directly over RTSP aren't verified. Livestreams and two-way audio now also connect through your console at the address you've configured, port included, so they work wherever that address does.
   * Improvement: a live view whose livestream doesn't start in time now ends promptly and cleanly, rather than leaving HomeKit waiting until it gives up.
