@@ -86,10 +86,10 @@ Read about [how HBUP sources and selects your video](https://github.com/hjdhjd/h
 You can see all of this in the Homebridge logs when you stream a camera:
 
 ```
-Streaming request: 1280x720@30fps, 299 kbps. Using Medium [H.264], 2,000 kbps [TSB/API].
+⚡️ ⛭︎ Streaming request: 1280x720@30fps, 2 Mbps. Using 3840x2160@30fps (High) [H264], 16 Mbps [TSB/API].
 ```
 
-Reading that line: a HomeKit client (an iPhone here) requested 1280x720@30fps at 299 kbps. HBUP is serving it from the *Medium*-quality H.264 stream, whose source bitrate is 2,000 kbps. The trailing tag is the transport: **`TSB/API`** means the video is coming from the timeshift buffer (fed by the livestream API), which is the default. If you'd opted that camera's live views over to direct RTSP, you'd see **`RTSP`** there instead. That tag is a handy first thing to glance at when something's off - it tells you exactly where your video is coming from.
+Reading that line: a HomeKit client (an iPhone here) requested 1280x720@30fps, and 2 Mbps is the bitrate HBUP is targeting for that stream...HomeKit's own requested bitrate is in the debug log, right beside that target. HBUP is serving it from the *High*-quality H.264 stream, whose source bitrate is 16 Mbps, and the symbols at the start of the line tell you it's transcoding (⛭︎) on your hardware encoder (⚡️). The trailing tag is the transport: **`TSB/API`** means the video is coming from the timeshift buffer (fed by the livestream API), which is the default. If you'd opted that camera's live views over to direct RTSP, you'd see **`RTSP`** there instead. That tag is a handy first thing to glance at when something's off - it tells you exactly where your video is coming from.
 
 #### Video Streaming Issues
 This brings us to where the problems people encounter can come from. Whether the video comes from the buffer or direct RTSP, it's processed by `FFmpeg` before being sent on its way to your iPhone. I've taken time to tune the parameters used within FFmpeg for Protect to get things working just right. Despite that, it's not always perfect.
@@ -112,13 +112,13 @@ I know that instinctively people may not like the idea of having higher-end Prot
 Transcoding is used by HBUP to ensure that video streams are in the form that HomeKit expects when it comes to format, quality, and dimensions. HBUP will take the closest match it can find to the request from HomeKit and will transcode the video stream in realtime to match the parameters being requested by HomeKit. When transcoding, you'll see a log entry in Homebridge like this:
 
 ```
-Streaming request: 1280x720@30fps, 299 kbps. Using Medium [H.264], 2,000 kbps [TSB/API].
+⚡️ ⛭︎ Streaming request: 1280x720@30fps, 2 Mbps. Using 3840x2160@30fps (High) [H264], 16 Mbps [TSB/API].
 ```
 
 Transcoding has two significant implications:
 
   * It will consume more CPU on the device where you run Homebridge. If your device is underpowered, it may struggle to use higher quality streams.
-  * The quality of the final stream will be reduced to comply with HomeKit's requested parameters. This is because HomeKit defaults to a very modest bitrate - 299kbps in the above example versus the 2,000kbps being provided by Protect - which represents a 6.5x reduction in quality!
+  * The quality of the final stream will be reduced to the bitrate HBUP targets, which is the bitrate that log line shows...2 Mbps in the above example versus the 16 Mbps being provided by Protect, which represents an 8x reduction in quality! HomeKit's own requested bitrate is in the debug log, beside that target.
 
 You can tune when HBUP chooses to transcode by adjusting the options under the video section of the HBUP webUI's Settings tab. If you're struggling with potential CPU constraints in your environment, feeding from a lower stream quality should reduce the CPU load on your hardware. I'd recommend starting with the *Low* quality stream and working your way up to see what works best in your environment.
 

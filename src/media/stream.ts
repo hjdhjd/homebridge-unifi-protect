@@ -11,8 +11,9 @@ import type { CameraController, CameraControllerOptions, CameraStreamingDelegate
   SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { Clock, HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
 import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
-import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_LIVE_VIEW_START_DEADLINE_MS, PROTECT_PROBESIZE_OVERRIDE_MAX,
-  PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
+import { HARDWARE_TRANSCODE_MARKER, PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_LIVE_VIEW_START_DEADLINE_MS,
+  PROTECT_PROBESIZE_OVERRIDE_MAX, PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS,
+  PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectReservedNames, isPackageCameraContext } from "../types.ts";
 import { controllerIdentityOf, recordingAdvertisementOf, streamingSamplerates } from "./stream-delegate.ts";
 import { resolveChannelRequest, resolveTranscodeDecision, resolveVideoEncoding } from "./stream-encode-policy.ts";
@@ -877,7 +878,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     const hinting = [];
 
     // Lightning bolt, using the default emoji presentation. We use this to indicate hardware acceleration.
-    hinting.push(...(isTranscoding && usesHardwareEncoder ? ["\u{26A1}\u{FE0F}"] : []));
+    hinting.push(...(isTranscoding && usesHardwareEncoder ? [HARDWARE_TRANSCODE_MARKER] : []));
 
     // Gear, using the text presentation modifier. We use this to indicate that we're transcoding.
     hinting.push(...(isTranscoding ? ["\u{26ED}\u{FE0E}"] : []));
@@ -893,6 +894,10 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     this.log.info("%sStreaming request: %sx%s@%sfps, %s. Using %s [%s], %s [%s].", hinting.join(" "), request.video.width, request.video.height, request.video.fps,
       formatBps(encoding.targetBitrate * 1000), channelProfile.name, this.protectCamera.videoCodecName,
       formatBps(channelProfile.channel.bitrate), useTsb ? "TSB/" + (this.protectCamera.hasFeature("Debug.Video.Timeshift.UseRtsp") ? "RTSP" : "API") : "RTSP");
+
+    // The info line names the bitrate we target...HomeKit's own request, which HAP states in kbps, goes to the debug log beside it.
+    this.log.debug("HomeKit requested up to %s for this stream, and the target bitrate is %s.", formatBps(request.video.max_bit_rate * 1000),
+      formatBps(encoding.targetBitrate * 1000));
 
     // Render the encoding the policy resolved. The decision is already made - all that happens here is turning it into FFmpeg arguments.
     if(encoding.mode === "transcode") {
@@ -1336,7 +1341,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
         // HomeKit's reconfigure request has no effect on the running FFmpeg process: there is no way to adjust an already-spawned FFmpeg's encoding parameters
         // mid-stream, so we log the request and acknowledge it without acting on it.
         this.log.debug("Streaming parameters adjustment requested by HomeKit: %sx%s, %s fps, %s.",
-          request.video.width, request.video.height, request.video.fps, formatBps(request.video.max_bit_rate));
+          request.video.width, request.video.height, request.video.fps, formatBps(request.video.max_bit_rate * 1000));
 
         callback();
 

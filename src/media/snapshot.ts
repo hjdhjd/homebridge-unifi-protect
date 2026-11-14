@@ -36,6 +36,30 @@ const PROTECT_SNAPSHOT_HELD_IMAGE_WAIT = 1000;
 // held back.
 const PROTECT_SNAPSHOT_CROP_ALLOWANCE = 1000;
 
+// The tag for each source a snapshot can be answered from. The hedge reports its winner under the same tags, and the debug line names each source by its label.
+type SnapshotSourceTag = "api" | "cache" | "rtsp" | "timeshift";
+
+const SNAPSHOT_SOURCE_LABELS: Readonly<Record<SnapshotSourceTag, string>> = {
+
+  api: "Protect controller",
+  cache: "cached snapshot",
+  rtsp: "RTSP stream",
+  timeshift: "timeshift buffer"
+};
+
+// A snapshot image and the tag of the source that answered with it.
+interface SnapshotAnswer {
+
+  image: Buffer;
+  source: SnapshotSourceTag;
+}
+
+// A source's image as an answer tagged with that source, or null when the source had no image to give.
+function answerFrom(source: SnapshotSourceTag, image: Nullable<Buffer>): Nullable<SnapshotAnswer> {
+
+  return image ? { image, source } : null;
+}
+
 // A snapshot-source FFmpeg pipeline whose non-zero exits are routine, not exceptional: each source (timeshift, RTSP) is attempted in turn and a miss simply falls through
 // to the next source, so a failed exit is expected. We override the base class's ERROR teardown dump - which would otherwise spam the log on every routine miss - with a
 // single debug line, deliberately suppressing the ERROR dump that routine misses do not warrant; the homebridge-plugin-utils base exposes logFailedTeardown as exactly
@@ -121,13 +145,14 @@ export class ProtectSnapshot {
     //
     // We run the whole acquisition under an abort signal so the timeout below actually cancels in-flight work - the controller snapshot request and every FFmpeg pipeline
     // receive the same signal and tear down the moment the deadline lapses, rather than leaking until they complete on their own.
-    const snapshot = await runWithAbort(async (signal): Promise<Nullable<Buffer>> => {
+    //
+    // The image travels with the tag of the source that answered, which decides whether it still needs the crop pass and is what the debug line below names.
+    const answer = await runWithAbort(async (signal): Promise<Nullable<SnapshotAnswer>> => {
 
       // The budget's start, which the hedge delay and the grace cutoff are measured from, so the time the timeshift source spends counts against each.
       const startedAt = this.clock.now();
 
-      let snapAttempt = await this.snapFromTimeshift(request, signal);
-      let needsExternalCrop = false;
+      let snapAttempt = answerFrom("timeshift", await this.snapFromTimeshift(request, signal));
 
       // No snapshot yet, let's try again.
       if(!snapAttempt) {
@@ -135,18 +160,11 @@ export class ProtectSnapshot {
         // We treat package cameras uniquely - the Protect API is tried before RTSP because the lower frame rate of package cameras causes a lengthier RTSP response.
         if(isPackageCameraContext(this.protectCamera.accessory.context)) {
 
-          snapAttempt = await this.snapFromController({ height: request?.height, packageCamera: true, signal, width: request?.width });
-
-          if(snapAttempt) {
-
-            needsExternalCrop = true;
-          } else {
-
-            snapAttempt = await this.snapFromRtsp(request, signal);
-          }
+          snapAttempt = answerFrom("api", await this.snapFromController({ height: request?.height, packageCamera: true, signal, width: request?.width }));
+          snapAttempt ??= answerFrom("rtsp", await this.snapFromRtsp(request, signal));
         } else {
 
-          const hedged = await hedgeSnapshotAttempts({
+          snapAttempt = await hedgeSnapshotAttempts({
 
             api: (attemptSignal) => this.snapFromController({ height: request?.height, signal: attemptSignal, width: request?.width }),
             clock: this.clock,
@@ -155,9 +173,6 @@ export class ProtectSnapshot {
             signal,
             startedAt
           });
-
-          snapAttempt = hedged?.image ?? null;
-          needsExternalCrop = hedged?.source === "api";
         }
       }
 
@@ -167,23 +182,24 @@ export class ProtectSnapshot {
       }
 
       // Snapshots from the Protect API need a standalone crop pass since they bypass the FFmpeg pipeline, where crop is applied as part of the filter chain.
-      if(needsExternalCrop && this.protectCamera.hints.crop) {
+      if((snapAttempt.source === "api") && this.protectCamera.hints.crop) {
 
-        snapAttempt = await this.cropSnapshot(snapAttempt, signal) ?? snapAttempt;
+        snapAttempt.image = await this.cropSnapshot(snapAttempt.image, signal) ?? snapAttempt.image;
       }
 
       // Cache the image before returning it.
-      this._cachedSnapshot = { image: snapAttempt, time: this.clock.now() };
+      this._cachedSnapshot = { image: snapAttempt.image, time: this.clock.now() };
 
       return snapAttempt;
     }, { clock: this.clock, timeout: PROTECT_SNAPSHOT_TIMEOUT });
 
     // Occasional snapshot failures will happen. The controller isn't always able to generate them if one is already inflight or if it's too soon after the last one.
-    if(!snapshot) {
+    if(!answer) {
 
       if(cachedSnapshot) {
 
         this.log.warn("Unable to retrieve a snapshot: using the most recent cached snapshot instead.");
+        this.logAnswer(request, "cache");
 
         return cachedSnapshot;
       }
@@ -193,7 +209,16 @@ export class ProtectSnapshot {
       return null;
     }
 
-    return this._cachedSnapshot?.image ?? null;
+    this.logAnswer(request, answer.source);
+
+    return answer.image;
+  }
+
+  // Note at debug the size a snapshot request asked for, or that it named none, and the source that answered it.
+  private logAnswer(request: SnapshotRequest | undefined, source: SnapshotSourceTag): void {
+
+    this.log.debug("Snapshot request for %s answered from the %s.", request ? request.width.toString() + "x" + request.height.toString() : "any size",
+      SNAPSHOT_SOURCE_LABELS[source]);
   }
 
   // Snapshots using the timeshift buffer as the source.

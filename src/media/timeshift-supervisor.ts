@@ -3,19 +3,16 @@
  * timeshift-supervisor.ts: UniFi Protect timeshift buffer supervisor - the lifecycle authority for a camera's standing timeshift buffer.
  */
 import { CoalescingTask, HbpuAbortError, formatBps, formatErrorMessage } from "homebridge-plugin-utils";
+import { HARDWARE_TRANSCODE_MARKER, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { RECORDING_AUDIO_STAND_IN, describeAudioFormat, recordingAdvertisementOf } from "./stream-delegate.ts";
 import type { CameraRecordingConfiguration } from "homebridge";
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamAudioFormat } from "./stream-delegate.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
-import { PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
-
-// Lightning-bolt emoji (U+26A1 HIGH VOLTAGE SIGN + U+FE0F VARIATION SELECTOR-16) used to prefix the HKSV configuration log when this camera's HKSV recording encode
-// runs on the host's hardware encoder.
-const HKSV_HARDWARE_TRANSCODE_MARKER = "\u26A1\uFE0F ";
+import { formatResolution } from "./resolution.ts";
 
 // The recording demand the HKSV recording delegate pushes into the supervisor: the recording configuration HomeKit has selected (undefined when HomeKit cannot
 // produce one, which the reconciler treats as "desired state is stopped") and whether HomeKit wants recording active.
@@ -421,8 +418,8 @@ export class ProtectTimeshiftSupervisor {
     }
 
     // Acknowledge the HKSV recording configuration once per enable episode, now that the timeshift is actually running - and only for the recording arm, since a
-    // streaming-only start must never emit HKSV narration. The demanded config is bound to a local so the bitrate read narrows cleanly, the OR that admits the
-    // streaming arm leaving shouldRun unable to narrow the field on its own.
+    // streaming-only start must never emit HKSV narration. The line names the recording size and bitrate HomeKit selected, read from the demanded config, which is
+    // bound to a local so those reads narrow cleanly, the OR that admits the streaming arm leaving shouldRun unable to narrow the field on its own.
     //
     // The gate consults the LIVE recording demand at this commit point, exactly as the resolution block above it does. A start can be suspended across its await while
     // HomeKit disables recording underneath it, and the pass-start locals still describe the demand as it stood when the pass began; announcing against them would
@@ -434,9 +431,10 @@ export class ProtectTimeshiftSupervisor {
     if(acknowledgeConfig && this.demand.isRecording && !this.hasAcknowledgedRecording) {
 
       this.hasAcknowledgedRecording = true;
-      this.log.info("HKSV: %s%s [%s], %s.",
-        this.protectCamera.stream?.ffmpegOptions.hardwareEncodes("record") ? HKSV_HARDWARE_TRANSCODE_MARKER : "",
-        desiredRtspEntry.name, this.protectCamera.videoCodecName, formatBps(acknowledgeConfig.videoCodec.parameters.bitRate * 1000));
+      this.log.info("HKSV: %s%s [%s], recording %s at %s.",
+        this.protectCamera.stream?.ffmpegOptions.hardwareEncodes("record") ? HARDWARE_TRANSCODE_MARKER + " " : "",
+        desiredRtspEntry.name, this.protectCamera.videoCodecName, formatResolution(acknowledgeConfig.videoCodec.resolution),
+        formatBps(acknowledgeConfig.videoCodec.parameters.bitRate * 1000));
     }
   }
 

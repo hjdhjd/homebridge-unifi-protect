@@ -177,6 +177,64 @@ describe("ProtectSnapshot cache window", () => {
   });
 });
 
+// The debug line an acquisition that returns an image leaves behind: the size the request asked for, or "any size" when it named none, and the source that answered,
+// named by its label rather than the tag the acquisition and the hedge carry it under.
+describe("ProtectSnapshot answer narration", () => {
+
+  test("a package-camera request the controller answers notes its size and the controller at debug, once for a coalesced pair", async () => {
+
+    const { host, logEntries, snapshot } = buildSnapshot("empty");
+
+    host.accessory.context.packageCamera = "AA:BB:CC:DD:EE:FF";
+    host.snapshotFromController = (): Promise<Buffer> => Promise.resolve(Buffer.from("package-snapshot"));
+
+    // The second request arrives while the first acquisition is in flight, so it shares that acquisition and narrates nothing of its own.
+    const [ image, coalesced ] = await Promise.all([ snapshot.getSnapshot({ height: 360, width: 640 }), snapshot.getSnapshot({ height: 360, width: 640 }) ]);
+
+    await settle();
+
+    assert.ok(image, "the controller snapshot served the package camera");
+    assert.equal(coalesced, image, "the coalesced request shared the acquisition's image");
+    assert.equal(logCount(logEntries, "debug", "Snapshot request for 640x360 answered from the Protect controller."), 1,
+      "the answer names the requested size and the controller, once for the coalesced pair");
+  });
+
+  test("the cache fallback notes the cached snapshot as the source, after a hedged answer from the controller", async () => {
+
+    const { host, logEntries, snapshot } = buildSnapshot("empty");
+
+    let controllerCalls = 0;
+
+    host.snapshotFromController = (): Promise<Buffer> => {
+
+      controllerCalls++;
+
+      return (controllerCalls === 1) ? Promise.resolve(Buffer.from("cached-snapshot")) : Promise.reject(new Error("controller declined"));
+    };
+
+    await snapshot.getSnapshot();
+
+    const cached = await snapshot.getSnapshot();
+
+    assert.equal(cached?.toString(), "cached-snapshot", "the failed acquisition served the cached snapshot");
+    assert.equal(logCount(logEntries, "debug", "Snapshot request for any size answered from the Protect controller."), 1,
+      "the hedge's controller answer is named by its label");
+    assert.equal(logCount(logEntries, "debug", "Snapshot request for any size answered from the cached snapshot."), 1, "the cache fallback is named as the source");
+  });
+
+  test("an acquisition that returns no image notes no answer", async () => {
+
+    const { logEntries, snapshot } = buildSnapshot("stale");
+
+    const image = await snapshot.getSnapshot({ height: 360, width: 640 });
+
+    await settle();
+
+    assert.equal(image, null, "no source produced an image and nothing was cached");
+    assert.equal(logCount(logEntries, "debug", "Snapshot request for"), 0, "an acquisition that returns nothing notes no answer");
+  });
+});
+
 /* A controllable snapshot attempt for the hedge rows. Its one call records the clock time it started and the signal it runs under, and settles when the row answers
  * it, or with null a turn after its signal aborts, the way a real source's FFmpeg settles only once the kill has landed. That turn is what lets a row tell a hedge
  * that waits for its loser to settle from one that returns while the loser is still winding down.

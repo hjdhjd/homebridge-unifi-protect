@@ -172,3 +172,7 @@ export const PROTECT_NVR_REMOVAL_STABILITY_WINDOW = 600000;
 
 // Bitrate, in kilobits per second, to use when transcoding to high-latency clients.
 export const PROTECT_TRANSCODE_HIGH_LATENCY_BITRATE = 1000;
+
+// The marker for an encode running on the host's hardware encoder, the lightning bolt in its emoji presentation. It opens the HKSV acknowledgment and the streaming
+// request line when their encode runs on that encoder.
+export const HARDWARE_TRANSCODE_MARKER = "\u{26A1}\u{FE0F}";

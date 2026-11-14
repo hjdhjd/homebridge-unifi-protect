@@ -42,8 +42,8 @@ after(() => {
   }
 });
 
-// A minimal-but-truthy recording configuration cast to the HAP type at this single boundary - the same harness discipline the sibling suites use. The reconcile path
-// reads only videoCodec.resolution (channel selection) and videoCodec.parameters.bitRate (the enable-ack config log).
+// A minimal-but-truthy recording configuration cast to the HAP type at this single boundary - the same harness discipline the sibling suites use. The supervisor
+// reads only videoCodec.resolution and videoCodec.parameters.bitRate, the recording size and bitrate the enable-ack config log names.
 function makeRecordingConfig(): CameraRecordingConfiguration {
 
   return { prebufferLength: 4000, videoCodec: { parameters: { bitRate: 2000 }, resolution: [ 1920, 1080, 30 ] } } as unknown as CameraRecordingConfiguration;
@@ -1330,6 +1330,38 @@ describe("timeshift supervisor HKSV hardware marker", () => {
 
     assert.ok(line, "the acknowledgment fired");
     assert.equal(line.includes(HKSV_HARDWARE_MARKER), false, "the acknowledgment carries no hardware marker when the encode runs in software");
+  });
+});
+
+describe("timeshift supervisor HKSV acknowledgment", () => {
+
+  // The acknowledgment line one recording enable produces, the HKSV encode on the hardware encoder or in software. The buffer's channel carries a size of its own, so
+  // a line that named the channel's size rather than the recording configuration's would read differently.
+  async function acknowledgmentFor(hardwareEncodes: boolean): Promise<string | undefined> {
+
+    const { host, logEntries, supervisor } = arrangeStreamingHost();
+    const delegate = new TestStreamingDelegate();
+
+    delegate.hardwareEncodes = hardwareEncodes;
+    host.stream = delegate;
+    host.selectSubstrateChannel = (): ChannelProfile => ({ ...makeChannelProfile(host), resolution: [ 3840, 2160, 30 ] });
+
+    await supervisor.reconcile();
+    await settle();
+
+    await supervisor.setRecordingDemand({ config: makeRecordingConfig(), isRecording: true });
+    await settle();
+
+    return hksvAckLine(logEntries);
+  }
+
+  // The acknowledgment names the recording size HomeKit selected, read from the recording configuration, after the channel it records from and before the bitrate
+  // HomeKit selected. On the hardware encoder the marker opens the line, a space after it.
+  test("names the recording resolution and bitrate HomeKit selected", async () => {
+
+    assert.equal(await acknowledgmentFor(false), "HKSV: High [h264], recording 1920x1080@30fps at 2 Mbps.", "the software acknowledgment names the recording size");
+    assert.equal(await acknowledgmentFor(true), "HKSV: " + HKSV_HARDWARE_MARKER + " High [h264], recording 1920x1080@30fps at 2 Mbps.",
+      "the hardware acknowledgment opens with the marker and a space, and names the recording size");
   });
 });
 
