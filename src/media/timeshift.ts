@@ -3,18 +3,18 @@
  * timeshift.ts: UniFi Protect livestream timeshift buffer implementation - a standing, rolling fMP4 window over a camera's livestream.
  */
 import type { Clock, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import type { LivestreamAudioFormat, LivestreamVideoFormat } from "./stream-delegate.ts";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS, PROTECT_SEGMENT_RESOLUTION }
   from "../settings.ts";
 import { formatErrorMessage, isKeyframe } from "homebridge-plugin-utils";
+import { livestreamAudioFormat, livestreamVideoFormat } from "./stream-delegate.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import { EventEmitter } from "node:events";
 import { LIVE_SELF_HEAL_THRESHOLD } from "./livestream-recovery-policy.ts";
-import type { LivestreamAudioFormat } from "./stream-delegate.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import type { Segment } from "unifi-protect";
-import { livestreamAudioFormat } from "./stream-delegate.ts";
 import { logLivestreamIterationError } from "./livestream.ts";
 
 // Why the standing buffer stopped, carried by the `stopped` event. "ended" is a recoverable end - a deliberate stop, a codec-change restart, or an unexpected iterator
@@ -28,11 +28,13 @@ export type TimeshiftStopCause = "ended" | "giveUp";
 // real fragment count is seeded from transmitStart's return instead, since one blob emission is not one fragment.
 export type SegmentRole = "blob" | "live";
 
-// Typed event map for the timeshift buffer. The recording delegate listens for the transmit-session events; the supervisor listens for `stopped`.
+// Typed event map for the timeshift buffer. The recording delegate listens for the transmit-session events; the supervisor listens for `firstKeyframe` and `stopped`.
 //
 // - `segment`: the next fMP4 emission is ready for a transmitting consumer, tagged with its role (a one-shot prebuffer blob or one live fragment).
 // - `discontinuity`: the underlying livestream dropped and recovered while transmitting; the buffer now has a clean keyframe, and the consumer should restart
 //   its decoder with fresh data. Non-terminal - the subscription is still alive and will continue delivering segments.
+// - `firstKeyframe`: the first keyframe since the buffer started has been admitted, so a listener's snapshotSource() reads it. Emitted once per start, after the
+//   buffer has finished with that segment, and never for a later keyframe until a stop and a new start.
 // - `stopped`: the backing subscription has ended for any reason - a deliberate stop, an out-of-band iterator death, or the recovery give-up - carrying the cause so
 //   the supervisor decides whether to re-establish immediately or leave the revival to the availability edge. Emitted unconditionally on every teardown, whether or
 //   not a consumer was transmitting.
@@ -42,6 +44,7 @@ export type SegmentRole = "blob" | "live";
 interface TimeshiftBufferEvents {
 
   discontinuity: [];
+  firstKeyframe: [];
   segment: [ data: Buffer, role: SegmentRole ];
   stopped: [cause: TimeshiftStopCause];
   terminated: [];
@@ -80,6 +83,10 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   private _isTransmitting: boolean;
   private _lastKeyframeTime: number;
   private _pendingDiscontinuity: boolean;
+  // Whether the running subscription's first admitted keyframe is still to be announced. A start's commit arms it, and the announcement clears it before the
+  // `firstKeyframe` event fires, which holds the event to once per start. Only the committed subscription's segments are processed, so an ended subscription announces
+  // nothing, and finalizeSubscription clears the flag with the rest of the subscription's state so a stopped buffer holds nothing armed.
+  private _pendingFirstKeyframe: boolean;
   // The cause the next `stopped` emit will carry. Defaults to "ended" (the recoverable case) and is raised to "giveUp" only when the iterator throws the recovery
   // policy's exhaustion error. Reset to "ended" at every start() head and after every emit, so a latched "giveUp" from an establishment-phase give-up (which never
   // reaches finalizeSubscription because the local subscription was never committed) can never mislabel the next out-of-band death.
@@ -113,6 +120,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     this._isTransmitting = false;
     this._lastKeyframeTime = 0;
     this._pendingDiscontinuity = false;
+    this._pendingFirstKeyframe = false;
     this._pendingStopCause = "ended";
     this._segments = [];
     this.clock = protectCamera.platform.clock;
@@ -197,9 +205,11 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
 
     // Every check has passed. Commit the subscription as the backing state; isStarted flips from false to true atomically with this assignment, and the channel
     // profile commits in the same synchronous frame, so the (isStarted, channelProfile) pair is never observable out of sync. The failed-start paths above never
-    // assign the profile, so external readers never see an entry whose start did not succeed.
+    // assign the profile, so external readers never see an entry whose start did not succeed. The first-keyframe announcement arms here too, because segments reach
+    // the buffer only once this subscription is committed.
     this.subscription = subscription;
     this._channelProfile = channelProfile;
+    this._pendingFirstKeyframe = true;
 
     return true;
   }
@@ -300,6 +310,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     this._channelProfile = null;
     this._isTransmitting = false;
     this._pendingDiscontinuity = false;
+    this._pendingFirstKeyframe = false;
     this.subscription = undefined;
     this.clearBuffer();
 
@@ -388,6 +399,14 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     if(this._isTransmitting) {
 
       this.emit("segment", segment.data, "live");
+    }
+
+    // Announce the first keyframe this start admits. This runs last, after the admission, the trim and the forward above, so the buffer has finished with the segment
+    // before any listener runs, and a listener reading snapshotSource() finds the keyframe in the buffer.
+    if(isKeyframeSegment && this._pendingFirstKeyframe) {
+
+      this._pendingFirstKeyframe = false;
+      this.emit("firstKeyframe");
     }
   }
 
@@ -559,6 +578,13 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
   public get audioFormat(): LivestreamAudioFormat | null {
 
     return this.subscription?.initSegment ? livestreamAudioFormat(this.subscription.initSegment.description) : null;
+  }
+
+  // Return the video format the running livestream carries, read from its init segment's description, or null when the buffer is not running or the stream has no
+  // readable video track. The supervisor's hardware decoder check reads it as the identity of the stream it checks.
+  public get videoFormat(): LivestreamVideoFormat | null {
+
+    return this.subscription?.initSegment ? livestreamVideoFormat(this.subscription.initSegment.description) : null;
   }
 
   // Return the channel profile the running livestream is backed by, or null when the buffer is not running. Kept as a matched pair with `isStarted` on every start

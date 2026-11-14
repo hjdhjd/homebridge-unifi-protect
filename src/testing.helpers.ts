@@ -690,8 +690,10 @@ class TestStreamingController implements Controller {
 /* The stub StreamingDelegate, typed as the abstraction and entirely FFmpeg-free. The controller is the stand-in above, which tests identity-match through the
  * accessory's controller log; ffmpegOptions is the one documented cast boundary on this class - the camera family reads maxSourcePixels off it (via
  * selectSubstrateChannel, never at construction) and hardwareEncodes off it (the HKSV acknowledgment marker), with the ceiling injectable and the encoder answer
- * configurable so the substrate-channel pixel cap and the hardware marker are both exercisable; hksv is null, the correct pre-HKSV-configuration state cleanup reads
- * through this.stream?.hksv?.isRecording; shutdown records its calls; and resetProbesizeOverride is a recordable no-op.
+ * configurable so the substrate-channel pixel cap and the hardware marker are both exercisable, and the timeshift supervisor's hardware decoder check calls
+ * resetHardwareDecoderRefusal and videoDecoder on it, the reset counted and clearing a refusal flag a row can raise, each decoder read recorded with the codec it
+ * names and whether that flag stood, and the decoder answering the empty list of a software decode, so the check never spawns FFmpeg; hksv is null, the correct
+ * pre-HKSV-configuration state cleanup reads through this.stream?.hksv?.isRecording; shutdown records its calls; and resetProbesizeOverride is a recordable no-op.
  */
 export class TestStreamingDelegate implements StreamingDelegate {
 
@@ -700,16 +702,25 @@ export class TestStreamingDelegate implements StreamingDelegate {
   public readonly builtFor: ControllerIdentity;
   public controller: CameraController;
   public readonly ffmpegOptions: StreamingDelegate["ffmpegOptions"];
+  // Whether the hardware decoder's refusal mark stands on this delegate's FFmpeg options. A row raises it in place of a refusal HBPU's process would read, and the
+  // reset clears it, as production's reset clears the mark.
+  public hardwareDecoderRefused = false;
   // Whether this stub reports the host running its hardware encoder, read through the ffmpegOptions.hardwareEncodes closure. Defaults false, the software-neutral state
   // that suppresses the HKSV hardware marker, so a marker test opts in by setting it true before the acknowledgment fires.
   public hardwareEncodes = false;
   public hksv: StreamingDelegate["hksv"];
   public readonly probesize: number;
+  // How many times production cleared the hardware decoder's refusal mark on this delegate's FFmpeg options - the supervisor's decoder check clears it for each new
+  // stream it checks.
+  public resetHardwareDecoderRefusalCalls = 0;
   // How many times production wound this delegate's probesize self-tuning back - the controller-reboot recovery walk calls it.
   public resetProbesizeOverrideCalls = 0;
   // How many times production tore this delegate down - cleanup and the NVR disconnect walk both call shutdown.
   public shutdownCalls = 0;
   public timeshift: StreamingDelegate["timeshift"];
+  // Each read production made of the video decoder arguments on this delegate's FFmpeg options, in order: the input codec it named, and whether the refusal mark
+  // stood at the read, so a row tells a read the mark would have answered from one it did not.
+  public readonly videoDecoderCalls: { inputCodec?: string; refused: boolean }[] = [];
 
   /**
    * Build a stub delegate.
@@ -730,13 +741,26 @@ export class TestStreamingDelegate implements StreamingDelegate {
     // which the stand-in is not, so the crossing takes this one cast; HAP's configureController and removeController take the stand-in as it is.
     this.controller = new TestStreamingController(accessory) as unknown as CameraController;
 
-    // The confined cast boundary: the camera family reads maxSourcePixels and hardwareEncodes off ffmpegOptions. An Infinity ceiling means "no hardware pixel cap" - the
-    // pass-everything-through default - while a finite injected ceiling lets the recording-channel cap path select against a real constraint. The hardwareEncodes closure
-    // reads the configurable field, which defaults false so the HKSV hardware marker is absent unless a test opts in.
+    // The confined cast boundary: the camera family reads maxSourcePixels and hardwareEncodes off ffmpegOptions, and the supervisor's decoder check calls
+    // resetHardwareDecoderRefusal and videoDecoder on it. An Infinity ceiling means "no hardware pixel cap" - the pass-everything-through default - while a finite
+    // injected ceiling lets the recording-channel cap path select against a real constraint. The hardwareEncodes closure reads the configurable field, which defaults
+    // false so the HKSV hardware marker is absent unless a test opts in. The reset is counted and clears the refusal flag, and each videoDecoder read is recorded
+    // and answers the empty list of a software decode, which ends the check before its spawn, so a check over this stub never runs FFmpeg.
     this.ffmpegOptions = {
 
       hardwareEncodes: (): boolean => this.hardwareEncodes,
-      maxSourcePixels: (): number => maxSourcePixels
+      maxSourcePixels: (): number => maxSourcePixels,
+      resetHardwareDecoderRefusal: (): void => {
+
+        this.resetHardwareDecoderRefusalCalls++;
+        this.hardwareDecoderRefused = false;
+      },
+      videoDecoder: (options: { inputCodec?: string } = {}): string[] => {
+
+        this.videoDecoderCalls.push({ inputCodec: options.inputCodec, refused: this.hardwareDecoderRefused });
+
+        return [];
+      }
     } as unknown as StreamingDelegate["ffmpegOptions"];
     this.hksv = null;
 

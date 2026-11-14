@@ -6,25 +6,25 @@
  * delegate consumes it through the configureTimeshifting forwarder and the setRecordingDemand pushes. This suite covers that surface from both directions: through the
  * delegate's public interface (the deferred-offline and resolution narration, and the enable-acknowledgment lifecycle - reconcile-only behaviors that never touch the
  * transmit path, so no recording-process factory is involved) and through the supervisor directly (the demand-edge episode resets, the lifetime's end at shutdown,
- * the buffer's channel-profile lifecycle, and the forwarder's promise-identity join semantics).
+ * the buffer's channel-profile lifecycle, the forwarder's promise-identity join semantics, and the hardware decoder check at each new stream's first keyframe).
  *
  * The arrangement reuses the harness's camera-host double end to end: the segment-yielding parking livestream double fills the buffer so starts genuinely succeed,
  * the controllable livestream double drives the channel-profile lifecycle's failure and out-of-band-death arms, and the recorded log sink carries the narration
  * assertions. The assertions are behavior-first throughout: captured log lines, public buffer state, recorded call counts, and promise identity - never a private field.
  */
 import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
+import type { LivestreamAudioFormat, LivestreamVideoFormat } from "./stream-delegate.ts";
 import { PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
+import { ProtectTimeshiftSupervisor, hardwareDecodeCheckArgs } from "./timeshift-supervisor.ts";
+import { TestClock, assertNoUnhandledRejections, formatLogEntry, logCount, settle } from "homebridge-plugin-utils/testing";
 import { TestStreamingDelegate, makeRecordingDelegateDouble } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
-import { formatLogEntry, logCount, settle } from "homebridge-plugin-utils/testing";
-import { makeChannelProfile, makeControllableLivestreamDouble, makeTestCameraHost } from "./testing.helpers.ts";
+import { makeChannelProfile, makeControllableLivestreamDouble, makeKeyframeFragment, makeTestCameraHost } from "./testing.helpers.ts";
 import type { CameraRecordingConfiguration } from "homebridge";
 import type { ChannelProfile } from "./resolution.ts";
-import type { LivestreamAudioFormat } from "./stream-delegate.ts";
 import type { LivestreamDescription } from "unifi-protect";
 import { ProtectLivestreamUnavailableError } from "unifi-protect";
 import { ProtectRecordingDelegate } from "./record.ts";
-import { ProtectTimeshiftSupervisor } from "./timeshift-supervisor.ts";
 import { RECORDING_AUDIO_STAND_IN } from "./stream-delegate.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
@@ -1557,6 +1557,13 @@ describe("the supervisor's adoption of the derivation's probe subscription", () 
   });
 });
 
+// Stop the running buffer, which asks for the re-establishing pass itself, and let that pass start the buffer on the next subscription.
+async function restart(supervisor: ProtectTimeshiftSupervisor): Promise<void> {
+
+  supervisor.buffer.stop();
+  await settle();
+}
+
 describe("the supervisor's audio-format narration at a buffer start", () => {
 
   const ADVERTISED = { channels: 1, codec: "aac", sampleRate: 16000 } as const;
@@ -1590,13 +1597,6 @@ describe("the supervisor's audio-format narration at a buffer start", () => {
     host.livestreamSubscriptions = formats.map((format) => makeControllableLivestreamDouble({ description: describedAs(format) }));
 
     return { logEntries, supervisor: new ProtectTimeshiftSupervisor(host, { adopt: null, advertised }) };
-  }
-
-  // Stop the running buffer, which asks for the re-establishing pass itself, and let that pass start the buffer on the next subscription.
-  async function restart(supervisor: ProtectTimeshiftSupervisor): Promise<void> {
-
-    supervisor.buffer.stop();
-    await settle();
   }
 
   test("a start whose format differs logs the restart hint once, a restart on the same format logs nothing more, and a return to the advertised one resets it",
@@ -1699,5 +1699,323 @@ describe("the supervisor's audio-format narration at a buffer start", () => {
     assert.equal(logCount(logEntries, "info", RESTART_HINT), 0, "a camera with no recording arm is never narrated");
 
     supervisor.shutdown();
+  });
+});
+
+describe("the supervisor's hardware decoder check at a start's first keyframe", () => {
+
+  // The arranged camera and the handles a row drives it through: firstKeyframes counts the buffer's events, so a row can tell a check that declined from an event that
+  // never fired, logEntries carries the check's debug lines, and selection names the channel the next start runs on.
+  interface DecoderCheckArrange {
+
+    clock: TestClock;
+    doubles: ControllableLivestreamDouble[];
+    firstKeyframes: { count: number };
+    host: TestCameraHost;
+    logEntries: readonly TestLogEntry[];
+    selection: { channel: number };
+    stream: TestStreamingDelegate;
+    supervisor: ProtectTimeshiftSupervisor;
+  }
+
+  // H.264 at the frame sizes of the G2 Pro's high and medium channels: the video formats the streams of a start on each channel carry.
+  const HIGH: LivestreamVideoFormat = { codec: "h264", height: 1600, width: 1200 };
+  const MEDIUM: LivestreamVideoFormat = { codec: "h264", height: 1280, width: 960 };
+
+  // A stream's description as unifi-protect reads it from the init segment: a video track in the given format, or none for a stream that carries no video track,
+  // beside an AAC audio track.
+  function describedAs(format: LivestreamVideoFormat | null): LivestreamDescription {
+
+    const audio = { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 16000 } as const;
+
+    return { tracks: format ? [ { ...format, id: 1, kind: "video", level: 40, profile: 77 }, audio ] : [audio] };
+  }
+
+  // A camera under the streaming arm's demand whose successive buffer starts run on controllable subscriptions carrying the given video formats in order, null for a
+  // stream with no video track, on the channel the selection names, with the stub delegate installed unless a row withholds it. The host's clock reads the test
+  // epoch, so an admitted keyframe reads fresh, unless a row hands it a clock at zero, where snapshotSource reads a keyframe as none until the row advances it.
+  function arrangeCheck({ clock: startClock, delegate = true, streams }: { clock?: TestClock; delegate?: boolean; streams: (LivestreamVideoFormat | null)[] }):
+  DecoderCheckArrange {
+
+    const { clock, controller, host, logEntries } = makeTestCameraHost({ clock: startClock });
+
+    controllers.push(controller);
+
+    const doubles = streams.map((format) => makeControllableLivestreamDouble({ description: describedAs(format) }));
+    const firstKeyframes = { count: 0 };
+    const selection = { channel: 0 };
+    const stream = new TestStreamingDelegate();
+    const supervisor = new ProtectTimeshiftSupervisor(host);
+
+    if(delegate) {
+
+      host.stream = stream;
+    }
+
+    host.selectSubstrateChannel = (): ChannelProfile => makeChannelProfile(host, selection.channel);
+    host.usesTimeshiftLivestream = true;
+    host.livestreamSubscriptions = [...doubles];
+    supervisor.buffer.on("firstKeyframe", (): void => { firstKeyframes.count++; });
+
+    return { clock, doubles, firstKeyframes, host, logEntries, selection, stream, supervisor };
+  }
+
+  // Deliver one keyframe on a subscription and let the buffer and the check it starts run.
+  async function deliverKeyframe(double: ControllableLivestreamDouble | undefined): Promise<void> {
+
+    double?.push({ ...makeKeyframeFragment(), type: "media" });
+    await settle();
+  }
+
+  test("a start's first keyframe clears the decoder's refusal mark once", async () => {
+
+    const { doubles, firstKeyframes, stream, supervisor } = arrangeCheck({ streams: [HIGH] });
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[0]);
+
+    assert.equal(firstKeyframes.count, 1, "the vacuity guard: the start's first keyframe reached the listeners");
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 1, "the check cleared the mark for the stream it checks");
+
+    await deliverKeyframe(doubles[0]);
+
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 1, "a later keyframe on the same start runs no further check");
+
+    supervisor.shutdown();
+  });
+
+  // A restart on the same channel hands the decoder the same stream, so the mark the first check left stands and no further check runs.
+  test("a restart on the same channel clears the mark no further", async () => {
+
+    const { doubles, firstKeyframes, host, stream, supervisor } = arrangeCheck({ streams: [ HIGH, HIGH ] });
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[0]);
+    await restart(supervisor);
+    await deliverKeyframe(doubles[1]);
+
+    assert.equal(host.livestreamCalls.length, 2, "the vacuity guard: the restart ran on a second subscription");
+    assert.equal(firstKeyframes.count, 2, "the vacuity guard: the restart's first keyframe reached the listeners");
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 1, "the restart on the same stream left the mark as the first check found it");
+
+    supervisor.shutdown();
+  });
+
+  // A start on a channel of another width hands the decoder another stream, so the mark is cleared and the stream checked again.
+  test("a start on a channel of another width clears the mark again", async () => {
+
+    const { doubles, selection, stream, supervisor } = arrangeCheck({ streams: [ HIGH, MEDIUM ] });
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[0]);
+
+    selection.channel = 1;
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[1]);
+
+    assert.equal(supervisor.buffer.channelProfile?.channel.id, 1, "the vacuity guard: the buffer runs on the second channel");
+    assert.notEqual(supervisor.buffer.videoFormat?.width, HIGH.width, "the vacuity guard: the second channel's stream differs in width");
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 2, "the start on another stream cleared the mark again");
+
+    supervisor.shutdown();
+  });
+
+  // The check reads the frame size from the stream's own init segment, so a restart on the same channel whose stream differs in height alone hands the decoder
+  // another stream, and the mark is cleared and the stream checked again.
+  test("a restart on the same channel whose stream differs in height alone clears the mark again", async () => {
+
+    const taller = { ...HIGH, height: 1920 };
+    const { doubles, host, stream, supervisor } = arrangeCheck({ streams: [ HIGH, taller ] });
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[0]);
+    await restart(supervisor);
+    await deliverKeyframe(doubles[1]);
+
+    assert.equal(host.livestreamCalls.length, 2, "the vacuity guard: the restart ran on a second subscription");
+    assert.equal(supervisor.buffer.channelProfile?.channel.id, 0, "the vacuity guard: the restart runs on the same channel");
+    assert.deepEqual(supervisor.buffer.videoFormat, taller, "the vacuity guard: the buffer runs on the stream of another height");
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 2, "the stream of another height cleared the mark again");
+
+    supervisor.shutdown();
+  });
+
+  // The width holds the stream's identity as the height does, and it too is read from the stream's own init segment rather than from the channel.
+  test("a restart on the same channel whose stream differs in width alone clears the mark again", async () => {
+
+    const narrower = { ...HIGH, width: 1000 };
+    const { doubles, stream, supervisor } = arrangeCheck({ streams: [ HIGH, narrower ] });
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[0]);
+    await restart(supervisor);
+    await deliverKeyframe(doubles[1]);
+
+    assert.equal(supervisor.buffer.channelProfile?.channel.id, 0, "the vacuity guard: the restart runs on the same channel");
+    assert.deepEqual(supervisor.buffer.videoFormat, narrower, "the vacuity guard: the buffer runs on the stream of another width");
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 2, "the stream of another width cleared the mark again");
+
+    supervisor.shutdown();
+  });
+
+  // The decoder is asked for the codec the stream's own init segment names, so a restart whose stream moves to HEVC at the same size is checked again, for HEVC.
+  test("a restart whose stream differs in codec alone is checked again with that codec", async () => {
+
+    const { doubles, stream, supervisor } = arrangeCheck({ streams: [ HIGH, { ...HIGH, codec: "h265" } ] });
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[0]);
+    await restart(supervisor);
+    await deliverKeyframe(doubles[1]);
+
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 2, "the HEVC stream cleared the mark again");
+    assert.deepEqual(stream.videoDecoderCalls.map((call) => call.inputCodec), [ "h264", "h265" ], "each check asked for the decoder of its own stream's codec");
+
+    supervisor.shutdown();
+  });
+
+  // A stream whose init segment describes no video track gives the check no stream to name, so its first keyframe clears nothing and asks the decoder nothing.
+  test("a start whose stream carries no video track checks nothing", async () => {
+
+    const { doubles, firstKeyframes, stream, supervisor } = arrangeCheck({ streams: [null] });
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[0]);
+
+    assert.equal(firstKeyframes.count, 1, "the vacuity guard: the first keyframe reached the listeners");
+    assert.equal(supervisor.buffer.snapshotSource().kind, "fresh", "the vacuity guard: the buffer holds a fresh keyframe");
+    assert.equal(supervisor.buffer.videoFormat, null, "the vacuity guard: the running stream carries no video track");
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 0, "no video track, no reset");
+    assert.equal(stream.videoDecoderCalls.length, 0, "no video track, no decoder read");
+
+    supervisor.shutdown();
+  });
+
+  // Marked options answer software decoding, so the check clears the mark before it reads the decoder arguments. A refusal standing when a start on another size
+  // admits its first keyframe is cleared before that check asks the decoder anything.
+  test("with the refusal mark standing, a start on another size reads the decoder only once the mark is cleared", async () => {
+
+    const { doubles, selection, stream, supervisor } = arrangeCheck({ streams: [ HIGH, MEDIUM ] });
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[0]);
+
+    stream.hardwareDecoderRefused = true;
+    selection.channel = 1;
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[1]);
+
+    assert.equal(stream.videoDecoderCalls.length, 2, "the vacuity guard: the start on another size read the decoder arguments");
+    assert.equal(stream.videoDecoderCalls.filter((call) => call.refused).length, 0, "no decoder read was made while the mark stood");
+    assert.equal(stream.hardwareDecoderRefused, false, "the start on another size cleared the mark");
+
+    supervisor.shutdown();
+  });
+
+  // The listener discards the check's promise, so a fault anywhere in the check has to end inside it. A buffer member that throws where the check reads its stream's
+  // format ends as one debug line and floats no rejection.
+  test("a buffer member that throws inside the check floats no rejection and logs one debug line", async () => {
+
+    const { doubles, firstKeyframes, logEntries, stream, supervisor } = arrangeCheck({ streams: [HIGH] });
+
+    await supervisor.reconcile();
+
+    Object.defineProperty(supervisor.buffer, "videoFormat", { configurable: true, get: (): never => { throw new Error("The init segment is unreadable."); } });
+
+    await assertNoUnhandledRejections(async () => deliverKeyframe(doubles[0]));
+
+    assert.equal(firstKeyframes.count, 1, "the vacuity guard: the first keyframe reached the listeners");
+    assert.equal(logCount(logEntries, "debug", "decoder check ended without an answer: The init segment is unreadable."), 1, "the fault ended as one debug line");
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 0, "the check went no further than the fault");
+
+    supervisor.shutdown();
+  });
+
+  // A delegate member that throws partway through the check, after the stream is recorded and the mark cleared, ends the same way.
+  test("a delegate member that throws inside the check floats no rejection and logs one debug line", async () => {
+
+    const { doubles, logEntries, stream, supervisor } = arrangeCheck({ streams: [HIGH] });
+
+    stream.ffmpegOptions.videoDecoder = (): string[] => { throw new Error("The decoder arguments are unavailable."); };
+
+    await supervisor.reconcile();
+    await assertNoUnhandledRejections(async () => deliverKeyframe(doubles[0]));
+
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 1, "the vacuity guard: the check reached the decoder read after clearing the mark");
+    assert.equal(logCount(logEntries, "debug", "decoder check ended without an answer: The decoder arguments are unavailable."), 1,
+      "the fault ended as one debug line");
+
+    supervisor.shutdown();
+  });
+
+  // The check takes its stream's identity from the stream, so a camera whose record has vanished by the time its start delivers a first keyframe is still checked.
+  test("a first keyframe after the camera's record vanished still runs the check", async () => {
+
+    const { doubles, host, stream, supervisor } = arrangeCheck({ streams: [HIGH] });
+
+    await supervisor.reconcile();
+
+    Object.defineProperty(host, "ufp", { configurable: true, get: (): never => { throw new Error("The record for this device is absent."); } });
+
+    await assertNoUnhandledRejections(async () => deliverKeyframe(doubles[0]));
+
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 1, "the check cleared the mark with the record gone");
+    assert.deepEqual(stream.videoDecoderCalls.map((call) => call.inputCodec), ["h264"], "the check asked for the decoder of the stream's codec");
+
+    supervisor.shutdown();
+  });
+
+  // With no delegate in hand there are no FFmpeg options to check against, so the first keyframe records nothing, and a later start on the same stream with the
+  // delegate installed still runs its check.
+  test("a first keyframe with no delegate checks nothing and records nothing", async () => {
+
+    const { doubles, firstKeyframes, host, stream, supervisor } = arrangeCheck({ delegate: false, streams: [ HIGH, HIGH ] });
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[0]);
+
+    assert.equal(firstKeyframes.count, 1, "the vacuity guard: the first keyframe reached the listeners");
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 0, "no delegate, no check");
+
+    host.stream = stream;
+
+    await restart(supervisor);
+    await deliverKeyframe(doubles[1]);
+
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 1, "the declined check recorded no stream, so the same stream is checked once the delegate is in hand");
+
+    supervisor.shutdown();
+  });
+
+  // A keyframe admitted at a clock's zero base reads as no keyframe to snapshotSource, so the check has no fresh source to decode, runs nothing and records nothing,
+  // and the next start on the same stream, with the clock advanced, runs its check.
+  test("a first keyframe with no fresh source checks nothing and records nothing", async () => {
+
+    const { clock, doubles, firstKeyframes, stream, supervisor } = arrangeCheck({ clock: new TestClock(), streams: [ HIGH, HIGH ] });
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[0]);
+
+    assert.equal(firstKeyframes.count, 1, "the vacuity guard: the first keyframe reached the listeners");
+    assert.equal(supervisor.buffer.snapshotSource().kind, "empty", "the vacuity guard: the buffer has no fresh source to give");
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 0, "no fresh source, no check");
+
+    clock.advance(1000);
+
+    await restart(supervisor);
+    await deliverKeyframe(doubles[1]);
+
+    assert.equal(stream.resetHardwareDecoderRefusalCalls, 1, "the declined check recorded no stream, so the same stream is checked once a fresh source is in hand");
+
+    supervisor.shutdown();
+  });
+
+  test("the check decodes one keyframe from standard input with the decoder arguments it is handed", () => {
+
+    assert.deepEqual(hardwareDecodeCheckArgs([ "-hwaccel", "x" ]),
+      [ "-hide_banner", "-nostats", "-hwaccel", "x", "-skip_frame", "nointra", "-f", "mp4", "-i", "pipe:0", "-frames:v", "1", "-f", "null", "-" ],
+      "the arguments place the decoder ahead of the input and decode one frame to the null muxer");
   });
 });

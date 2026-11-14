@@ -63,15 +63,18 @@ function answerFrom(source: SnapshotSourceTag, image: Nullable<Buffer>): Nullabl
   return image ? { image, source } : null;
 }
 
-// A snapshot-source FFmpeg pipeline whose non-zero exits are routine, not exceptional: each source (timeshift, RTSP) is attempted in turn and a miss simply falls through
-// to the next source, so a failed exit is expected. We override the base class's ERROR teardown dump - which would otherwise spam the log on every routine miss - with a
-// single debug line, deliberately suppressing the ERROR dump that routine misses do not warrant; the homebridge-plugin-utils base exposes logFailedTeardown as exactly
-// this hook for known-benign failure shapes. The separate crop pipeline keeps the default ERROR logging, since a crop failure is genuinely noteworthy.
-class SnapshotFfmpegExec extends FfmpegExec {
+/**
+ * A one-shot FFmpeg pipeline whose non-zero exit is routine rather than exceptional, so a failed teardown logs one debug line in place of the base class's ERROR dump
+ * of the command and its stderr, which would otherwise fill the log on every routine failure. The homebridge-plugin-utils base exposes logFailedTeardown as exactly
+ * this hook for known-benign failure shapes. A snapshot source is such a pipeline: the timeshift and RTSP sources are tried in turn, so a miss simply falls through
+ * to the next source. The timeshift supervisor's hardware decoder check is too: it reads only whether FFmpeg reports the decoder's refusal, which the base
+ * records whatever the exit. The separate crop pipeline keeps the default ERROR logging, since a crop failure is genuinely noteworthy.
+ */
+export class QuietFfmpegExec extends FfmpegExec {
 
   protected override logFailedTeardown(): void {
 
-    this.log.debug("A snapshot source FFmpeg pipeline exited without producing an image; falling through to the next source.");
+    this.log.debug("An FFmpeg pipeline whose failure is routine exited without completing, and its caller carries on without its output.");
   }
 }
 
@@ -375,7 +378,7 @@ export class ProtectSnapshot {
 
     // Instantiate and spawn FFmpeg. The composed signal ties this pipeline's lifetime to the acquisition deadline, so a timeout kills the child rather than leaving it
     // running. When we have a timeshift buffer it is fed as canned stdin; the RTSP source reads from its input URL and supplies no stdin.
-    const ffmpeg = new SnapshotFfmpegExec(this.protectCamera.stream.ffmpegOptions, { args: commandLineOptions, signal, stdin: buffer });
+    const ffmpeg = new QuietFfmpegExec(this.protectCamera.stream.ffmpegOptions, { args: commandLineOptions, signal, stdin: buffer });
 
     // Retrieve the snapshot. The result accessor rejects only when the child never spawned (e.g., a missing FFmpeg binary), which we treat as this source failing so the
     // acquisition falls through to the next source rather than letting the error escape.

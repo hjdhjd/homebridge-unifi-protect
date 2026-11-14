@@ -5,13 +5,14 @@
 import { CoalescingTask, HbpuAbortError, formatBps, formatErrorMessage } from "homebridge-plugin-utils";
 import { HARDWARE_TRANSCODE_MARKER, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import type { HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
+import type { LivestreamAudioFormat, LivestreamVideoFormat } from "./stream-delegate.ts";
 import { RECORDING_AUDIO_STAND_IN, describeAudioFormat, recordingAdvertisementOf } from "./stream-delegate.ts";
 import type { CameraRecordingConfiguration } from "homebridge";
 import type { ChannelProfile } from "./resolution.ts";
-import type { LivestreamAudioFormat } from "./stream-delegate.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
+import { QuietFfmpegExec } from "./snapshot.ts";
 import { formatResolution } from "./resolution.ts";
 
 // The recording demand the HKSV recording delegate pushes into the supervisor: the recording configuration HomeKit has selected (undefined when HomeKit cannot
@@ -41,10 +42,11 @@ function isSameEntry(candidate: ChannelProfile, other: Nullable<ChannelProfile>)
  *
  * The supervisor owns the standing timeshift buffer's lifecycle: it constructs and holds the buffer, reconciles the buffer's running state against its demand arms -
  * buffer-backed livestreaming (the camera's live-view toggle) and HomeKit Secure Video recording - together with the camera's live reachability, narrates the
- * deferral / resumption / acknowledgment story of that reconciliation, and owns the lifetime signal whose abort, on the controller-disconnect and camera-teardown
- * paths, ends supervision for good. The buffer runs whenever either arm demands it, so the same pooled socket feeds live views, HomeKit Secure Video, and snapshots
- * under one quality policy. The streaming delegate constructs one supervisor for every camera, before the recording delegate that may consume it - a
- * recording delegate cannot exist without its supervisor, so buffer supervision has exactly one owner and one construction path.
+ * deferral / resumption / acknowledgment story of that reconciliation, checks each new stream the buffer runs on against the host's hardware video decoder, and owns
+ * the lifetime signal whose abort, on the controller-disconnect and camera-teardown paths, ends supervision for good. The buffer runs whenever either arm demands
+ * it, so the same pooled socket feeds live views, HomeKit Secure Video, and snapshots under one quality policy. The streaming delegate constructs one supervisor for
+ * every camera, before the recording delegate that may consume it - a recording delegate cannot exist without its supervisor, so buffer supervision has exactly one
+ * owner and one construction path.
  */
 export class ProtectTimeshiftSupervisor {
 
@@ -55,6 +57,10 @@ export class ProtectTimeshiftSupervisor {
   // its stream would compute against it.
   private readonly advertised: LivestreamAudioFormat;
   public readonly buffer: ProtectTimeshiftBuffer;
+  // The video format of the stream the hardware video decoder was last checked against, or null before the first check. Starts on equal formats hand the decoder the
+  // same stream, so a start on that stream runs no check and keeps HBPU's refusal mark as it stands, while a start on another clears the mark and checks again. A
+  // rebuilt streaming delegate constructs a fresh supervisor beside its fresh FFmpeg options, so this record and the mark it answers for begin and end together.
+  private checkedStream: Nullable<LivestreamVideoFormat>;
   // The deferral episode in flight. Opened when the deferral edge fires and closed only when the resolution actually narrates (recording has re-established) or the
   // episode is explicitly ended (recording disabled) - it PERSISTS in between, never re-derived from live inputs, so a failed first post-online start cannot cost the
   // later successful start its resumption narration. That persistence is why the edge-detect input below (wasDeferredOffline) stays a separate per-pass rolling
@@ -95,6 +101,7 @@ export class ProtectTimeshiftSupervisor {
     this.adopted = options.adopt;
     this.advertised = options.advertised;
     this.buffer = new ProtectTimeshiftBuffer(protectCamera, { signal: this.lifetime.signal });
+    this.checkedStream = null;
     this.deferralEpisode = "none";
     this.demand = { config: undefined, isRecording: false };
     this.hasAcknowledgedRecording = false;
@@ -127,6 +134,21 @@ export class ProtectTimeshiftSupervisor {
 
         void this.reconcile();
       }
+    });
+
+    /* Check the stream against the host's hardware video decoder when a start admits its first keyframe, so a stream the decoder cannot open is decoded in software
+     * before its first live view or recording. The check runs detached under the supervisor's lifetime, so shutdown ends one still in flight, and its answer reaches
+     * the delegate's FFmpeg options through HBPU's process, which marks them when FFmpeg reports the decoder's refusal. The check ends every fault it meets as one
+     * debug line of its own, so the promise discarded here never rejects.
+     *
+     * The check leaves a window open by design. A check still running when the buffer restarts on another stream is not ended by that restart, so a refusal it
+     * reports after the new stream's reset marks the new stream. The window is the check's own fraction of a second against the seconds a new start takes to deliver
+     * its first keyframe, and the consequence is software decoding on that stream until it next changes, never a failed view. HBPU's process-level detection is the
+     * backstop for every stream this check does not reach, catching its refusal at its first use.
+     */
+    this.buffer.on("firstKeyframe", (): void => {
+
+      void this.checkHardwareDecoder();
     });
   }
 
@@ -438,6 +460,55 @@ export class ProtectTimeshiftSupervisor {
     }
   }
 
+  /* Check the running stream against the host's hardware video decoder, the body of the firstKeyframe listener. It needs the delegate, whose FFmpeg options the
+   * check's answer marks, the stream's video format, and a fresh keyframe to decode, and it does nothing without each of them. The format is the stream's own, read
+   * from its init segment, so it names the codec and the frame size the decoder is handed, and a restart onto a stream of another codec or frame size is checked at
+   * its first keyframe, whichever channel it runs on. A start on the stream last checked keeps HBPU's mark as it stands. A start on another records the stream and
+   * clears the mark before reading the decoder arguments, because marked options answer software decoding and would leave nothing to check. The stream is recorded
+   * before its check runs, so a check that fails or never spawns is not retried on the same stream. An empty answer means the host decodes this stream in software
+   * already.
+   *
+   * The listener discards this promise, so a rejection that escaped would float as an unhandled rejection. The whole body therefore runs inside the guard, which
+   * ends any fault, a child that never spawned among them, as one debug line and leaves that stream to HBPU's process-level detection at its first use. The check's
+   * process logs a failed exit at debug on its own.
+   */
+  private async checkHardwareDecoder(): Promise<void> {
+
+    try {
+
+      const delegate = this.protectCamera.stream;
+      const identity = this.buffer.videoFormat;
+      const source = this.buffer.snapshotSource();
+
+      if(!delegate || !identity || (source.kind !== "fresh")) {
+
+        return;
+      }
+
+      if((identity.codec === this.checkedStream?.codec) && (identity.height === this.checkedStream.height) && (identity.width === this.checkedStream.width)) {
+
+        return;
+      }
+
+      this.checkedStream = identity;
+      delegate.ffmpegOptions.resetHardwareDecoderRefusal();
+
+      const decoder = delegate.ffmpegOptions.videoDecoder({ inputCodec: identity.codec });
+
+      if(!decoder.length) {
+
+        return;
+      }
+
+      this.log.debug("Checking whether the hardware video decoder can open this camera's %s stream at %sx%s.", identity.codec, identity.width, identity.height);
+
+      await new QuietFfmpegExec(delegate.ffmpegOptions, { args: hardwareDecodeCheckArgs(decoder), signal: this.lifetime.signal, stdin: source.data }).result();
+    } catch(error) {
+
+      this.log.debug("The hardware video decoder check ended without an answer: %s.", formatErrorMessage(error));
+    }
+  }
+
   // Shut buffer supervision down for good - the terminal teardown the controller-disconnect and camera-removal paths call. Aborts the lifetime so no subsequent or
   // in-flight reconcile pass can start the buffer again, then stops the buffer synchronously, releasing a committed subscription's pool seat inside this call. The
   // abort comes first because the stop emits its stopped event synchronously, and the reconcile the listener asks for must already find the lifetime over, so it
@@ -466,4 +537,26 @@ export class ProtectTimeshiftSupervisor {
       this.adopted = null;
     }
   }
+}
+
+/**
+ * The FFmpeg arguments for the supervisor's hardware decoder check: one keyframe of a camera's stream, read from standard input, decoded with the given decoder
+ * arguments and discarded. When the host's hardware decoder cannot open the stream, FFmpeg reports its refusal on stderr, and HBPU's process reads that line and marks
+ * the FFmpeg options it runs over. Pure over the decoder arguments, so the command the check spawns is testable without spawning it.
+ *
+ * @param decoder - The video decoder arguments the camera's FFmpeg options give for its stream.
+ *
+ * @returns The arguments for one decode of the keyframe on standard input to FFmpeg's null muxer.
+ */
+export function hardwareDecodeCheckArgs(decoder: readonly string[]): string[] {
+
+  // -hide_banner         Suppress printing the startup banner in FFmpeg.
+  // -nostats             Suppress printing progress reports in FFmpeg.
+  // [video decoder]      The decoder arguments under check, hardware-accelerated for the stream's codec.
+  // -skip_frame nointra  Decode only intra frames, so the one frame decoded is the keyframe the input carries.
+  // -f mp4               Tell FFmpeg that it should expect an MP4-encoded input stream.
+  // -i pipe:0            Read the input from standard input.
+  // -frames:v 1          Decode a single video frame.
+  // -f null -            Hand the decoded frame to FFmpeg's null muxer, which discards it, since only the decoder's answer matters.
+  return [ "-hide_banner", "-nostats", ...decoder, "-skip_frame", "nointra", "-f", "mp4", "-i", "pipe:0", "-frames:v", "1", "-f", "null", "-" ];
 }

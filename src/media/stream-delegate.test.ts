@@ -7,11 +7,12 @@
  * derivation is read term by term against the media host double, and both the production delegate and the stub factory are shown to capture exactly what the derivation
  * answers, so the identity a controller is built for and the identity the reconcile checks it against cannot drift apart. The samplerate table walks the doorbell
  * axis. The recording audio format helpers are walked row by row: the format read from a description, the stand-in, the mapping between hertz and HomeKit's
- * recording rates in both directions, the advertisement a stream's format becomes, the copy-or-transcode match with each way it can fail, and the log rendering.
+ * recording rates in both directions, the advertisement a stream's format becomes, the copy-or-transcode match with each way it can fail, and the log rendering. The
+ * video format read from a description is walked the same way.
  */
 import { AudioRecordingCodecType, AudioRecordingSamplerate, AudioStreamingSamplerate } from "homebridge-plugin-utils";
-import { RECORDING_AUDIO_STAND_IN, controllerCapabilityAppeared, controllerIdentityOf, describeAudioFormat, livestreamAudioFormat, recordingAdvertisementOf,
-  recordingAudioMatches, recordingSamplerateOf, sampleRateHzOf, streamingSamplerates } from "./stream-delegate.ts";
+import { RECORDING_AUDIO_STAND_IN, controllerCapabilityAppeared, controllerIdentityOf, describeAudioFormat, livestreamAudioFormat, livestreamVideoFormat,
+  recordingAdvertisementOf, recordingAudioMatches, recordingSamplerateOf, sampleRateHzOf, streamingSamplerates } from "./stream-delegate.ts";
 import { after, describe, test } from "node:test";
 import type { ControllerIdentity } from "./stream-delegate.ts";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
@@ -39,6 +40,10 @@ const ALL: ControllerIdentity = { hksvCapable: true, isDoorbell: true, twoWayAud
 
 // Every term of the identity, read off the exhaustive literal above.
 const TERMS = Object.keys(NONE) as (keyof ControllerIdentity)[];
+
+// A video track and an audio track as unifi-protect describes them, assembled per row.
+const VIDEO = { codec: "h264", height: 1080, id: 1, kind: "video", level: 40, profile: 77, width: 1920 } as const;
+const AAC = { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 8000 } as const;
 
 describe("controllerCapabilityAppeared - the rising edge over every term", () => {
 
@@ -143,10 +148,6 @@ describe("streamingSamplerates - the doorbell axis", () => {
 
 describe("the recording audio format helpers", () => {
 
-  // A video track and an audio track as unifi-protect describes them, assembled per row.
-  const VIDEO = { codec: "h264", height: 1080, id: 1, kind: "video", level: 40, profile: 77, width: 1920 } as const;
-  const AAC = { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 8000 } as const;
-
   // HomeKit's selected recording codec at a given rate, one channel and AAC-LC unless a row says otherwise.
   function selected(samplerate: AudioRecordingSamplerate): { audioChannels?: number; samplerate: AudioRecordingSamplerate; type: AudioRecordingCodecType } {
 
@@ -220,5 +221,20 @@ describe("the recording audio format helpers", () => {
     assert.equal(describeAudioFormat({ channels: 2, codec: "aac", sampleRate: 16000 }), "16 kHz stereo", "a two-channel stream renders as stereo");
     assert.equal(describeAudioFormat({ channels: 2, codec: "opus", sampleRate: 48000 }), "48 kHz stereo Opus",
       "an Opus stream names its codec, so formats that differ by codec alone read differently");
+  });
+});
+
+describe("the video format a stream describes", () => {
+
+  test("livestreamVideoFormat reads the first video track, and nothing for an unreadable first video track, an audio-only stream, or no tracks", () => {
+
+    assert.deepEqual(livestreamVideoFormat({ tracks: [ AAC, VIDEO ] }), { codec: "h264", height: 1080, width: 1920 },
+      "a video track reads as its codec and frame size, wherever it sits among the tracks");
+    assert.deepEqual(livestreamVideoFormat({ tracks: [ { ...VIDEO, codec: "h265", height: 1512, width: 2688 }, { ...VIDEO, id: 3 }, AAC ] }),
+      { codec: "h265", height: 1512, width: 2688 }, "the first video track is the one read, though another follows");
+    assert.equal(livestreamVideoFormat({ tracks: [ { codec: "unknown", id: 1, kind: "video", sampleEntry: "mp4v" }, { ...VIDEO, id: 3 } ] }), null,
+      "an unreadable first video track reads as nothing, though a readable one follows");
+    assert.equal(livestreamVideoFormat({ tracks: [AAC] }), null, "an audio-only stream reads as nothing");
+    assert.equal(livestreamVideoFormat({ tracks: [] }), null, "a stream with no tracks reads as nothing");
   });
 });

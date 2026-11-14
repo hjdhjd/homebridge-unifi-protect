@@ -100,6 +100,28 @@ export function livestreamAudioFormat(description: LivestreamDescription): Lives
   return { channels: track.channels, codec: track.codec, sampleRate: track.sampleRate };
 }
 
+// The video format a camera's livestream carries, as its init segment describes it: the codec and the coded frame size in pixels.
+export interface LivestreamVideoFormat {
+
+  readonly codec: "av1" | "h264" | "h265";
+  readonly height: number;
+  readonly width: number;
+}
+
+// The video format a livestream carries, read from its init segment's description: the first video track, or null when the stream has no video track or
+// unifi-protect could not read that track's configuration.
+export function livestreamVideoFormat(description: LivestreamDescription): LivestreamVideoFormat | null {
+
+  const track = description.tracks.find((candidate) => candidate.kind === "video");
+
+  if((track?.kind !== "video") || (track.codec === "unknown")) {
+
+    return null;
+  }
+
+  return { codec: track.codec, height: track.height, width: track.width };
+}
+
 // The HomeKit recording sample rate a rate in hertz names, or null when HomeKit has no recording rate for it.
 export function recordingSamplerateOf(hz: number): AudioRecordingSamplerate | null {
 

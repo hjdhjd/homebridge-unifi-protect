@@ -2,7 +2,7 @@
  *
  * timeshift.test.ts: Behavior coverage of the HKSV timeshift buffer - the first standalone net over ProtectTimeshiftBuffer.
  *
- * The timeshift buffer's public surface (the segment/discontinuity/terminated events, the start/stop/transmit lifecycle, the buffer/getLast/snapshotSource/
+ * The timeshift buffer's public surface (the segment/discontinuity/firstKeyframe/terminated events, the start/stop/transmit lifecycle, the buffer/getLast/snapshotSource/
  * getKeyframeAlignedStart read helpers, and the selfHeal reboot) has only ever been exercised indirectly through the recording-delegate suites. This suite drives it as a
  * STANDALONE unit - there is no recording delegate in the loop, so the timeshift's own emission decisions are asserted directly rather than conflated with a consumer's.
  *
@@ -19,6 +19,7 @@
  */
 import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
 import { ProtectClient, ProtectLivestreamUnavailableError } from "unifi-protect";
+import type { SegmentRole, SnapshotSource } from "./timeshift.ts";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { after, describe, test } from "node:test";
 import { makeChannelProfile, makeControllableLivestreamDouble, makeKeyframeFragment, makeNonKeyframeFragment, makeTestCameraHost } from "./testing.helpers.ts";
@@ -26,7 +27,6 @@ import { AMCREST_INIT_SEGMENT } from "../camera.fixtures.ts";
 import { PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "../settings.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import type { Segment } from "unifi-protect";
-import type { SegmentRole } from "./timeshift.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 import { settle } from "homebridge-plugin-utils/testing";
@@ -906,6 +906,88 @@ describe("timeshift buffer behavior", () => {
     assert.equal(timeshift.snapshotSource().kind, "empty", "snapshotSource reads empty once its only keyframe has been trimmed out, despite a fresh keyframe time");
   });
 
+  // firstKeyframe.
+
+  // The event keys on the first keyframe a start admits, not on the first segment, and fires once: a non-keyframe admitted ahead of it fires nothing, and a later
+  // keyframe on the same start fires nothing more.
+  test("firstKeyframe fires once at the first keyframe a start admits, and not for a later keyframe", async () => {
+
+    const { clock, double, timeshift } = await buildStartedTimeshift();
+
+    let fired = 0;
+
+    timeshift.on("firstKeyframe", (): void => { fired++; });
+    clock.advance(1000);
+    double.push(makeMediaSegment(makeNonKeyframeFragment()));
+
+    await settle();
+
+    assert.equal(fired, 0, "a non-keyframe admitted first fires nothing");
+
+    double.push(makeMediaSegment(makeKeyframeFragment()));
+
+    await settle();
+
+    assert.equal(fired, 1, "the first keyframe the start admits fires the event");
+
+    double.push(makeMediaSegment(makeKeyframeFragment()));
+
+    await settle();
+
+    assert.equal(fired, 1, "a later keyframe on the same start fires nothing more");
+  });
+
+  // Each start announces its own first keyframe, so a stop and a new start fire the event again at the new subscription's first keyframe.
+  test("firstKeyframe fires again at the first keyframe after a stop and a new start", async () => {
+
+    const doubleA = makeControllableLivestreamDouble();
+    const doubleB = makeControllableLivestreamDouble();
+    const { clock, host, timeshift } = await buildStartedTimeshift({ double: doubleA, subscriptions: [ doubleA, doubleB ] });
+
+    let fired = 0;
+
+    timeshift.on("firstKeyframe", (): void => { fired++; });
+    clock.advance(1000);
+    doubleA.push(makeMediaSegment(makeKeyframeFragment()));
+
+    await settle();
+
+    assert.equal(fired, 1, "the first start's first keyframe fired the event");
+
+    timeshift.stop();
+
+    await settle();
+
+    assert.equal(await timeshift.start(makeChannelProfile(host)), true, "the new start committed");
+
+    doubleB.push(makeMediaSegment(makeKeyframeFragment()));
+
+    await settle();
+
+    assert.equal(fired, 2, "the new start's first keyframe fired the event again");
+  });
+
+  // The event fires once the keyframe is in the buffer, so a listener reading snapshotSource() inside it is served that keyframe fresh: the init segment followed by the
+  // keyframe fragment's own bytes. An event fired ahead of the admission would read empty here.
+  test("a firstKeyframe listener reads the keyframe through a fresh snapshotSource", async () => {
+
+    const { clock, double, timeshift } = await buildStartedTimeshift();
+    const fragment = makeKeyframeFragment();
+    const sources: SnapshotSource[] = [];
+
+    timeshift.on("firstKeyframe", (): void => { sources.push(timeshift.snapshotSource()); });
+    clock.advance(1000);
+    double.push(makeMediaSegment(fragment));
+
+    await settle();
+
+    const [source] = sources;
+
+    assert.equal(sources.length, 1, "the listener ran once");
+    assert.equal(source?.kind, "fresh", "the listener's snapshotSource reads fresh");
+    assert.ok(source.data.subarray(-fragment.data.length).equals(fragment.data), "the fresh source ends with the admitted keyframe's bytes");
+  });
+
   // getters.
 
   // Target (z): isRestarting reflects the double's state (recovering -> true, live -> false); the configuredDuration round-trip is what tells the two arms apart (set
@@ -1034,9 +1116,9 @@ describe("timeshift buffer behavior", () => {
   });
 });
 
-describe("the timeshift buffer's audio format and its adopted subscription", () => {
+describe("the timeshift buffer's stream formats and its adopted subscription", () => {
 
-  // The Amcrest's init, described by unifi-protect: the description a started buffer reports its audio format from.
+  // The Amcrest's init, described by unifi-protect: the description a started buffer reports its audio and video formats from.
   const AMCREST_DESCRIPTION = ProtectClient.describeInitSegment(AMCREST_INIT_SEGMENT);
 
   test("audioFormat reads the started subscription's init description, and nothing before a start", async () => {
@@ -1057,6 +1139,26 @@ describe("the timeshift buffer's audio format and its adopted subscription", () 
     timeshift.stop();
 
     assert.equal(timeshift.audioFormat, null, "a stopped buffer reports no audio format");
+  });
+
+  test("videoFormat reads the started subscription's init description, and nothing before a start or after a stop", async () => {
+
+    const { controller, host } = makeTestCameraHost();
+
+    controllers.push(controller);
+
+    const timeshift = new ProtectTimeshiftBuffer(host);
+
+    assert.equal(timeshift.videoFormat, null, "a buffer that never started reports no video format");
+
+    host.livestreamSubscriptions = [makeControllableLivestreamDouble({ description: AMCREST_DESCRIPTION })];
+
+    assert.equal(await timeshift.start(makeChannelProfile(host)), true, "the buffer started");
+    assert.deepEqual(timeshift.videoFormat, { codec: "h264", height: 1944, width: 2592 }, "the started buffer reports the Amcrest's video format");
+
+    timeshift.stop();
+
+    assert.equal(timeshift.videoFormat, null, "a stopped buffer reports no video format");
   });
 
   // The subscription the camera's derivation opened is handed to the start, which commits it in place of a fresh one, so no second subscribe reaches the host.
