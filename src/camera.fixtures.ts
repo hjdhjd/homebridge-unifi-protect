@@ -3,11 +3,10 @@
  * camera.fixtures.ts: The shared real-camera test corpus - canonical channel layouts and camera/package projections for the whole suite, which also serves as the
  * durable golden-master for the resolution-selection surface.
  *
- * Parity is proven here: this module checks in the typed real-camera corpus (the real shipping Protect models plus the deep-low-resolution witness, a
- * 640x480 4:3 native top) and, for each, the EXACT advertised resolution list the production buildAdvertisedProfiles must produce, projected to a stable
- * {channelId, lens, name, resolution, url} shape. The package synthesis is checked in alongside, so the package list is regression-tested too. The expected
- * values are hand-verified for the anchor fixtures (the 640x480 witness, AI Pro, and the G6 Pro Entry 20->24fps normalization); the golden-master test
- * asserts the production output still equals them.
+ * The corpus checks in the typed channel sets of real shipping Protect models, landscape and portrait, with a doorbell's package channel, beside a
+ * deep-low-resolution witness whose native top is 640x480. For each it checks in the EXACT advertised list the production buildAdvertisedProfiles must produce,
+ * projected to a stable {channelId, lens, name, resolution, url} shape, and the package camera's list beside them. Every expected list is traced by hand from its
+ * channel set under the advertised-list rules in resolution.ts, and the golden-master test asserts the production output still equals it.
  *
  * When a later change intentionally alters that behavior, the diff lands HERE as a reviewed change to a checked-in value - the
  * golden-master flags exactly the rows that move, and nothing else.
@@ -32,22 +31,20 @@ export interface EntryProjection {
   url: string;
 }
 
-// A named camera fixture: the model label, its channels, and the expected advertised list (the golden-master). driftNarrative is present on the hand-annotated anchors.
+// A named camera fixture: the model label, its channels, and the expected advertised list (the golden-master).
 export interface CameraFixture {
 
   channels: ProtectCameraChannelConfig[];
-  driftNarrative?: string;
   expected: EntryProjection[];
   model: string;
 }
 
-// A named package fixture: the model label, the package channel's native seed resolution, and the expected synthesized HomeKit resolution list.
+// A named package fixture: the model label, the package channel, and the expected HomeKit resolution list the package camera advertises from it.
 export interface PackageFixture {
 
-  driftNarrative?: string;
+  channel: ProtectCameraChannelConfig;
   expected: Resolution[];
   model: string;
-  nativeTop: Resolution;
 }
 
 // Build a complete typed channel from the fields the resolution math reads. The remaining defaults are inert - the resolution math never reads them - and rtspAlias is
@@ -117,17 +114,26 @@ export const G6_INSTANT_CHANNELS: ProtectCameraChannelConfig[] = [
   makeChannel({ fps: 30, height: 360, id: 2, name: "Low", width: 640 })
 ];
 
+// The G6 Pro Entry's package channel, which the package fixture builds from.
+const G6_PRO_ENTRY_PACKAGE_CHANNEL = makeChannel({ fps: 3, height: 1200, id: 3, name: "Package Camera", width: 1600 });
+
 export const G6_PRO_ENTRY_CHANNELS: ProtectCameraChannelConfig[] = [
 
-  makeChannel({ fps: 20, height: 4096, id: 0, name: "High", width: 3024 }),
+  makeChannel({ fps: 20, height: 4032, id: 0, name: "High", width: 3024 }),
   makeChannel({ fps: 20, height: 1920, id: 1, name: "Medium", width: 1440 }),
   makeChannel({ fps: 20, height: 640, id: 2, name: "Low", width: 480 }),
-  makeChannel({ fps: 3, height: 1200, id: 3, name: "Package Camera", width: 1600 })
+  G6_PRO_ENTRY_PACKAGE_CHANNEL
 ];
 
-// The deep-low-native-resolution 4:3 witness: a 640x480 native top, where BOTH HomeKit mandates (1920 and 1280) insert resolutions ABOVE the camera's native top.
-// This is the exact regime the resolution-selection regression mis-handled - the per-candidate gate's drifting current-top must be re-read so the mandated
-// 1920x1440/1280x960 entries land and the under-native entries still map.
+export const DOORBELL_LITE_CHANNELS: ProtectCameraChannelConfig[] = [
+
+  makeChannel({ fps: 24, height: 2560, id: 0, name: "High", width: 1920 }),
+  makeChannel({ fps: 24, height: 896, id: 1, name: "Medium", width: 672 }),
+  makeChannel({ fps: 24, height: 448, id: 2, name: "Low", width: 336 })
+];
+
+// The deep-low-native-resolution 4:3 witness: a 640x480 native top, below several of the sizes HomeKit requires of every camera. Those sizes are still advertised,
+// above the native top, each served by the highest channel the camera has.
 export const C5_WITNESS_CHANNELS: ProtectCameraChannelConfig[] = [
 
   makeChannel({ fps: 15, height: 480, id: 0, name: "High", width: 640 }),
@@ -167,23 +173,34 @@ function fixtureUrl(id: number): string {
 
 // The parent-camera golden-master fixtures. Each expected list is the production advertised list (preference-free - the streaming-quality preference is a request-time
 // concern, not a list-construction input), projected to the comparison shape. The names carry the SELECTED channel's native dimensions (the synthetic entries inherit
-// the matched channel's name), which is the production advertised-list behavior these fixtures pin.
+// the matched channel's name), which is the production advertised-list behavior these fixtures lock in.
 export const CAMERA_FIXTURES: CameraFixture[] = [
 
   {
 
     channels: G2_PRO_CHANNELS,
+
+    // The UA G2 PRO's channels: a portrait 3:4 camera with a 30fps High and Medium and a 15fps Low. Its 3:4 rows within its native area join the sizes HomeKit
+    // requires. 1920x1080 maps to High, 1280x960 to Medium, whose 960x1280 holds the same area, and 1280x720, 1024x768 and every smaller size to the 15fps Low, the
+    // only channel at or under them.
     expected: [
 
-      { channelId: 0, lens: undefined, name: "1200x1600@30fps (High)", resolution: [ 1920, 1440, 30 ], url: fixtureUrl(0) },
-      { channelId: 0, lens: undefined, name: "1200x1600@30fps (High)", resolution: [ 1280, 960, 30 ], url: fixtureUrl(0) },
+      { channelId: 0, lens: undefined, name: "1200x1600@30fps (High)", resolution: [ 1920, 1080, 30 ], url: fixtureUrl(0) },
       { channelId: 0, lens: undefined, name: "1200x1600@30fps (High)", resolution: [ 1200, 1600, 30 ], url: fixtureUrl(0) },
-      { channelId: 1, lens: undefined, name: "960x1280@30fps (Medium)", resolution: [ 1024, 768, 30 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "960x1280@30fps (Medium)", resolution: [ 1280, 960, 30 ], url: fixtureUrl(1) },
       { channelId: 1, lens: undefined, name: "960x1280@30fps (Medium)", resolution: [ 960, 1280, 30 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 1280, 720, 15 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 1024, 768, 15 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 768, 1024, 15 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 640, 480, 15 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 480, 640, 15 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 640, 360, 15 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 480, 360, 15 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 360, 480, 15 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 320, 240, 15 ], url: fixtureUrl(2) }
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 480, 270, 15 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 320, 240, 15 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 240, 320, 15 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "360x480@15fps (Low)", resolution: [ 320, 180, 15 ], url: fixtureUrl(2) }
     ],
     model: "G2 Pro"
   },
@@ -191,17 +208,21 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
 
     channels: AI_PRO_CHANNELS,
 
-    // AI Pro is a 16:9 4K camera with a 1280x720 middle and a 640x360 low. The 2560x1440/1920x1080 mandated entries map to Medium (the next-lower channel under the
-    // bias), the 1280x720 maps to Medium exactly, and the 480x270/320x180 mandated entries map to Low - a hand-verified trust anchor.
-    driftNarrative: "16:9 4K. The 2560/1920/1280 entries select Medium (1280x720); 640/480/320 select Low (640x360). No fps normalization (all 30fps native).",
+    // AI Pro is a 16:9 4K camera with a 1280x720 middle and a 640x360 low. Its 16:9 rows within its native area, 2560x1440 among them, join the sizes HomeKit
+    // requires: 2560x1440 down to 1280x720 select Medium, and 1024x768 and every smaller size select Low. Every channel runs at 30fps, so no frame rate moves.
     expected: [
 
       { channelId: 0, lens: undefined, name: "3840x2160@30fps (High)", resolution: [ 3840, 2160, 30 ], url: fixtureUrl(0) },
       { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 2560, 1440, 30 ], url: fixtureUrl(1) },
       { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1920, 1080, 30 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 960, 30 ], url: fixtureUrl(1) },
       { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 720, 30 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 1024, 768, 30 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 480, 30 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 360, 30 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 360, 30 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 270, 30 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 240, 30 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 180, 30 ], url: fixtureUrl(2) }
     ],
     model: "AI Pro"
@@ -214,9 +235,14 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
       { channelId: 0, lens: undefined, name: "2688x1512@30fps (High)", resolution: [ 2688, 1512, 30 ], url: fixtureUrl(0) },
       { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 2560, 1440, 30 ], url: fixtureUrl(1) },
       { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1920, 1080, 30 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 960, 30 ], url: fixtureUrl(1) },
       { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 720, 30 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 1024, 768, 30 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 480, 30 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 360, 30 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 360, 30 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 270, 30 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 240, 30 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 180, 30 ], url: fixtureUrl(2) }
     ],
     model: "G5 Flex"
@@ -229,9 +255,14 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
       { channelId: 0, lens: undefined, name: "2688x1512@30fps (High)", resolution: [ 2688, 1512, 30 ], url: fixtureUrl(0) },
       { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 2560, 1440, 30 ], url: fixtureUrl(1) },
       { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1920, 1080, 30 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 960, 30 ], url: fixtureUrl(1) },
       { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 720, 30 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 1024, 768, 30 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 480, 30 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 360, 30 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 360, 30 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 270, 30 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 240, 30 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 180, 30 ], url: fixtureUrl(2) }
     ],
     model: "G5 PTZ"
@@ -244,9 +275,14 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
       { channelId: 0, lens: undefined, name: "3840x2160@30fps (High)", resolution: [ 3840, 2160, 30 ], url: fixtureUrl(0) },
       { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 2560, 1440, 30 ], url: fixtureUrl(1) },
       { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1920, 1080, 30 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 960, 30 ], url: fixtureUrl(1) },
       { channelId: 1, lens: undefined, name: "1280x720@30fps (Medium)", resolution: [ 1280, 720, 30 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 1024, 768, 30 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 480, 30 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 640, 360, 30 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 360, 30 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 480, 270, 30 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 240, 30 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "640x360@30fps (Low)", resolution: [ 320, 180, 30 ], url: fixtureUrl(2) }
     ],
     model: "G6 Instant"
@@ -255,71 +291,101 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
 
     channels: G6_PRO_ENTRY_CHANNELS,
 
-    // G6 Pro Entry is a portrait doorbell whose channels run at a native 20fps. 20 is not one of HomeKit's accepted {15,24,30}, so the post-loop fps normalization
-    // rewrites EVERY advertised entry's fps to 24 (20 > 15, so the 24 bucket). Its Package Camera channel is filtered out of this parent list. A hand-verified
-    // trust anchor: the 20->24fps normalization across the 16:9 table.
-    driftNarrative: "Native 20fps, not in {15,24,30}, so every advertised entry normalizes to 24fps. Portrait 3024x4096 reads 16:9. Package Camera channel filtered out.",
+    // G6 Pro Entry is a portrait 3:4 doorbell at the controller's 3024x4032 top, whose channels run at a native 20fps. 20 is not a rate HomeKit accepts, so every entry
+    // advertises 24. Every 3:4 row sits within its native area and joins the sizes HomeKit requires: 2400x3200 and 1536x2048 select Medium, and every smaller size,
+    // 1920x1080 included, selects Low, since Medium's 1440x1920 holds more pixels. Its Package Camera channel is filtered out of this parent list.
     expected: [
 
-      { channelId: 0, lens: undefined, name: "3024x4096@20fps (High)", resolution: [ 3840, 2160, 24 ], url: fixtureUrl(0) },
-      { channelId: 0, lens: undefined, name: "3024x4096@20fps (High)", resolution: [ 3024, 4096, 24 ], url: fixtureUrl(0) },
-      { channelId: 1, lens: undefined, name: "1440x1920@20fps (Medium)", resolution: [ 2560, 1440, 24 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "1440x1920@20fps (Medium)", resolution: [ 1920, 1080, 24 ], url: fixtureUrl(1) },
+      { channelId: 0, lens: undefined, name: "3024x4032@20fps (High)", resolution: [ 3024, 4032, 24 ], url: fixtureUrl(0) },
+      { channelId: 1, lens: undefined, name: "1440x1920@20fps (Medium)", resolution: [ 2400, 3200, 24 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "1440x1920@20fps (Medium)", resolution: [ 1536, 2048, 24 ], url: fixtureUrl(1) },
       { channelId: 1, lens: undefined, name: "1440x1920@20fps (Medium)", resolution: [ 1440, 1920, 24 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 1920, 1080, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 1200, 1600, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 1280, 960, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 960, 1280, 24 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 1280, 720, 24 ], url: fixtureUrl(2) },
-      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 640, 360, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 1024, 768, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 768, 1024, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 640, 480, 24 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 480, 640, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 640, 360, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 480, 360, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 360, 480, 24 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 480, 270, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 320, 240, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 240, 320, 24 ], url: fixtureUrl(2) },
       { channelId: 2, lens: undefined, name: "480x640@20fps (Low)", resolution: [ 320, 180, 24 ], url: fixtureUrl(2) }
     ],
     model: "G6 Pro Entry"
   },
   {
 
-    channels: C5_WITNESS_CHANNELS,
+    channels: DOORBELL_LITE_CHANNELS,
 
-    // The deep-low-resolution witness, a hand-verified anchor and the regression locus. Native top 640x480 (4:3). Both HomeKit mandates (1920
-    // and 1280) insert entries ABOVE the native top: the 1920x1440 lands first and re-sorts to the front, so the per-candidate gate's drifting current top becomes
-    // 1920 - which is exactly what then admits the 1280x960 and 1024x768 entries (all < 1920). All map to High (640x480, ch0) under the bias-lower selection, except
-    // 320x240 which falls back to the lowest entry (Low, ch1). If the drift had been frozen to the original native top (the regression this fixture guards), the
-    // under-native entries would have been dropped.
-    driftNarrative: "640x480 4:3 native top. The 1920 mandate inserts 1920x1440 ABOVE native and re-sorts to front; the drifting current-top then admits 1280/1024. " +
-      "Final: 1920x1440, 1280x960, 1024x768, 640x480 (all High/ch0), 480x360 (Low/ch1 native), 320x240 (Low/ch1 backstop). All 15fps.",
+    // The Doorbell Lite is a portrait 3:4 doorbell whose channels run at 24fps. 2400x3200 holds more pixels than its native top and stays out; the 3:4 rows within its
+    // native area join the sizes HomeKit requires. Every size from 1536x2048 down to 768x1024 selects Medium, and every size from 640x480 down selects Low.
     expected: [
 
-      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", resolution: [ 1920, 1440, 15 ], url: fixtureUrl(0) },
+      { channelId: 0, lens: undefined, name: "1920x2560@24fps (High)", resolution: [ 1920, 2560, 24 ], url: fixtureUrl(0) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 1536, 2048, 24 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 1920, 1080, 24 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 1200, 1600, 24 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 1280, 960, 24 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 960, 1280, 24 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 1280, 720, 24 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 1024, 768, 24 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 768, 1024, 24 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "672x896@24fps (Medium)", resolution: [ 672, 896, 24 ], url: fixtureUrl(1) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 640, 480, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 480, 640, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 640, 360, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 480, 360, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 360, 480, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 336, 448, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 480, 270, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 320, 240, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 240, 320, 24 ], url: fixtureUrl(2) },
+      { channelId: 2, lens: undefined, name: "336x448@24fps (Low)", resolution: [ 320, 180, 24 ], url: fixtureUrl(2) }
+    ],
+    model: "Doorbell Lite"
+  },
+  {
+
+    channels: C5_WITNESS_CHANNELS,
+
+    // The deep-low-resolution witness: a 640x480 4:3 native top with every size HomeKit requires above 640x480 still advertised. Those sizes, 1920x1080 down to
+    // 1024x768, map to High, the highest channel the camera has; 640x360 maps to Low, and 480x270 and every smaller size fall back to Low as the lowest channel. Every
+    // channel runs at 15fps.
+    expected: [
+
+      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", resolution: [ 1920, 1080, 15 ], url: fixtureUrl(0) },
       { channelId: 0, lens: undefined, name: "640x480@15fps (High)", resolution: [ 1280, 960, 15 ], url: fixtureUrl(0) },
+      { channelId: 0, lens: undefined, name: "640x480@15fps (High)", resolution: [ 1280, 720, 15 ], url: fixtureUrl(0) },
       { channelId: 0, lens: undefined, name: "640x480@15fps (High)", resolution: [ 1024, 768, 15 ], url: fixtureUrl(0) },
       { channelId: 0, lens: undefined, name: "640x480@15fps (High)", resolution: [ 640, 480, 15 ], url: fixtureUrl(0) },
+      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", resolution: [ 640, 360, 15 ], url: fixtureUrl(1) },
       { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", resolution: [ 480, 360, 15 ], url: fixtureUrl(1) },
-      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", resolution: [ 320, 240, 15 ], url: fixtureUrl(1) }
+      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", resolution: [ 480, 270, 15 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", resolution: [ 320, 240, 15 ], url: fixtureUrl(1) },
+      { channelId: 1, lens: undefined, name: "480x360@15fps (Low)", resolution: [ 320, 180, 15 ], url: fixtureUrl(1) }
     ],
     model: "C5 Witness 640x480"
   }
 ];
 
-// The package-camera golden-master fixtures. Both seeds - the G6 Pro Entry's real Package Camera channel (1600x1200 @ 3fps native) and a low-fps 4:3 witness
-// ([1600,1200,2]) - expand to the same 4:3 list: the seed itself plus the mandated 4:3 resolutions (the over-top 1920x1440 mandate and the under-top rows) at 15fps.
-// The seed retains its native fps; the appended rows are all 15fps.
+// The package-camera golden-master fixture: the list the package camera advertises, the one advertised-list builder over its channel at a fixed 15fps, mapped to
+// resolutions.
 export const PACKAGE_FIXTURES: PackageFixture[] = [
 
   {
 
-    // The G6 Pro Entry package channel: 1600x1200 (4:3) at the channel's native 3fps. The list seeds that exact tuple, then appends the 4:3 rows that pass the fixed-seed
-    // gate: the 1920-wide 1920x1440 lands because 1920 is a HomeKit mandate (even though it exceeds the 1600 native top), and the under-1600 rows land normally. The 2560
-    // and 3840 rows are dropped (>= 1600 native max and not mandated). All appended rows are 15fps.
-    driftNarrative: "1600x1200 4:3 seed at native 3fps (the seed keeps its fps); 1920x1440 lands as a mandate; the under-top 4:3 rows land at 15fps; 2560/3840 dropped.",
-    expected: [ [ 1600, 1200, 3 ], [ 1920, 1440, 15 ], [ 1280, 960, 15 ], [ 1024, 768, 15 ], [ 640, 480, 15 ], [ 480, 360, 15 ], [ 320, 240, 15 ] ],
-    model: "G6 Pro Entry Package",
-    nativeTop: [ 1600, 1200, 3 ]
-  },
-  {
-
-    // A low-fps 4:3 seed ([1600,1200,2]) kept as a pure synthesis witness: the same 4:3 expansion, seeded at 2fps, pinning that the seed retains its own frame rate
-    // while the appended rows normalize to 15fps.
-    expected: [ [ 1600, 1200, 2 ], [ 1920, 1440, 15 ], [ 1280, 960, 15 ], [ 1024, 768, 15 ], [ 640, 480, 15 ], [ 480, 360, 15 ], [ 320, 240, 15 ] ],
-    model: "Package fallback",
-    nativeTop: [ 1600, 1200, 2 ]
+    // The G6 Pro Entry's package channel, 1600x1200 (4:3) at a native 3fps. The 4:3 rows within its native area, 1440x1080 among them and 2048x1536 above it, join the
+    // sizes HomeKit requires, and every entry advertises 15fps, the package's own size included.
+    channel: G6_PRO_ENTRY_PACKAGE_CHANNEL,
+    expected: [ [ 1920, 1080, 15 ], [ 1600, 1200, 15 ], [ 1440, 1080, 15 ], [ 1280, 960, 15 ], [ 1280, 720, 15 ], [ 1024, 768, 15 ], [ 640, 480, 15 ],
+      [ 640, 360, 15 ], [ 480, 360, 15 ], [ 480, 270, 15 ], [ 320, 240, 15 ], [ 320, 180, 15 ] ],
+    model: "G6 Pro Entry Package"
   }
 ];
 

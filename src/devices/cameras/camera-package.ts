@@ -4,7 +4,7 @@
  */
 import type { CharacteristicValue, Service } from "homebridge";
 import { PACKAGE_CAMERA_NAME_SUFFIX, ProtectReservedNames, packageCameraId } from "../../types.ts";
-import { buildAdvertisedResolutions, buildChannelProfile, formatResolution, isPackageChannel } from "../../media/resolution.ts";
+import { buildAdvertisedProfiles, buildChannelProfile, formatResolution, isPackageChannel } from "../../media/resolution.ts";
 import type { AdvertisedStreams } from "./camera.ts";
 import type { ChannelProfile } from "../../media/resolution.ts";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -186,12 +186,13 @@ export class ProtectCameraPackage extends ProtectCamera {
       return null;
     }
 
-    // Synthesize the HomeKit resolution list from the package channel's fixed native top. The package camera is a single fixed channel - the resolution module seeds the
-    // list with the native top itself and appends the aspect-appropriate mandated resolutions at the package frame rate, so we pass the seed once and do NOT prepend it.
+    // The package camera advertises the one builder's list over its single fixed channel, every entry at a fixed 15 fps whatever the channel's own rate: its native
+    // size, the standard sizes of its shape within its pixel count, and every size HomeKit requires of a camera.
     //
     // The package advertises the recording audio stand-in and runs no probe, because its derivation is synchronous by contract and a probe would await the stream. A
     // package recording whose stream differs from the stand-in is transcoded to it.
-    return { audioFormat: null, probe: null, profiles: [profile], resolutions: buildAdvertisedResolutions({ fpsSet: [15], nativeTop: profile.resolution }) };
+    return { audioFormat: null, probe: null, profiles: [profile],
+      resolutions: buildAdvertisedProfiles([profile], { fixedFps: 15 }).map((entry) => entry.resolution) };
   }
 
   // The package camera's establishment narration, overriding the parent's: its debug mapping lines have a shape of their own, because the package advertises a

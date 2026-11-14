@@ -49,6 +49,15 @@ Briefly:
 
 HomeKit bitrates are notoriously conservative from a bandwidth and quality perspective...they're downright low, and can result in far less than ideal video quality. You can customize the bitrates HBUP uses for local and non-local streaming when transcoding through the appropriate [feature options](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/FeatureOptions.md#video).
 
+#### Which Resolutions HBUP Offers HomeKit
+
+HBUP doesn't decide what size your live view or recording comes in...the Apple device viewing your camera does. It chooses the size it asks for from a list of
+resolutions HBUP offers HomeKit for that camera, and HBUP serves that request from the best stream it has.
+
+That list holds every resolution the camera itself streams, the standard sizes in the camera's own shape up to the camera's own resolution by pixel count (so a
+portrait doorbell is offered portrait sizes), and every resolution HomeKit requires of a camera, whatever its shape. HBUP builds the list when it starts up, so a
+camera whose streams change in Protect keeps its list until you restart Homebridge.
+
 #### How HBUP Selects Stream Quality
 
 Protect offers up to three stream qualities per camera - High, Medium, and Low. When HBUP transcodes, here's how it picks which one to draw from.

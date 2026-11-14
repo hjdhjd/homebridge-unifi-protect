@@ -2,9 +2,10 @@
  *
  * resolution.test.ts: The durable golden-master and selector coverage for the resolution-selection surface (resolution.ts).
  *
- * This is the durable coverage of the resolution-selection surface, including the deep-low-resolution drift regime. The golden-master fixtures in camera.fixtures.ts
- * are the single source of expected behavior for the production buildAdvertisedProfiles / buildAdvertisedResolutions output; there is no live second implementation
- * in the tree to compare against. A checked-in selector grid separately locks in the per-request mapping under both biases and the pixel-cap pre-filter.
+ * This is the durable coverage of the resolution-selection surface, including the deep-low-resolution camera whose native top sits below sizes HomeKit requires.
+ * The golden-master fixtures in camera.fixtures.ts are the single source of expected behavior for the production buildAdvertisedProfiles output, the package camera's
+ * list included; there is no live second implementation in the tree to compare against. A checked-in selector grid separately locks in the per-request mapping
+ * under each bias and the pixel-cap pre-filter, and the rows beside it hold the aspect family, the size catalog and the list's membership and frame rates.
  *
  * The harness is pure - resolution.ts is FFmpeg-free and this-free, so no Homebridge runtime, no controller, no device instance is needed. The device wrappers
  * selectChannel / selectSubstrateChannel inject this-state (rtspDefault, substrateDefault, the published list, the cap) and delegate to selectChannelProfile; we
@@ -14,12 +15,14 @@
  * The golden-master fixtures are the single source of expected behavior: when a later change intentionally alters behavior, the diff lands as a reviewed change to a
  * checked-in fixture value and these tests flag exactly the rows that moved.
  */
-import { AI_PRO_CHANNELS, C5_WITNESS_CHANNELS, CAMERA_FIXTURES, FIXTURE_HOST, FIXTURE_RTSPS_PORT, G6_PRO_ENTRY_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS, PACKAGE_FIXTURES,
-  SANITY_FAIL_CHANNELS, makeChannel } from "../camera.fixtures.ts";
-import type { ChannelProfile, SelectRequest } from "./resolution.ts";
-import { buildAdvertisedProfiles, buildAdvertisedResolutions, buildChannelProfile, capByPixels, isPrimaryChannel, rtspUrl, selectChannelProfile } from "./resolution.ts";
+import { AI_PRO_CHANNELS, C5_WITNESS_CHANNELS, CAMERA_FIXTURES, DOORBELL_LITE_CHANNELS, FIXTURE_HOST, FIXTURE_RTSPS_PORT, G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS,
+  MIXED_RTSP_DISABLED_CHANNELS, PACKAGE_FIXTURES, SANITY_FAIL_CHANNELS, makeChannel } from "../camera.fixtures.ts";
+import type { AspectFamily, ChannelProfile, SelectRequest } from "./resolution.ts";
+import { STANDARD_SIZES, buildAdvertisedProfiles, buildChannelProfile, capByPixels, classifyAspect, isPrimaryChannel, rtspUrl, selectChannelProfile,
+  selectSubstrateChannelFrom, standardSizesFor } from "./resolution.ts";
 import { describe, test } from "node:test";
 import type { Nullable } from "homebridge-plugin-utils";
+import type { PackageFixture } from "../camera.fixtures.ts";
 import type { ProtectCameraChannelConfig } from "unifi-protect";
 import type { Resolution } from "homebridge";
 import assert from "node:assert/strict";
@@ -76,10 +79,41 @@ function selectChannelViaWrapper(entries: ChannelProfile[], rtspDefault: string,
   return selectChannelProfile(capped, request);
 }
 
+// The sizes HAP's stream configuration requires of every camera, as HAP prints them. They are written out here rather than read from the catalog, so a row the catalog
+// loses or mistags reddens the rows that read them.
+const STREAM_CONFIGURATION_SIZES = [ "1920x1080", "1280x720", "640x360", "480x270", "320x180", "1280x960", "1024x768", "640x480", "480x360", "320x240" ];
+
+// A resolution as its width and height, the form the membership rows compare on.
+function dims(resolution: Resolution): string {
+
+  return resolution[0].toString() + "x" + resolution[1].toString();
+}
+
+// The sizes a camera with these channels advertises, through the production derivation and the one builder.
+function advertisedSizes(channels: ProtectCameraChannelConfig[]): string[] {
+
+  return buildAdvertisedProfiles(nativeEntries(channels)).map((entry) => dims(entry.resolution));
+}
+
+// The package camera's advertised list for a package fixture, built as the package derivation builds it: the one builder over the package channel at a fixed 15fps.
+function packageResolutions(fixture: PackageFixture): Resolution[] {
+
+  const profile = buildChannelProfile(fixture.channel, { lens: 2, rtspPort: FIXTURE_RTSPS_PORT, urlHost: FIXTURE_HOST });
+
+  return buildAdvertisedProfiles([profile], { fixedFps: 15 }).map((entry) => entry.resolution);
+}
+
+// A 2592x1944 4:3 camera with a 704x480 low channel, a shape the corpus otherwise lacks: its native area admits the larger 4:3 rows.
+const LARGE_4X3_CHANNELS: ProtectCameraChannelConfig[] = [
+
+  makeChannel({ fps: 20, height: 1944, id: 0, name: "High", width: 2592 }),
+  makeChannel({ fps: 20, height: 480, id: 1, name: "Low", width: 704 })
+];
+
 describe("resolution golden-master: parent advertised list (production == checked-in fixtures)", () => {
 
-  // The list-build is the first-class system under test: the per-candidate gate's drifting current-top (the drift locus), the dedup, the re-sort, and the fps
-  // normalization all run inside buildAdvertisedProfiles. Each fixture's expected list is the hand-verified golden-master for rtspDefault "".
+  // The list build is the first-class system under test: the aspect family, the catalog rows within the native area, the required sizes, the area mapping, the dedup,
+  // the sort, and the frame-rate normalization all run inside buildAdvertisedProfiles. Each fixture's expected list is the hand-traced golden-master for rtspDefault "".
   for(const fixture of CAMERA_FIXTURES) {
 
     test(fixture.model, () => {
@@ -93,14 +127,12 @@ describe("resolution golden-master: parent advertised list (production == checke
 
 describe("resolution golden-master: package list (production == checked-in fixtures)", () => {
 
-  // The package synthesis seeds the native top and appends the aspect-appropriate mandated rows at the package frame rate, with the fixed-seed gate (no drift).
+  // The package camera's list is the one builder's output over its single channel at a fixed 15fps, mapped to resolutions, as the package derivation hands it on.
   for(const fixture of PACKAGE_FIXTURES) {
 
     test(fixture.model, () => {
 
-      const produced = buildAdvertisedResolutions({ fpsSet: [15], nativeTop: fixture.nativeTop });
-
-      assert.deepEqual(produced, fixture.expected);
+      assert.deepEqual(packageResolutions(fixture), fixture.expected);
     });
   }
 });
@@ -148,8 +180,8 @@ describe("resolution: selector per-request mapping through the selectChannel wra
   // 1280x720 Medium channel survives the cap while the 3840x2160 High channel (8.3M px) is dropped - matching the current selectChannel, which filters on channel pixels.
   const CAP_1080P = 1920 * 1080;
 
-  // The checked-in selector grid: { bias } x { uncapped, 1080p cap } x { target } => the expected (id, resolution) outcome, derived from the reference implementation and
-  // confirmed by the independent production-vs-reference sweep. Bias-lower picks the next-narrower (or lowest) channel; bias-higher picks the next-wider (or highest).
+  // The checked-in selector grid: { bias } x { uncapped, 1080p cap } x { target } => the expected (id, resolution) outcome. Each bias compares pixel area: bias-lower
+  // picks the first entry whose channel is at or under the target's area (or the lowest), and bias-higher the last entry whose channel is at or over it (or the highest).
   // Under the 1080p cap the High channel is filtered out, so every selection lands on Medium or Low. The two 1280x720 rows reflect the exact channel-dimension-match
   // behavior: an exact channel-dimension match returns the native-dimensioned [1280,720,30] entry rather than the higher [2560,1440,30] synthetic that shares the Medium
   // channel - same channel/id, honest label.
@@ -209,31 +241,24 @@ describe("resolution: selector per-request mapping through the selectChannel wra
   });
 });
 
-describe("resolution: the deep-low-resolution drift (the regression locus, exercised through the full list-build)", () => {
+describe("resolution: the deep-low-resolution camera (a native top below sizes HomeKit requires, exercised through the full list-build)", () => {
 
-  // The 640x480 4:3 deep-low-resolution witness is the regression locus: the 1920 mandate inserts a 1920x1440 entry ABOVE the 640x480 native top, which re-sorts to the
-  // front, so the per-candidate gate's drifting current-top becomes 1920 - which is precisely what then admits the 1280x960 and 1024x768 entries (all < 1920). A frozen
-  // native-top would have dropped them. The golden-master fixture above already locks in the exact list; here we additionally assert the structural rules the regression
-  // violated, so the regression's signature is named explicitly in a test.
-  test("the deep-low-resolution 4:3 camera admits the under-mandate resolutions (no under-mandate drop)", () => {
+  // The 640x480 4:3 witness sits below several sizes HomeKit requires of every camera. Those sizes are still advertised above the native top, each served by High, the
+  // highest channel the camera has. The golden-master fixture above already locks in the exact list; here we additionally name its order and that mapping in a test.
+  test("the deep-low-resolution 4:3 camera advertises the required sizes above its native top, served by its highest channel", () => {
 
     const produced = buildAdvertisedProfiles(nativeEntries(C5_WITNESS_CHANNELS));
-    const dims = produced.map((e) => e.resolution[0].toString() + "x" + e.resolution[1].toString());
 
-    // The mandated 1920x1440 lands ABOVE the native top.
-    assert.equal(dims.includes("1920x1440"), true);
+    // Every required size lands, those above the native top among them, and the list is sorted high to low by area.
+    assert.deepEqual(produced.map((e) => dims(e.resolution)),
+      [ "1920x1080", "1280x960", "1280x720", "1024x768", "640x480", "640x360", "480x360", "480x270", "320x240", "320x180" ]);
 
-    // The under-mandate 1280x960 and 1024x768 land BECAUSE the drifting current-top rose to 1920 (the regression dropped exactly these).
-    assert.equal(dims.includes("1280x960"), true);
-    assert.equal(dims.includes("1024x768"), true);
-
-    // The native 640x480 is still present, and the list is sorted high to low.
-    assert.equal(dims.includes("640x480"), true);
-    assert.deepEqual([...dims], [ "1920x1440", "1280x960", "1024x768", "640x480", "480x360", "320x240" ]);
+    // Every size at or above the native top's area maps to High.
+    assert.equal(produced.filter((e) => ((e.resolution[0] * e.resolution[1]) >= (640 * 480))).every((e) => (e.channel.id === 0)), true);
   });
 
-  // A synthetic single-channel camera collapses every selection onto its one entry, and the build still produces a coherent list (the mandated entries map back to the
-  // single channel). This guards the degenerate end of the drift loop.
+  // A synthetic single-channel camera collapses every selection onto its one entry, and the build still produces a coherent list (every advertised size maps back to
+  // the single channel). This guards the degenerate end of the list build.
   test("a single-channel camera produces a coherent list", () => {
 
     const single: ProtectCameraChannelConfig[] = [makeChannel({ fps: 30, height: 1080, id: 0, name: "High", width: 1920 })];
@@ -246,17 +271,216 @@ describe("resolution: the deep-low-resolution drift (the regression locus, exerc
 
 describe("resolution: the advertised list is streaming-preference-free", () => {
 
-  // The list build takes no streaming preference: every synthetic maps to its NEAREST channel (the AI Pro id sequence 0,1,1,1,2,2,2), not one a name request picks.
+  // The list build takes no streaming preference: every advertised size maps to the channel its area selects, not one a name request picks.
   // buildAdvertisedProfiles is preference-free by construction: the streaming preference (the Video.Rtsp.Only setting) is applied only at request time, in the
   // selectChannel wrapper, never during list construction.
   test("buildAdvertisedProfiles maps to nearest channels; the streaming preference applies only at request time", () => {
 
     const list = buildAdvertisedProfiles(nativeEntries(AI_PRO_CHANNELS));
 
-    assert.deepEqual(list.map((e) => e.channel.id), [ 0, 1, 1, 1, 2, 2, 2 ]);
+    assert.deepEqual(list.map((e) => e.channel.id), [ 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2 ]);
 
     // The same published list, queried at request time with a HIGH preference, resolves by name to the High channel (id 0) - the preference's only remaining home.
     assert.equal(outcome(selectChannelViaWrapper(list, "HIGH", 640, 360))?.id, 0);
+  });
+});
+
+describe("resolution: the aspect family and the size catalog", () => {
+
+  // Each frame and the family it reads. 3024x4096 sits 1.6 percent off 3:4 and reads 3:4, which a tolerance of zero would turn "other"; 704x480 sits 10 percent off
+  // 4:3 and reads "other", which a tolerance as wide as 15 percent would turn 4:3.
+  test("classifyAspect reads each frame's family, portrait from the taller side and other beyond the tolerance", () => {
+
+    const rows: { expected: AspectFamily; height: number; width: number }[] = [
+
+      { expected: "16:9", height: 2160, width: 3840 },
+      { expected: "16:9", height: 1512, width: 2688 },
+      { expected: "4:3", height: 1944, width: 2592 },
+      { expected: "4:3", height: 480, width: 640 },
+      { expected: "3:4", height: 1600, width: 1200 },
+      { expected: "3:4", height: 4096, width: 3024 },
+      { expected: "3:4", height: 4032, width: 3024 },
+      { expected: "3:4", height: 2560, width: 1920 },
+      { expected: "3:4", height: 2016, width: 1504 },
+      { expected: "9:16", height: 1920, width: 1080 },
+      { expected: "1:1", height: 1440, width: 1440 },
+      { expected: "other", height: 2160, width: 7680 },
+      { expected: "other", height: 480, width: 704 }
+    ];
+
+    for(const row of rows) {
+
+      assert.equal(classifyAspect(row.width, row.height), row.expected, row.width.toString() + "x" + row.height.toString() + " reads " + row.expected);
+    }
+  });
+
+  test("standardSizesFor returns a family's own rows, none for other, and every catalog row reads as its own family", () => {
+
+    const portrait = standardSizesFor("3:4").map((row) => dims([ row.width, row.height, 0 ]));
+
+    assert.equal(portrait.includes("960x1280"), true, "the 3:4 family holds 960x1280");
+    assert.equal(portrait.includes("1280x960"), false, "the 3:4 family holds no landscape row");
+    assert.deepEqual(standardSizesFor("other"), [], "a frame that matches no standard ratio has no catalog rows");
+
+    for(const row of STANDARD_SIZES) {
+
+      assert.equal(classifyAspect(row.width, row.height), row.family, row.width.toString() + "x" + row.height.toString() + " classifies as its own family");
+    }
+  });
+});
+
+describe("resolution: the advertised list's membership and frame rates", () => {
+
+  test("every fixture's list and the package's carry every size the stream configuration requires", () => {
+
+    for(const fixture of CAMERA_FIXTURES) {
+
+      const sizes = advertisedSizes(fixture.channels);
+
+      for(const size of STREAM_CONFIGURATION_SIZES) {
+
+        assert.equal(sizes.includes(size), true, fixture.model + " advertises " + size);
+      }
+    }
+
+    for(const fixture of PACKAGE_FIXTURES) {
+
+      const sizes = packageResolutions(fixture).map(dims);
+
+      for(const size of STREAM_CONFIGURATION_SIZES) {
+
+        assert.equal(sizes.includes(size), true, fixture.model + " advertises " + size);
+      }
+    }
+  });
+
+  // A family's rows join whatever source names them, every one at or under the native top's pixel count, and none above it. No source names 1920x1440, 2560x1920 or
+  // 3840x2880, so no list carries them.
+  test("every source's rows within the native area are advertised, and no unnamed size is", () => {
+
+    const aiPro = advertisedSizes(AI_PRO_CHANNELS);
+    const g6ProEntry = advertisedSizes(G6_PRO_ENTRY_CHANNELS);
+    const doorbellLite = advertisedSizes(DOORBELL_LITE_CHANNELS);
+    const large4x3 = advertisedSizes(LARGE_4X3_CHANNELS);
+
+    assert.equal(aiPro.includes("2560x1440"), true, "the AI Pro advertises the 2560x1440 the stream tiers name");
+    assert.equal(aiPro.includes("3840x2160"), true, "the AI Pro keeps its 3840x2160 native");
+    assert.equal(g6ProEntry.includes("2400x3200"), true, "the G6 Pro Entry advertises the 2400x3200 the stream tiers name");
+    assert.equal(g6ProEntry.includes("1536x2048"), true, "the G6 Pro Entry advertises 1536x2048");
+    assert.equal(g6ProEntry.includes("3024x4032"), true, "the G6 Pro Entry keeps its 3024x4032 native");
+    assert.equal(doorbellLite.includes("1536x2048"), true, "the Doorbell Lite advertises 1536x2048");
+    assert.equal(doorbellLite.includes("2400x3200"), false, "the Doorbell Lite leaves out 2400x3200, above its native area");
+    assert.equal(large4x3.includes("2048x1536"), true, "a 2592x1944 camera advertises 2048x1536");
+    assert.equal(large4x3.includes("1440x1080"), true, "a 2592x1944 camera advertises the 1440x1080 the stream tiers name");
+
+    const lists = [ ...CAMERA_FIXTURES.map((fixture) => advertisedSizes(fixture.channels)), ...PACKAGE_FIXTURES.map((fixture) => packageResolutions(fixture).map(dims)),
+      large4x3 ];
+
+    for(const sizes of lists) {
+
+      for(const unnamed of [ "1920x1440", "2560x1920", "3840x2880" ]) {
+
+        assert.equal(sizes.includes(unnamed), false, "no list advertises " + unnamed);
+      }
+    }
+  });
+
+  // Every entry's frame rate is one HomeKit accepts, read per entry from the channel it maps to rather than from the top channel alone, and the package's are all 15.
+  test("every entry advertises 15, 24 or 30 fps from its own channel, and the package's all 15", () => {
+
+    for(const fixture of CAMERA_FIXTURES) {
+
+      for(const entry of buildAdvertisedProfiles(nativeEntries(fixture.channels))) {
+
+        assert.equal([ 15, 24, 30 ].includes(entry.resolution[2]), true, fixture.model + " " + dims(entry.resolution) + " advertises an accepted frame rate");
+      }
+    }
+
+    for(const fixture of PACKAGE_FIXTURES) {
+
+      assert.equal(packageResolutions(fixture).every((resolution) => (resolution[2] === 15)), true, fixture.model + " advertises every entry at 15fps");
+    }
+
+    // A 30fps top beside a 20fps low: the entries the low channel serves advertise 24, the rest 30.
+    const list = buildAdvertisedProfiles(nativeEntries([ makeChannel({ fps: 30, height: 1080, id: 0, name: "High", width: 1920 }),
+      makeChannel({ fps: 20, height: 360, id: 1, name: "Low", width: 640 }) ]));
+    const lowEntries = list.filter((entry) => (entry.channel.id === 1));
+
+    assert.equal(lowEntries.length > 0, true, "the low channel serves entries");
+    assert.equal(lowEntries.every((entry) => (entry.resolution[2] === 24)), true, "every entry the 20fps low channel serves advertises 24fps");
+    assert.equal(list.filter((entry) => (entry.channel.id === 0)).every((entry) => (entry.resolution[2] === 30)), true, "every entry the top serves advertises 30fps");
+  });
+
+  // The build reads the caller's entries and writes neither them nor their order: each native's tuple stays as constructed, its 20fps included.
+  test("building leaves the caller's native entries and their order as constructed", () => {
+
+    const natives = nativeEntries(G6_PRO_ENTRY_CHANNELS);
+    const reversed = natives.toReversed();
+
+    buildAdvertisedProfiles(natives);
+    buildAdvertisedProfiles(reversed);
+
+    assert.deepEqual(natives.map((entry) => entry.resolution), [ [ 3024, 4032, 20 ], [ 1440, 1920, 20 ], [ 480, 640, 20 ] ], "each native's tuple is as constructed");
+    assert.deepEqual(reversed.map((entry) => entry.channel.id), [ 2, 1, 0 ], "the caller's array keeps its own order");
+  });
+
+  // A camera of no standard shape advertises its native and the sizes the stream configuration requires, and nothing else.
+  test("a single 7680x2160 channel advertises its native and exactly the stream configuration's sizes", () => {
+
+    const sizes = advertisedSizes([makeChannel({ fps: 15, height: 2160, id: 0, name: "High", width: 7680 })]);
+
+    assert.deepEqual(sizes.toSorted(), [ "7680x2160", ...STREAM_CONFIGURATION_SIZES ].toSorted());
+  });
+
+  // Channels that share a size each keep an entry of their own, so a name request still finds each.
+  test("natives of equal size each stay, every channel reachable", () => {
+
+    const list = buildAdvertisedProfiles(nativeEntries([ makeChannel({ fps: 30, height: 1080, id: 0, name: "High", width: 1920 }),
+      makeChannel({ fps: 30, height: 360, id: 1, name: "Medium", width: 640 }), makeChannel({ fps: 30, height: 360, id: 2, name: "Low", width: 640 }) ]));
+
+    assert.deepEqual(list.filter((entry) => (dims(entry.resolution) === "640x360")).map((entry) => entry.channel.id).toSorted(), [ 1, 2 ],
+      "each 640x360 channel keeps its own entry");
+    assert.deepEqual([...new Set(list.map((entry) => entry.channel.id))].toSorted(), [ 0, 1, 2 ], "every channel is present");
+    assert.equal(selectChannelProfile(list, { mode: "name", name: "Low" })?.channel.id, 2, "a name request finds the second channel of that size");
+  });
+});
+
+describe("resolution: area mapping at list time and at request time", () => {
+
+  // Each size maps to the highest channel at or under its own area, so a list sorted by its sizes runs its channels high to low too. Each comparison is inclusive,
+  // so a request whose area equals a transposed channel's selects that channel.
+  test("channel area never increases along a list, and bias lower takes an equal-area channel", () => {
+
+    for(const fixture of CAMERA_FIXTURES) {
+
+      const areas = buildAdvertisedProfiles(nativeEntries(fixture.channels)).map((entry) => entry.channel.width * entry.channel.height);
+
+      assert.equal(areas.every((area, index) => (index === 0) || (area <= (areas[index - 1] ?? area))), true, fixture.model + " runs its channels high to low");
+    }
+
+    const g2Pro = buildAdvertisedProfiles(nativeEntries(G2_PRO_CHANNELS));
+    const c5 = buildAdvertisedProfiles(nativeEntries(C5_WITNESS_CHANNELS));
+
+    assert.equal(selectChannelProfile(g2Pro, { bias: "lower", height: 960, mode: "nearest", width: 1280 })?.channel.id, 1,
+      "1280x960 selects Medium, whose 960x1280 holds the same area");
+    assert.equal(selectChannelProfile(g2Pro, { bias: "lower", height: 1300, mode: "nearest", width: 1100 })?.channel.id, 1,
+      "1100x1300 selects Medium, the highest channel at or under it");
+    assert.equal(selectChannelProfile(c5, { bias: "lower", height: 640, mode: "nearest", width: 480 })?.channel.id, 0,
+      "480x640 selects High, whose 640x480 holds the same area");
+  });
+
+  test("bias higher takes the smallest channel at or over the request, an equal-area one included, and the buffer's channel on a Pi reads area", () => {
+
+    const g2Pro = buildAdvertisedProfiles(nativeEntries(G2_PRO_CHANNELS));
+
+    assert.equal(selectChannelProfile(g2Pro, { bias: "higher", height: 720, mode: "nearest", width: 1280 })?.channel.id, 1,
+      "1280x720 selects Medium, the smallest channel at or over it");
+    assert.equal(selectChannelProfile(g2Pro, { bias: "higher", height: 960, mode: "nearest", width: 1280 })?.channel.id, 1,
+      "1280x960 selects Medium, whose 960x1280 holds the same area");
+    assert.equal(selectSubstrateChannelFrom(buildAdvertisedProfiles(nativeEntries(G6_PRO_ENTRY_CHANNELS)), { hostSystem: "raspbian", pin: null })?.channel.id, 2,
+      "the G6 Pro Entry's buffer on a Pi reads Low, since Medium's 1440x1920 holds more pixels than 1920x1080");
+    assert.equal(selectSubstrateChannelFrom(buildAdvertisedProfiles(nativeEntries(AI_PRO_CHANNELS)), { hostSystem: "raspbian", pin: null })?.channel.id, 1,
+      "the AI Pro's buffer on a Pi reads Medium");
   });
 });
 

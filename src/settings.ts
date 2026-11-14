@@ -101,7 +101,8 @@ export const PROTECT_HKSV_SHADOW_FLOOR_MS = PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_
 export const PROTECT_TIMESHIFT_BUFFER_MAXDURATION = PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000 * 2;
 
 // The channel-selection target for a pixel-constrained hardware encoder (such as a Raspberry Pi): the substrate channel policy picks the highest-quality channel at or
-// below this on such a host. Deliberately not named with "RESOLUTION" - in this file that word denotes the buffer's time-granularity, not a pixel dimension.
+// below this by pixel count on such a host. Deliberately not named with "RESOLUTION" - in this file that word denotes the buffer's time-granularity, not a pixel
+// dimension.
 export const PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET = { height: 1080, width: 1920 };
 
 // The richest source we ever ask a camera for when we are hunting a maximum-quality channel rather than one matched to a requested size. Shared by the transcode
