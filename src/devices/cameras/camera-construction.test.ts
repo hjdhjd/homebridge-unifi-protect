@@ -170,7 +170,7 @@ describe("real ProtectCamera construction through the streaming-delegate factory
 
     assert.ok(modelOnlyEntry, "the two fixture models differ in at least one advertised resolution");
 
-    const selected = camera.selectChannel(modelOnlyEntry.resolution[0], modelOnlyEntry.resolution[1]);
+    const selected = camera.selectChannel(modelOnlyEntry.resolution[0], modelOnlyEntry.resolution[1], { bias: "nearest" });
 
     assert.ok(selected, "selectChannel resolves that resolution against the re-derived profiles");
     assert.deepEqual(selected.resolution, modelOnlyEntry.resolution, "the selected profile carries the new model's resolution");
@@ -181,6 +181,11 @@ describe("real ProtectCamera construction through the streaming-delegate factory
     assert.equal(factory.createCalls.length, 1, "the factory was not invoked again on the re-run");
     assert.equal(controllerEvents(accessory).length, 1, "the controller was not configured again on the re-run");
     assert.equal(projection.updateCalls.length, 0, "the fully-RTSP-enabled push issues no enable write on the re-run either");
+
+    // The production selectChannel forwards the caller's posture to the selector. The G6 Pro Entry's 1920x1080 sits closer in area to Medium's 1440x1920 than to Low's
+    // 480x640, while Low is the highest channel at or under it, so the postures part here and a wrapper that read nearest as lower would answer Low to each call.
+    assert.equal(camera.selectChannel(1920, 1080, { bias: "nearest" })?.channel.id, 1, "copy mode's nearest posture takes Medium, the closest channel by area");
+    assert.equal(camera.selectChannel(1920, 1080, { bias: "lower" })?.channel.id, 2, "the lower posture takes Low, the highest channel at or under the request");
   });
 
   test("cleanup unregisters the controller, unwinds all fifteen observers, and a further push wakes nothing", async () => {

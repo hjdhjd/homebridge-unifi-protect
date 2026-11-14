@@ -102,18 +102,18 @@ describe("resolveChannelRequest - the transcode and hardware-encoder axes", () =
   test("transcoding on a hardware encoder hunts the richest source we ever ask for, biased higher", () => {
 
     assert.deepEqual(resolveChannelRequest(channelInput({ isTranscoding: true, usesHardwareEncoder: true })),
-      { biasHigher: true, height: PROTECT_MAX_SOURCE_HEIGHT, width: PROTECT_MAX_SOURCE_WIDTH });
+      { bias: "higher", height: PROTECT_MAX_SOURCE_HEIGHT, width: PROTECT_MAX_SOURCE_WIDTH });
   });
 
   test("transcoding in software asks for the HomeKit dimensions, still biased higher", () => {
 
-    assert.deepEqual(resolveChannelRequest(channelInput({ isTranscoding: true, usesHardwareEncoder: false })), { biasHigher: true, height: 1080, width: 1920 });
+    assert.deepEqual(resolveChannelRequest(channelInput({ isTranscoding: true, usesHardwareEncoder: false })), { bias: "higher", height: 1080, width: 1920 });
   });
 
-  test("a copy-mode session asks for the HomeKit dimensions with no bias, on either kind of host", () => {
+  test("a copy-mode session asks for the HomeKit dimensions biased nearest, on either kind of host", () => {
 
-    assert.deepEqual(resolveChannelRequest(channelInput({ isTranscoding: false, usesHardwareEncoder: true })), { biasHigher: false, height: 1080, width: 1920 });
-    assert.deepEqual(resolveChannelRequest(channelInput({ isTranscoding: false, usesHardwareEncoder: false })), { biasHigher: false, height: 1080, width: 1920 });
+    assert.deepEqual(resolveChannelRequest(channelInput({ isTranscoding: false, usesHardwareEncoder: true })), { bias: "nearest", height: 1080, width: 1920 });
+    assert.deepEqual(resolveChannelRequest(channelInput({ isTranscoding: false, usesHardwareEncoder: false })), { bias: "nearest", height: 1080, width: 1920 });
   });
 });
 

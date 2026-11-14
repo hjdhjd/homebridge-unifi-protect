@@ -3,7 +3,7 @@
  * streaming.ts: Streaming capability for UniFi Protect cameras.
  */
 import type { AdvertisedStreams, ProtectCamera } from "./camera.ts";
-import type { ChannelProfile, SelectRequest } from "../../media/resolution.ts";
+import type { ChannelProfile, SelectChannelOptions, SelectRequest } from "../../media/resolution.ts";
 import { capByPixels, selectChannelProfile, selectSubstrateChannelFrom } from "../../media/resolution.ts";
 import { controllerCapabilityAppeared, controllerIdentityOf } from "../../media/stream-delegate.ts";
 import type { Nullable } from "homebridge-plugin-utils";
@@ -283,15 +283,16 @@ export class StreamingCapability extends ProtectDeviceCapability<ProtectCamera> 
   }
 
   // Find a direct-RTSP livestream configuration for a given target resolution. This is the device wrapper over the pure selectChannelProfile: it injects our published
-  // entries and our host's state (the direct-RTSP default, which pins to a named channel, and the optional hardware pixel cap), then delegates the selection mathematics.
+  // entries and our host's direct-RTSP default, which selects a named channel, takes the caller's posture and optional pixel cap, then delegates the selection
+  // mathematics.
   // We select over the RTSP-enabled subset because this is a direct-RTSP session: a channel the controller has not enabled has no stream for FFmpeg to connect to.
   // The pixel cap is applied as a mode-agnostic pre-filter BEFORE selection - intentionally a pre-filter, not part of the request, so it filters the name branch too (a
   // constrained request with an explicit profile preference still drops profiles above the cap); a future reader should not move it into the request.
-  public selectChannel(width: number, height: number, opts?: { biasHigher?: boolean; maxPixels?: number }): Nullable<ChannelProfile> {
+  public selectChannel(width: number, height: number, options: SelectChannelOptions): Nullable<ChannelProfile> {
 
-    const entries = capByPixels(this.#rtspProfiles, opts?.maxPixels);
+    const entries = capByPixels(this.#rtspProfiles, options.maxPixels);
     const request: SelectRequest = this.host.hints.rtspDefault ? { mode: "name", name: this.host.hints.rtspDefault } :
-      { bias: opts?.biasHigher ? "higher" : "lower", height: height, mode: "nearest", width: width };
+      { bias: options.bias, height: height, mode: "size", width: width };
 
     return selectChannelProfile(entries, request);
   }

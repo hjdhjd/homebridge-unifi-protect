@@ -39,6 +39,9 @@ const PROTECT_SNAPSHOT_CROP_ALLOWANCE = 1000;
 // The tag for each source a snapshot can be answered from. The hedge reports its winner under the same tags, and the debug line names each source by its label.
 type SnapshotSourceTag = "api" | "cache" | "rtsp" | "timeshift";
 
+// The tags of the sources the hedge races, drawn from the tags above, so the hedge's attempts and its winner carry the tag every other answer does.
+type HedgedSourceTag = Extract<SnapshotSourceTag, "api" | "rtsp">;
+
 const SNAPSHOT_SOURCE_LABELS: Readonly<Record<SnapshotSourceTag, string>> = {
 
   api: "Protect controller",
@@ -51,7 +54,7 @@ const SNAPSHOT_SOURCE_LABELS: Readonly<Record<SnapshotSourceTag, string>> = {
 interface SnapshotAnswer {
 
   image: Buffer;
-  source: SnapshotSourceTag;
+  readonly source: SnapshotSourceTag;
 }
 
 // A source's image as an answer tagged with that source, or null when the source had no image to give.
@@ -273,7 +276,7 @@ export class ProtectSnapshot {
     }
 
     // Grab the highest quality stream we have available.
-    const channelProfile = this.protectCamera.selectChannel(PROTECT_MAX_SOURCE_WIDTH, PROTECT_MAX_SOURCE_HEIGHT, { biasHigher: true });
+    const channelProfile = this.protectCamera.selectChannel(PROTECT_MAX_SOURCE_WIDTH, PROTECT_MAX_SOURCE_HEIGHT, { bias: "higher" });
 
     if(!channelProfile) {
 
@@ -502,14 +505,14 @@ export type SnapshotAttempt = (signal: AbortSignal) => Promise<Nullable<Buffer>>
 export interface HedgedSnapshot {
 
   image: Buffer;
-  source: "api" | "rtsp";
+  readonly source: HedgedSourceTag;
 }
 
 // An attempt's answer, tagged by the source that gave it, which is what the hedge races against the instants it arms on the clock.
 interface AttemptAnswer {
 
-  image: Nullable<Buffer>;
-  kind: "api" | "rtsp";
+  readonly image: Nullable<Buffer>;
+  readonly kind: HedgedSourceTag;
 }
 
 /**

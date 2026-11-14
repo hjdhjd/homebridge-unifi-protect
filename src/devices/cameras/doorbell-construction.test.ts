@@ -787,7 +787,7 @@ describe("pure-test unlocks: package channel selection and the recording pixel c
 
       await settle();
 
-      assert.match(zonedDoorbell.selectChannel(3024, 4096)?.url ?? "", /^rtsps:\/\/camera\.test:7441\/alias\d\?enableSrtp$/,
+      assert.match(zonedDoorbell.selectChannel(3024, 4096, { bias: "nearest" })?.url ?? "", /^rtsps:\/\/camera\.test:7441\/alias\d\?enableSrtp$/,
         "the doorbell's channel profiles resolve against its connection host");
       assert.equal(zonedDoorbell.packageCamera?.selectChannel()?.url, "rtsps://camera.test:7441/alias3?enableSrtp",
         "and so do its package camera's");

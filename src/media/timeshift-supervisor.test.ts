@@ -1356,12 +1356,12 @@ describe("timeshift supervisor HKSV acknowledgment", () => {
   }
 
   // The acknowledgment names the recording size HomeKit selected, read from the recording configuration, after the channel it records from and before the bitrate
-  // HomeKit selected. On the hardware encoder the marker opens the line, a space after it.
+  // HomeKit selected. On the hardware encoder the marker follows the label, a space after it.
   test("names the recording resolution and bitrate HomeKit selected", async () => {
 
     assert.equal(await acknowledgmentFor(false), "HKSV: High [h264], recording 1920x1080@30fps at 2 Mbps.", "the software acknowledgment names the recording size");
     assert.equal(await acknowledgmentFor(true), "HKSV: " + HKSV_HARDWARE_MARKER + " High [h264], recording 1920x1080@30fps at 2 Mbps.",
-      "the hardware acknowledgment opens with the marker and a space, and names the recording size");
+      "the hardware acknowledgment carries the marker and a space after its label, and names the recording size");
   });
 });
 

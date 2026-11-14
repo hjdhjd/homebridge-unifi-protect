@@ -4,6 +4,7 @@
  */
 import { AudioRecordingCodecType, capabilityGate, formatErrorMessage, parseValueList, presenceChanged, toStartCase, validCharacteristic } from "homebridge-plugin-utils";
 import type { Camera, LivestreamSource, ProtectState, SnapshotOptions, TalkbackSession } from "unifi-protect";
+import type { ChannelProfile, SelectChannelOptions } from "../../media/resolution.ts";
 import type { CharacteristicValue, Resolution, Service } from "homebridge";
 import type { LivestreamAudioFormat, StreamingDelegate } from "../../media/stream-delegate.ts";
 import type { LivestreamHostOptions, ProtectCameraHost } from "../../media/camera-host.ts";
@@ -18,7 +19,6 @@ import { capabilityReconcileAction, isFeatureFlagsDrain } from "./capability-rec
 import { nightVisionActive, nightVisionBrightnessForMode, nightVisionCommandForLevel, nightVisionModeForToggleOn, nightVisionToggleCommand,
   parseNightVisionMode } from "./night-vision-policy.ts";
 import type { AmbientLightCapability } from "./ambient-light.ts";
-import type { ChannelProfile } from "../../media/resolution.ts";
 import type { DoorbellCapability } from "./doorbell.ts";
 import type { LivestreamSubscription } from "../../media/livestream.ts";
 import type { NightVisionCommand } from "./night-vision-policy.ts";
@@ -2195,9 +2195,9 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
   // Find a direct-RTSP livestream configuration for a given target resolution, forwarded to the composed streaming capability that holds the advertised list and the
   // selection policy. A camera that has not acquired its capability advertises nothing, which is exactly the answer an empty list produces.
-  public selectChannel(width: number, height: number, opts?: { biasHigher?: boolean; maxPixels?: number }): Nullable<ChannelProfile> {
+  public selectChannel(width: number, height: number, options: SelectChannelOptions): Nullable<ChannelProfile> {
 
-    return this.#streaming?.selectChannel(width, height, opts) ?? null;
+    return this.#streaming?.selectChannel(width, height, options) ?? null;
   }
 
   // Resolve the channel that populates the standing timeshift buffer feeding HomeKit Secure Video, buffer-backed live views, and snapshots, forwarded to the composed

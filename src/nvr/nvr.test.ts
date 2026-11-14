@@ -1897,7 +1897,7 @@ describe("the controller root's address override", () => {
       const camera = root.getDeviceById(cameraConfig.id);
 
       assert.ok(camera instanceof ProtectCamera, "the root adopted the camera its store carries");
-      assert.match(camera.selectChannel(1920, 1080)?.url ?? "", /^rtsps:\/\/override\.example:7441\/alias\d\?enableSrtp$/,
+      assert.match(camera.selectChannel(1920, 1080, { bias: "nearest" })?.url ?? "", /^rtsps:\/\/override\.example:7441\/alias\d\?enableSrtp$/,
         "the camera's channel profiles compose against the override, not its connection host");
 
       shutdown();

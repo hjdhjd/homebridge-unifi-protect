@@ -196,7 +196,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       // The published channel profiles bake their RTSP URLs against the connection host at derivation time, so a profile selected before the change carries the seeded
       // host and one selected after the change must carry the new one - the connectionHost observer re-runs the reconcile that re-bakes them.
-      const before = built.camera.selectChannel(1200, 1600)?.url;
+      const before = built.camera.selectChannel(1200, 1600, { bias: "nearest" })?.url;
 
       assert.ok(before && !before.includes("10.0.0.5"), "the initial baked profile URL does not carry the new host");
 
@@ -204,7 +204,7 @@ describe("camera-family observer reactions and bound read handlers (camera-react
 
       await settle();
 
-      const after = built.camera.selectChannel(1200, 1600)?.url;
+      const after = built.camera.selectChannel(1200, 1600, { bias: "nearest" })?.url;
 
       assert.ok(after?.includes("10.0.0.5"), "the connectionHost observer re-derived the profile URL against the changed connection host");
     });

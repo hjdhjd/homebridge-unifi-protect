@@ -11,12 +11,15 @@
  *
  * Every comparison of sizes reads pixel area: which catalog sizes a camera advertises, the channel each size maps to, the sort, the pixel cap, and the selector. A
  * portrait channel and a landscape size of the same area therefore compare as equals, which is what lets a portrait camera serve the landscape sizes HomeKit requires
- * of every camera from the channel whose pixel count matches them.
+ * of every camera from the channel whose pixel count matches them. Width and height are read only by the selector's exact-dimensions match, which a request for a
+ * channel's own size takes ahead of any area comparison, by the sort's tie-breaks between sizes of equal area, and by the advertised list's set, which is keyed by them.
  *
- * The selection model is a discriminated union, SelectRequest: a "name" request pins to a named channel (the user's explicit streaming/recording-quality preference);
- * a "nearest" request finds the closest entry to a target resolution, biased higher (for transcoding, which wants a higher-quality input) or lower (the default, which
- * wants the highest channel at or below the target). The pixel cap is a mode-agnostic pre-filter (capByPixels) applied BEFORE selectChannelProfile, so it filters
- * the name branch too: a constrained-hardware request with an explicit profile preference still drops profiles above the cap.
+ * The selection model is a discriminated union, SelectRequest: a "name" request takes the named channel (the user's explicit streaming/recording-quality preference),
+ * and a "size" request takes a channel for a target resolution under a posture, ChannelBias, that names the need it serves. Bias lower takes the highest channel at
+ * or under the target, a pixel budget (the advertised list's mapping and the constrained-host buffer target); bias higher takes the smallest channel at or over it,
+ * a transcode's input, which wants the richer source; and bias nearest takes the channel closest to it, for copy mode, which re-encodes nothing and so serves the
+ * stream closest to what the client asked for. The pixel cap is a mode-agnostic pre-filter (capByPixels) applied BEFORE selectChannelProfile, so it filters the name
+ * branch too: a constrained-hardware request with an explicit profile preference still drops profiles above the cap.
  *
  * Matches the pure-module voice of livestream-recovery-policy.ts and nvr-policy.ts: a small, exported, side-effect-free surface paired with a thin live-read wrapper.
  */
@@ -24,6 +27,7 @@ import type { Nullable } from "homebridge-plugin-utils";
 import { PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET } from "../settings.ts";
 import type { ProtectCameraChannelConfig } from "unifi-protect";
 import type { Resolution } from "homebridge";
+import { exhaustiveGuard } from "../types.ts";
 import { formatUrlHost } from "homebridge-plugin-utils";
 
 // One RTSP entry: a camera channel mapped to a HomeKit resolution, with the friendly display name and the FFmpeg `-i` input URL the media path consumes. The full
@@ -119,10 +123,31 @@ const ASPECT_RATIOS: readonly { readonly landscape: AspectFamily; readonly portr
 // the primary list), the package class (which selects it), and the NVR RTSP playlist publisher.
 export const PACKAGE_CHANNEL_NAME = "Package Camera";
 
-// A streaming-quality selection request. A "name" request pins to a named channel (the user's explicit profile preference); a "nearest" request finds the closest
-// entry to a target resolution under the given bias. The pixel cap is NOT a request field - it is a mode-agnostic pre-filter (capByPixels) applied before selection.
+/* The posture a size request selects a channel under. Each answers one need, and each compares the request's pixel area with the channels':
+ *
+ * - "lower" takes the highest channel at or under the request, or the lowest channel when none is, a pixel budget: the advertised list's mapping of each size to the
+ *   channel that can serve it without upscaling, and the constrained-host buffer target.
+ * - "higher" takes the smallest channel at or over the request, a transcode's input, because an encoder fed the richer source produces the better stream.
+ * - "nearest" takes the channel whose area is closest to the request's, the lower on a tie, for copy mode: nothing is re-encoded, so the stream the client receives
+ *   untouched should be the one closest to what it asked for.
+ */
+export type ChannelBias = "higher" | "lower" | "nearest";
+
+// A channel-selection request. A "name" request takes the channel the user named (the explicit profile preference); a "size" request takes a channel for a target
+// resolution under the posture its bias names. The pixel cap is NOT a request field - it is a mode-agnostic pre-filter (capByPixels) applied before selection.
 export type SelectRequest = { mode: "name"; name: string } |
-  { bias: "higher" | "lower"; height: number; mode: "nearest"; width: number };
+  { bias: ChannelBias; height: number; mode: "size"; width: number };
+
+// What a caller of a camera's channel selection names beside the target resolution, shared by the host contract, the camera, its streaming capability and the test
+// double, so the options are spelled once.
+export interface SelectChannelOptions {
+
+  // The posture the size request selects under.
+  bias: ChannelBias;
+
+  // The most pixels a channel may carry, applied as a pre-filter before selection, the name request included. Absent means no cap.
+  maxPixels?: number;
+}
 
 // The pixel count of a frame, the one measure every size comparison in this module reads.
 function pixelArea(width: number, height: number): number {
@@ -171,8 +196,8 @@ function advertisedFrameRate(fps: number): number {
 }
 
 // Comparator that sorts entries from high to low: by pixel area, then by width, height and frame rate, so a landscape size sorts ahead of the portrait size of the
-// same area. A built list needs no channel key beside these, because every size maps to the highest channel at or under its own area, so a list sorted by its sizes
-// already runs its channels high to low. Pure - no `this`.
+// same area. A built list needs no channel key beside these, because every size maps to the highest channel at or under its own area, or to the lowest channel when
+// none is, so a list sorted by its sizes already runs its channels high to low. Pure - no `this`.
 export function sortByResolutions(a: ChannelProfile, b: ChannelProfile): number {
 
   const [ aWidth, aHeight, aFps ] = a.resolution;
@@ -244,10 +269,12 @@ export function capByPixels(entries: readonly ChannelProfile[], maxPixels: numbe
 }
 
 // The pure closest-match selector over a pre-sorted (high-to-low) entry list. A "name" request returns the entry whose channel name matches case-insensitively, or
-// null. A "nearest" request returns the exact channel-dimension match if present (FPS ignored - HomeKit clients handle it fine), else compares pixel area under the
-// bias: lower picks the first entry whose channel is at or under the request's area, falling back to the lowest entry; higher picks the last entry whose channel is at
-// or over it, falling back to the highest entry. Each comparison is inclusive, so a request whose area equals a transposed channel's - 1280x960 against a 960x1280
-// channel - maps to that channel rather than past it. Entries arrive pre-sorted; the selector never sorts and never mutates its argument.
+// null. A "size" request returns the exact channel-dimension match if present (FPS ignored - HomeKit clients handle it fine), else compares pixel area under the
+// request's posture: lower picks the first entry whose channel is at or under the request's area, falling back to the lowest entry; higher picks the last entry whose
+// channel is at or over it, falling back to the highest entry; and nearest picks the entry whose channel area is closest to the request's, a later entry winning an
+// equal difference, so a tie takes the lower channel and a channel answers with its last entry. Each comparison is inclusive, so a request whose area equals a
+// transposed channel's - 1280x960 against a 960x1280 channel - maps to that channel rather than past it. Entries arrive pre-sorted; the selector never sorts and never
+// mutates its argument.
 export function selectChannelProfile(entries: readonly ChannelProfile[], request: SelectRequest): Nullable<ChannelProfile> {
 
   switch(request.mode) {
@@ -260,7 +287,7 @@ export function selectChannelProfile(entries: readonly ChannelProfile[], request
       return entries.find((e) => e.channel.name.toUpperCase() === wanted) ?? null;
     }
 
-    case "nearest": {
+    case "size": {
 
       // Nothing to choose from.
       if(!entries.length) {
@@ -281,17 +308,43 @@ export function selectChannelProfile(entries: readonly ChannelProfile[], request
       }
 
       const requestArea = pixelArea(request.width, request.height);
+      const channelArea = (e: ChannelProfile): number => pixelArea(e.channel.width, e.channel.height);
 
-      // Bias lower: the first entry whose channel is at or under the request by area, or the lowest entry we have as a backstop (the list is sorted high to low, so
-      // .at(-1) is the lowest).
-      if(request.bias === "lower") {
+      switch(request.bias) {
 
-        return entries.find((e) => (pixelArea(e.channel.width, e.channel.height) <= requestArea)) ?? entries.at(-1) ?? null;
+        case "higher": {
+
+          // Bias higher (primarily for transcoding, which wants a higher-quality input): the last entry whose channel is at or over the request by area, which is the
+          // smallest such channel because the list is sorted high to low, or the highest entry as a backstop.
+          return entries.findLast((e) => (channelArea(e) >= requestArea)) ?? entries[0] ?? null;
+        }
+
+        case "lower": {
+
+          // Bias lower: the first entry whose channel is at or under the request by area, or the lowest entry we have as a backstop (the list is sorted high to low,
+          // so .at(-1) is the lowest).
+          return entries.find((e) => (channelArea(e) <= requestArea)) ?? entries.at(-1) ?? null;
+        }
+
+        case "nearest": {
+
+          // Bias nearest (copy mode, which serves the channel untouched): the entry whose channel area is closest to the request's. A later entry wins an equal
+          // difference, so a channel above the request and one below it at the same distance resolve to the lower, which the high-to-low list puts later, and a
+          // channel answers with the last of its entries.
+          const distance = (e: ChannelProfile): number => Math.abs(channelArea(e) - requestArea);
+
+          return entries.reduce((best, e) => ((distance(e) <= distance(best)) ? e : best));
+        }
+
+        default: {
+
+          // ChannelBias is a closed union, so no request reaches this branch; the guard stops the build the moment a posture is added without a branch above, and the
+          // null is the same safe default the mode switch below returns.
+          exhaustiveGuard(request.bias);
+
+          return null;
+        }
       }
-
-      // Bias higher (primarily for transcoding, which wants a higher-quality input): the last entry whose channel is at or over the request by area, which is the
-      // smallest such channel because the list is sorted high to low, or the highest entry as a backstop.
-      return entries.findLast((e) => (pixelArea(e.channel.width, e.channel.height) >= requestArea)) ?? entries[0] ?? null;
     }
 
     default: {
@@ -328,7 +381,7 @@ export function selectSubstrateChannelFrom(entries: readonly ChannelProfile[], i
   // (2) A pixel-constrained encoder host: the highest-quality channel at or below the constrained target by pixel count, biased downward and preference-free.
   if(input.hostSystem === "raspbian") {
 
-    return selectChannelProfile(entries, { bias: "lower", height: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.height, mode: "nearest",
+    return selectChannelProfile(entries, { bias: "lower", height: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.height, mode: "size",
       width: PROTECT_TIMESHIFT_CONSTRAINED_HOST_TARGET.width });
   }
 
@@ -392,8 +445,9 @@ export function buildAdvertisedProfiles(nativeEntries: readonly ChannelProfile[]
       continue;
     }
 
-    // The highest native at or under this size by area, preference-free and uncapped, which the natives always supply since they are not empty.
-    const native = selectChannelProfile(natives, { bias: "lower", height, mode: "nearest", width });
+    // The highest native at or under this size by area, or the lowest native when none is, preference-free and uncapped. The natives are not empty, so one always
+    // answers.
+    const native = selectChannelProfile(natives, { bias: "lower", height, mode: "size", width });
 
     if(!native) {
 

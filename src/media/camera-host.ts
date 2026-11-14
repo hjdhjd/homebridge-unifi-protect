@@ -10,8 +10,8 @@
  * and its type-only reference to StreamingDelegate (mirrored by that module's factory param) is the same benign, erased cycle the camera and its delegate already
  * formed directly.
  */
+import type { ChannelProfile, SelectChannelOptions } from "./resolution.ts";
 import type { ProtectCameraConfig, SnapshotOptions, TalkbackSession } from "unifi-protect";
-import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import type { Nullable } from "homebridge-plugin-utils";
 import type { ProtectCameraHints } from "../devices/cameras/camera.ts";
@@ -70,8 +70,8 @@ export interface ProtectCameraHost extends ProtectDeviceContext {
   // Reboots the camera through the controller - the consumer half of livestream self-heal.
   reboot(): Promise<void>;
 
-  // Resolves the best-fit channel profile for a requested live/snapshot resolution.
-  selectChannel(width: number, height: number, opts?: { biasHigher?: boolean; maxPixels?: number }): Nullable<ChannelProfile>;
+  // Resolves the best-fit channel profile for a requested live/snapshot resolution, under the posture and the pixel cap the caller names.
+  selectChannel(width: number, height: number, options: SelectChannelOptions): Nullable<ChannelProfile>;
 
   // Resolves the channel profile that populates the standing timeshift buffer feeding HomeKit Secure Video, buffer-backed live views, and snapshots.
   selectSubstrateChannel(): Nullable<ChannelProfile>;

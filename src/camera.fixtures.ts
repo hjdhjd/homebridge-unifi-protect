@@ -182,7 +182,7 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
 
     // The UA G2 PRO's channels: a portrait 3:4 camera with a 30fps High and Medium and a 15fps Low. Its 3:4 rows within its native area join the sizes HomeKit
     // requires. 1920x1080 maps to High, 1280x960 to Medium, whose 960x1280 holds the same area, and 1280x720, 1024x768 and every smaller size to the 15fps Low, the
-    // only channel at or under them.
+    // highest channel at or under them, the sizes below Low reaching it as the lowest channel.
     expected: [
 
       { channelId: 0, lens: undefined, name: "1200x1600@30fps (High)", resolution: [ 1920, 1080, 30 ], url: fixtureUrl(0) },
@@ -209,7 +209,7 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
     channels: AI_PRO_CHANNELS,
 
     // AI Pro is a 16:9 4K camera with a 1280x720 middle and a 640x360 low. Its 16:9 rows within its native area, 2560x1440 among them, join the sizes HomeKit
-    // requires: 2560x1440 down to 1280x720 select Medium, and 1024x768 and every smaller size select Low. Every channel runs at 30fps, so no frame rate moves.
+    // requires: 2560x1440 down to 1280x720 map to Medium, and 1024x768 and every smaller size map to Low. Every channel runs at 30fps, so no frame rate moves.
     expected: [
 
       { channelId: 0, lens: undefined, name: "3840x2160@30fps (High)", resolution: [ 3840, 2160, 30 ], url: fixtureUrl(0) },
@@ -292,8 +292,8 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
     channels: G6_PRO_ENTRY_CHANNELS,
 
     // G6 Pro Entry is a portrait 3:4 doorbell at the controller's 3024x4032 top, whose channels run at a native 20fps. 20 is not a rate HomeKit accepts, so every entry
-    // advertises 24. Every 3:4 row sits within its native area and joins the sizes HomeKit requires: 2400x3200 and 1536x2048 select Medium, and every smaller size,
-    // 1920x1080 included, selects Low, since Medium's 1440x1920 holds more pixels. Its Package Camera channel is filtered out of this parent list.
+    // advertises 24. Every 3:4 row sits within its native area and joins the sizes HomeKit requires: 2400x3200 and 1536x2048 map to Medium, and every smaller size,
+    // 1920x1080 included, maps to Low, since Medium's 1440x1920 holds more pixels. Its Package Camera channel is filtered out of this parent list.
     expected: [
 
       { channelId: 0, lens: undefined, name: "3024x4032@20fps (High)", resolution: [ 3024, 4032, 24 ], url: fixtureUrl(0) },
@@ -324,7 +324,7 @@ export const CAMERA_FIXTURES: CameraFixture[] = [
     channels: DOORBELL_LITE_CHANNELS,
 
     // The Doorbell Lite is a portrait 3:4 doorbell whose channels run at 24fps. 2400x3200 holds more pixels than its native top and stays out; the 3:4 rows within its
-    // native area join the sizes HomeKit requires. Every size from 1536x2048 down to 768x1024 selects Medium, and every size from 640x480 down selects Low.
+    // native area join the sizes HomeKit requires. Every size from 1536x2048 down to 768x1024 maps to Medium, and every size from 640x480 down maps to Low.
     expected: [
 
       { channelId: 0, lens: undefined, name: "1920x2560@24fps (High)", resolution: [ 1920, 2560, 24 ], url: fixtureUrl(0) },
@@ -380,8 +380,8 @@ export const PACKAGE_FIXTURES: PackageFixture[] = [
 
   {
 
-    // The G6 Pro Entry's package channel, 1600x1200 (4:3) at a native 3fps. The 4:3 rows within its native area, 1440x1080 among them and 2048x1536 above it, join the
-    // sizes HomeKit requires, and every entry advertises 15fps, the package's own size included.
+    // The G6 Pro Entry's package channel, 1600x1200 (4:3) at a native 3fps. The 4:3 rows within its native area, 1440x1080 among them, join the sizes HomeKit
+    // requires, while 2048x1536 holds more pixels than the channel and stays out. Every entry advertises 15fps, the package's own size included.
     channel: G6_PRO_ENTRY_PACKAGE_CHANNEL,
     expected: [ [ 1920, 1080, 15 ], [ 1600, 1200, 15 ], [ 1440, 1080, 15 ], [ 1280, 960, 15 ], [ 1280, 720, 15 ], [ 1024, 768, 15 ], [ 640, 480, 15 ],
       [ 640, 360, 15 ], [ 480, 360, 15 ], [ 480, 270, 15 ], [ 320, 240, 15 ], [ 320, 180, 15 ] ],

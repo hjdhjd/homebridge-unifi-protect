@@ -11,8 +11,9 @@
  * The results:
  *
  *   - TranscodeDecision: whether we re-encode, plus the high-latency reading of the connection that shapes the bitrate below.
- *   - ChannelRequest: the dimensions to hunt a source channel with, and whether to bias toward a richer one. The delegate makes the selection call itself, and the
- *     host's source-pixel cap it applies alongside the bias is a hardware capability rather than a decision, so that read stays there too.
+ *   - ChannelRequest: the dimensions to hunt a source channel with, and the posture to select it under, higher for a transcode and nearest for copy mode. The
+ *     delegate makes the selection call itself, and the host's source-pixel cap it applies with the higher posture alone is a hardware capability rather than a
+ *     decision, so that read stays there too.
  *   - VideoEncodingDecision: either a copy of the camera's own stream (carrying whether the fMP4 input needs its Annex B bitstream conversion) or a full
  *     encoder-options bag for homebridge-plugin-utils to render, plus the target bitrate the streaming-request log reports either way.
  *
@@ -21,6 +22,7 @@
  */
 import type { H264Level, H264Profile, VideoEncoderOptions } from "homebridge-plugin-utils";
 import { PROTECT_MAX_SOURCE_HEIGHT, PROTECT_MAX_SOURCE_WIDTH } from "../settings.ts";
+import type { ChannelBias } from "./resolution.ts";
 import { HOMEKIT_IDR_INTERVAL } from "homebridge-plugin-utils";
 
 // Whether this live view re-encodes the camera's video, and whether HomeKit negotiated a high-latency connection. The latency reading is returned alongside because the
@@ -31,11 +33,11 @@ export interface TranscodeDecision {
   isTranscoding: boolean;
 }
 
-// What to ask the camera's channel selection for: the dimensions to match against, and whether to bias toward a richer channel than the target rather than the closest
-// one at or below it.
+// What to ask the camera's channel selection for: the dimensions to match against, and the posture to select under - higher when transcoding, since an encoder wants
+// a richer input than its target, and nearest in copy mode, which re-encodes nothing and so serves the channel closest to the request.
 export interface ChannelRequest {
 
-  biasHigher: boolean;
+  bias: ChannelBias;
   height: number;
   width: number;
 }
@@ -86,15 +88,16 @@ export function resolveTranscodeDecision(input: { crop: boolean; packetTime: num
 }
 
 /**
- * Resolve the source channel to hunt for: the dimensions to match against, and whether to bias toward a richer channel. Pure and exhaustively testable.
+ * Resolve the source channel to hunt for: the dimensions to match against, and the posture to select under. Pure and exhaustively testable.
  *
- * When the live encode runs on the host's hardware encoder we bias toward the highest-quality source the pipeline can ingest, because fixed-function encoders perform
- * better with higher-bitrate sources; a software encode is fed a source matched to the requested resolution instead, so the CPU cost tracks what HomeKit actually asked
- * for. A copy-mode session takes the requested dimensions with no bias at all - there is no encoder to feed, so the closest channel at or below the request is exactly
- * what we want.
+ * A transcode selects under the higher posture, the smallest channel at or over the dimensions, because an encoder fed a richer source produces the better stream.
+ * When the live encode runs on the host's hardware encoder we hunt the highest-quality source the pipeline can ingest, at PROTECT_MAX_SOURCE_WIDTH by
+ * PROTECT_MAX_SOURCE_HEIGHT, because fixed-function encoders perform better with higher-bitrate sources; a software encode is fed a source matched to the requested
+ * resolution instead, so the CPU cost tracks what HomeKit actually asked for. A copy-mode session selects under the nearest posture at the requested dimensions:
+ * nothing is re-encoded, so the stream HomeKit receives untouched should be the channel whose pixel count is closest to what it asked for.
  *
- * The single bias flag carries the whole "hunt a rich source under whatever ceiling this host can ingest" posture: the delegate reads it to decide whether to apply the
- * host's source-pixel cap alongside the bias, because the two are one posture rather than two independent choices.
+ * The delegate applies the host's source-pixel cap with the higher posture alone, because hunting a rich source under whatever ceiling this host's encoder can ingest is
+ * one posture rather than two independent choices, and a copy-mode stream feeds no encoder for the ceiling to protect.
  *
  * @param input.isTranscoding       - Whether this session re-encodes the video, from {@link resolveTranscodeDecision}.
  * @param input.requestHeight       - The frame height HomeKit requested, in pixels.
@@ -109,7 +112,7 @@ export function resolveChannelRequest(input: { isTranscoding: boolean; requestHe
 
   return {
 
-    biasHigher: input.isTranscoding,
+    bias: input.isTranscoding ? "higher" : "nearest",
     height: wantsRichestSource ? PROTECT_MAX_SOURCE_HEIGHT : input.requestHeight,
     width: wantsRichestSource ? PROTECT_MAX_SOURCE_WIDTH : input.requestWidth
   };

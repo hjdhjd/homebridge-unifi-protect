@@ -733,8 +733,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // the hardware-acceleration hint in the streaming-request log further down.
     const usesHardwareEncoder = this.ffmpegOptions.hardwareEncodes("stream");
 
-    // Find the best RTSP stream based on what we're looking for. The dimensions and the bias are a pure policy; the selection call and the host's source-pixel cap - a
-    // hardware capability rather than a decision - stay here.
+    // Find the best RTSP stream based on what we're looking for. The dimensions and the posture are a pure policy; the selection call and the host's source-pixel cap -
+    // a hardware capability rather than a decision, applied with the higher posture alone - stay here.
     const channelRequest = resolveChannelRequest({
 
       isTranscoding,
@@ -744,7 +744,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     });
 
     channelProfile ??= this.protectCamera.selectChannel(channelRequest.width, channelRequest.height,
-      channelRequest.biasHigher ? { biasHigher: true, maxPixels: this.ffmpegOptions.maxSourcePixels("stream") } : undefined);
+      { bias: channelRequest.bias, maxPixels: (channelRequest.bias === "higher") ? this.ffmpegOptions.maxSourcePixels("stream") : undefined });
 
     if(!channelProfile) {
 

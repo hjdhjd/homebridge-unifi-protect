@@ -11,6 +11,7 @@
  * are unifi-protect's. The cross-cutting core - the Homebridge runtime, the state store, and the streaming and timeshift stubs - lives in the root harness every
  * subsystem's testing.helpers.ts imports from.
  */
+import type { ChannelProfile, SelectChannelOptions } from "./resolution.ts";
 import type { HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
 import type { LivestreamDescription, LivestreamInit, LivestreamSubscriptionState, ProtectCameraConfig, Segment, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { LivestreamHostOptions, ProtectCameraHost } from "./camera-host.ts";
@@ -19,7 +20,6 @@ import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { makeBox, makeContainer, makeTrunBox } from "homebridge-plugin-utils/testing";
 import type { API } from "homebridge";
-import type { ChannelProfile } from "./resolution.ts";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import type { ProtectAccessory } from "../types.ts";
@@ -145,7 +145,7 @@ export class TestCameraHost implements ProtectCameraHost {
 
   // The settable channel selectors; default null (no profile resolved), so the snapshot RTSP source - which would call selectChannel - never proceeds past its own
   // !stream guard anyway, keeping the two-sided test on the controller path.
-  public selectChannel: (width: number, height: number, opts?: { biasHigher?: boolean; maxPixels?: number }) => Nullable<ChannelProfile> = () => null;
+  public selectChannel: (width: number, height: number, options: SelectChannelOptions) => Nullable<ChannelProfile> = () => null;
   public selectSubstrateChannel: () => Nullable<ChannelProfile> = () => null;
   public readonly setStatusLedCalls: boolean[] = [];
 

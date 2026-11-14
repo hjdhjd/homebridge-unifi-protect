@@ -136,9 +136,9 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     assert.deepEqual(factory.createCalls[0]?.resolutions, fixtureByModel("G6 Instant").expected.map((entry) => entry.resolution),
       "the advertised resolutions equal the golden-master expectation for the full channel set");
 
-    // The direct-RTSP selector still answers from the enabled subset alone: the Medium channel's own native resolution resolves to Low, the nearest enabled entry
-    // below the request. Asserting the resolved identity (not merely "not Medium") is what fails a wrong-but-enabled selection too.
-    assert.equal(camera.selectChannel(1280, 720)?.channel.id, 2, "the direct-RTSP selection lands on the Low channel exactly");
+    // The direct-RTSP selector still answers from the enabled subset alone: the Medium channel's own native resolution resolves to Low, the enabled entry nearest the
+    // request by area. Asserting the resolved identity (not merely "not Medium") is what fails a wrong-but-enabled selection too.
+    assert.equal(camera.selectChannel(1280, 720, { bias: "nearest" })?.channel.id, 2, "the direct-RTSP selection lands on the Low channel exactly");
     assert.equal(camera.hasRtspStream, true, "the camera has RTSP-enabled streams to dial");
   });
 
@@ -148,7 +148,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     const { camera } = built = await buildCamera({ channels: AI_PRO_CHANNELS.map((channel) => ((channel.id === 2) ? channel : { ...channel, isRtspEnabled: false })) });
 
     assert.equal(camera.hasRtspStream, true, "one enabled channel is enough to report an RTSP stream");
-    assert.equal(camera.selectChannel(3840, 2160)?.channel.id, 2, "the direct-RTSP selection falls to Low, the only enabled channel");
+    assert.equal(camera.selectChannel(3840, 2160, { bias: "nearest" })?.channel.id, 2, "the direct-RTSP selection falls to Low, the only enabled channel");
     assert.equal(camera.selectSubstrateChannel()?.channel.id, 0, "the buffer substrate takes High, the highest channel in the full published list");
   });
 
@@ -173,7 +173,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
 
     assert.equal(projection.updateCalls.length, 1, "the direct-RTSP quality pin alone makes the enable write necessary");
     assert.ok(camera.selectSubstrateChannel(), "the published list genuinely exists, so the pin miss below is a real miss rather than an empty list");
-    assert.equal(camera.selectChannel(1280, 720), null, "the direct-RTSP pin misses a channel that is not RTSP-enabled");
+    assert.equal(camera.selectChannel(1280, 720, { bias: "nearest" }), null, "the direct-RTSP pin misses a channel that is not RTSP-enabled");
   });
 
   /* The preset rows. Each pin registers a tier as its catalog default - High for the timeshift buffer, Medium for direct RTSP - so an enable that stores no tier
@@ -199,7 +199,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
 
     assert.equal(camera.hints.rtspDefault, "MEDIUM", "a bare direct-RTSP enable resolves the Medium preset");
     assert.equal(projection.updateCalls.length, 1, "the preset is a pin like any other, so it makes the enable write necessary");
-    assert.equal(camera.selectChannel(1280, 720), null, "the preset pin misses the Medium channel, which is not RTSP-enabled");
+    assert.equal(camera.selectChannel(1280, 720, { bias: "nearest" }), null, "the preset pin misses the Medium channel, which is not RTSP-enabled");
   });
 
   /* A hand-authored "Enable.<option>=" is the other enable form, and it lands on the same preset: the engine reads an empty stored payload on an option holding a
@@ -362,7 +362,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
       updateRejection: new ProtectAuthorizationError("forbidden"), userOptions: ["Enable.Video.Rtsp.Only.Medium.74ACB9000001"] });
 
     assert.equal(projection.updateCalls.length, 1, "the retired direct-RTSP pin alone makes the enable write necessary");
-    assert.equal(camera.selectChannel(1280, 720), null, "the retired direct-RTSP pin misses a channel that is not RTSP-enabled");
+    assert.equal(camera.selectChannel(1280, 720, { bias: "nearest" }), null, "the retired direct-RTSP pin misses a channel that is not RTSP-enabled");
   });
 
   test("a direct-RTSP configuration PATCHes every channel field-intact, defers the delegate, and completes through the channels observer", async () => {
@@ -402,9 +402,10 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
 
     // The camera streams anyway: the delegate stands up, and the direct-RTSP selection resolves within the enabled subset.
     assert.equal(factory.createCalls.length, 1, "the delegate stands up from the already-enabled channels");
-    assert.equal(camera.selectChannel(3840, 2160)?.channel.id, 0, "the High channel's native resolution selects the High channel");
-    assert.equal(camera.selectChannel(640, 360)?.channel.id, 2, "the Low channel's native resolution selects the Low channel");
-    assert.equal(camera.selectChannel(1280, 720)?.channel.id, 2, "the disabled Medium channel's native resolution resolves to Low, the nearest enabled entry");
+    assert.equal(camera.selectChannel(3840, 2160, { bias: "nearest" })?.channel.id, 0, "the High channel's native resolution selects the High channel");
+    assert.equal(camera.selectChannel(640, 360, { bias: "nearest" })?.channel.id, 2, "the Low channel's native resolution selects the Low channel");
+    assert.equal(camera.selectChannel(1280, 720, { bias: "nearest" })?.channel.id, 2,
+      "the disabled Medium channel's native resolution resolves to Low, the nearest enabled entry");
   });
 
   test("a non-authorization failure warns with its underlying cause and proceeds identically", async () => {
@@ -454,7 +455,7 @@ describe("RTSP autoconfiguration write-through (deriveAdvertisedStreams)", () =>
     assert.equal(projection.updateCalls.length, 0, "nothing needs RTSP, so no write is attempted");
     assert.equal(factory.createCalls.length, 1, "the camera advertises and stands its delegate up with zero RTSP-enabled channels");
     assert.equal(camera.hasRtspStream, false, "the camera honestly reports that it has no RTSP stream to dial");
-    assert.equal(camera.selectChannel(1920, 1080), null, "the direct-RTSP selector answers nothing, since nothing is enabled");
+    assert.equal(camera.selectChannel(1920, 1080, { bias: "nearest" }), null, "the direct-RTSP selector answers nothing, since nothing is enabled");
     assert.ok(camera.selectSubstrateChannel(), "the buffer substrate resolves anyway - the livestream API serves the channel regardless");
   });
 

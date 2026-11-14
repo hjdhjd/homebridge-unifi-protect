@@ -15,9 +15,9 @@
  * The golden-master fixtures are the single source of expected behavior: when a later change intentionally alters behavior, the diff lands as a reviewed change to a
  * checked-in fixture value and these tests flag exactly the rows that moved.
  */
-import { AI_PRO_CHANNELS, C5_WITNESS_CHANNELS, CAMERA_FIXTURES, DOORBELL_LITE_CHANNELS, FIXTURE_HOST, FIXTURE_RTSPS_PORT, G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS,
-  MIXED_RTSP_DISABLED_CHANNELS, PACKAGE_FIXTURES, SANITY_FAIL_CHANNELS, makeChannel } from "../camera.fixtures.ts";
-import type { AspectFamily, ChannelProfile, SelectRequest } from "./resolution.ts";
+import { AI_PRO_CHANNELS, C5_WITNESS_CHANNELS, CAMERA_FIXTURES, DOORBELL_LITE_CHANNELS, FIXTURE_HOST, FIXTURE_RTSPS_PORT, G2_PRO_CHANNELS, G5_FLEX_CHANNELS,
+  G6_PRO_ENTRY_CHANNELS, MIXED_RTSP_DISABLED_CHANNELS, PACKAGE_FIXTURES, SANITY_FAIL_CHANNELS, makeChannel } from "../camera.fixtures.ts";
+import type { AspectFamily, ChannelBias, ChannelProfile, SelectChannelOptions, SelectRequest } from "./resolution.ts";
 import { STANDARD_SIZES, buildAdvertisedProfiles, buildChannelProfile, capByPixels, classifyAspect, isPrimaryChannel, rtspUrl, selectChannelProfile,
   selectSubstrateChannelFrom, standardSizesFor } from "./resolution.ts";
 import { describe, test } from "node:test";
@@ -67,14 +67,15 @@ function nativeEntries(channels: ProtectCameraChannelConfig[]): ChannelProfile[]
   return entries;
 }
 
-// The exact streaming-wrapper logic from camera.ts selectChannel, reproduced over explicit entries and this-state so the selector grid proves the WRAPPER, not just the
-// bare selector. The pixel cap is a mode-agnostic pre-filter applied before the name/nearest branch, exactly as the wrapper does (so it filters the name branch too).
+// The exact wrapper logic of the streaming capability's selectChannel, reproduced over explicit entries and this-state so the selector grid proves the WRAPPER, not
+// just the bare selector. The pixel cap is a mode-agnostic pre-filter applied before the name or size branch, exactly as the wrapper does (so it filters the name branch
+// too), and the posture travels from the options into the size request as the wrapper forwards it.
 function selectChannelViaWrapper(entries: ChannelProfile[], rtspDefault: string, width: number, height: number,
-  opts?: { biasHigher?: boolean; maxPixels?: number }): Nullable<ChannelProfile> {
+  options: SelectChannelOptions): Nullable<ChannelProfile> {
 
-  const capped = capByPixels(entries, opts?.maxPixels);
+  const capped = capByPixels(entries, options.maxPixels);
   const request: SelectRequest = rtspDefault ? { mode: "name", name: rtspDefault } :
-    { bias: opts?.biasHigher ? "higher" : "lower", height: height, mode: "nearest", width: width };
+    { bias: options.bias, height: height, mode: "size", width: width };
 
   return selectChannelProfile(capped, request);
 }
@@ -184,8 +185,10 @@ describe("resolution: selector per-request mapping through the selectChannel wra
   // picks the first entry whose channel is at or under the target's area (or the lowest), and bias-higher the last entry whose channel is at or over it (or the highest).
   // Under the 1080p cap the High channel is filtered out, so every selection lands on Medium or Low. The two 1280x720 rows reflect the exact channel-dimension-match
   // behavior: an exact channel-dimension match returns the native-dimensioned [1280,720,30] entry rather than the higher [2560,1440,30] synthetic that shares the Medium
-  // channel - same channel/id, honest label.
-  const GRID: { bias: "higher" | "lower"; expected: SelectOutcome; height: number; maxPixels: number; width: number }[] = [
+  // channel - same channel/id, honest label. Bias-nearest, copy mode's posture, runs uncapped as copy mode does and picks the entry whose channel area is closest to the
+  // target's: a channel answers with its last entry, so Medium reads [1280,720,30] and Low [320,180,30], and 960x600, exactly midway between Medium and Low by area,
+  // takes Low, the lower channel on a tie.
+  const GRID: { bias: ChannelBias; expected: SelectOutcome; height: number; maxPixels: number; width: number }[] = [
 
     { bias: "lower", expected: { id: 0, resolution: [ 3840, 2160, 30 ] }, height: 2160, maxPixels: Infinity, width: 3840 },
     { bias: "lower", expected: { id: 1, resolution: [ 2560, 1440, 30 ] }, height: 1080, maxPixels: Infinity, width: 1920 },
@@ -202,14 +205,21 @@ describe("resolution: selector per-request mapping through the selectChannel wra
     { bias: "higher", expected: { id: 2, resolution: [ 320, 180, 30 ] }, height: 100, maxPixels: Infinity, width: 100 },
     { bias: "higher", expected: { id: 0, resolution: [ 3840, 2160, 30 ] }, height: 99999, maxPixels: Infinity, width: 99999 },
     { bias: "higher", expected: { id: 1, resolution: [ 2560, 1440, 30 ] }, height: 2160, maxPixels: CAP_1080P, width: 3840 },
-    { bias: "higher", expected: { id: 1, resolution: [ 2560, 1440, 30 ] }, height: 1080, maxPixels: CAP_1080P, width: 1920 }
+    { bias: "higher", expected: { id: 1, resolution: [ 2560, 1440, 30 ] }, height: 1080, maxPixels: CAP_1080P, width: 1920 },
+    { bias: "nearest", expected: { id: 0, resolution: [ 3840, 2160, 30 ] }, height: 2160, maxPixels: Infinity, width: 3840 },
+    { bias: "nearest", expected: { id: 1, resolution: [ 1280, 720, 30 ] }, height: 1080, maxPixels: Infinity, width: 1920 },
+    { bias: "nearest", expected: { id: 1, resolution: [ 1280, 720, 30 ] }, height: 768, maxPixels: Infinity, width: 1024 },
+    { bias: "nearest", expected: { id: 2, resolution: [ 320, 180, 30 ] }, height: 480, maxPixels: Infinity, width: 640 },
+    { bias: "nearest", expected: { id: 2, resolution: [ 320, 180, 30 ] }, height: 600, maxPixels: Infinity, width: 960 },
+    { bias: "nearest", expected: { id: 2, resolution: [ 320, 180, 30 ] }, height: 100, maxPixels: Infinity, width: 100 },
+    { bias: "nearest", expected: { id: 0, resolution: [ 3840, 2160, 30 ] }, height: 99999, maxPixels: Infinity, width: 99999 }
   ];
 
   for(const row of GRID) {
 
     test("AI Pro bias=" + row.bias + " cap=" + row.maxPixels.toString() + " " + row.width.toString() + "x" + row.height.toString(), () => {
 
-      const result = outcome(selectChannelViaWrapper(published, "", row.width, row.height, { biasHigher: (row.bias === "higher"), maxPixels: row.maxPixels }));
+      const result = outcome(selectChannelViaWrapper(published, "", row.width, row.height, { bias: row.bias, maxPixels: row.maxPixels }));
 
       assert.deepEqual(result, row.expected);
     });
@@ -217,10 +227,10 @@ describe("resolution: selector per-request mapping through the selectChannel wra
 
   // The explicit Pi+hwtranscode+Rtsp.Only.HIGH-above-cap witness: a constrained-hardware transcode request that sets rtspDefault to
   // "HIGH" AND caps at 1080p simultaneously. The HIGH channel (3840x2160, 8.3M px) exceeds the cap, so the pre-filter drops it BEFORE the name match runs - the name
-  // branch finds no HIGH entry under the cap and returns null. This proves maxPixels filters the name branch too (it is a pre-filter, not a nearest-only request field).
+  // branch finds no HIGH entry under the cap and returns null. This proves maxPixels filters the name branch too (it is a pre-filter, not a size-only request field).
   test("Pi witness: rtspDefault=HIGH + maxPixels=1080p + bias higher => null (HIGH exceeds the cap)", () => {
 
-    const result = outcome(selectChannelViaWrapper(published, "HIGH", 3840, 2160, { biasHigher: true, maxPixels: CAP_1080P }));
+    const result = outcome(selectChannelViaWrapper(published, "HIGH", 3840, 2160, { bias: "higher", maxPixels: CAP_1080P }));
 
     assert.equal(result, null);
   });
@@ -228,7 +238,7 @@ describe("resolution: selector per-request mapping through the selectChannel wra
   // A name request under no cap resolves to the named channel regardless of the target dimensions (the name branch ignores width/height).
   test("a name request for HIGH (uncapped) resolves to the High channel", () => {
 
-    const result = outcome(selectChannelViaWrapper(published, "HIGH", 640, 360));
+    const result = outcome(selectChannelViaWrapper(published, "HIGH", 640, 360, { bias: "nearest" }));
 
     assert.deepEqual(result, { id: 0, resolution: [ 3840, 2160, 30 ] });
   });
@@ -236,8 +246,8 @@ describe("resolution: selector per-request mapping through the selectChannel wra
   // An empty entry list yields null under every request mode (the selector's empty guards).
   test("empty entry list yields null", () => {
 
-    assert.equal(outcome(selectChannelViaWrapper([], "", 1920, 1080)), null);
-    assert.equal(outcome(selectChannelViaWrapper([], "HIGH", 1920, 1080)), null);
+    assert.equal(outcome(selectChannelViaWrapper([], "", 1920, 1080, { bias: "nearest" })), null);
+    assert.equal(outcome(selectChannelViaWrapper([], "HIGH", 1920, 1080, { bias: "nearest" })), null);
   });
 });
 
@@ -274,14 +284,14 @@ describe("resolution: the advertised list is streaming-preference-free", () => {
   // The list build takes no streaming preference: every advertised size maps to the channel its area selects, not one a name request picks.
   // buildAdvertisedProfiles is preference-free by construction: the streaming preference (the Video.Rtsp.Only setting) is applied only at request time, in the
   // selectChannel wrapper, never during list construction.
-  test("buildAdvertisedProfiles maps to nearest channels; the streaming preference applies only at request time", () => {
+  test("buildAdvertisedProfiles maps each size to a channel at or under it, or the lowest; the streaming preference applies only at request time", () => {
 
     const list = buildAdvertisedProfiles(nativeEntries(AI_PRO_CHANNELS));
 
     assert.deepEqual(list.map((e) => e.channel.id), [ 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2 ]);
 
     // The same published list, queried at request time with a HIGH preference, resolves by name to the High channel (id 0) - the preference's only remaining home.
-    assert.equal(outcome(selectChannelViaWrapper(list, "HIGH", 640, 360))?.id, 0);
+    assert.equal(outcome(selectChannelViaWrapper(list, "HIGH", 640, 360, { bias: "nearest" }))?.id, 0);
   });
 });
 
@@ -447,8 +457,8 @@ describe("resolution: the advertised list's membership and frame rates", () => {
 
 describe("resolution: area mapping at list time and at request time", () => {
 
-  // Each size maps to the highest channel at or under its own area, so a list sorted by its sizes runs its channels high to low too. Each comparison is inclusive,
-  // so a request whose area equals a transposed channel's selects that channel.
+  // Each size maps to the highest channel at or under its own area, or to the lowest channel when none is, so a list sorted by its sizes runs its channels high to
+  // low too. Each comparison is inclusive, so a request whose area equals a transposed channel's selects that channel.
   test("channel area never increases along a list, and bias lower takes an equal-area channel", () => {
 
     for(const fixture of CAMERA_FIXTURES) {
@@ -461,11 +471,11 @@ describe("resolution: area mapping at list time and at request time", () => {
     const g2Pro = buildAdvertisedProfiles(nativeEntries(G2_PRO_CHANNELS));
     const c5 = buildAdvertisedProfiles(nativeEntries(C5_WITNESS_CHANNELS));
 
-    assert.equal(selectChannelProfile(g2Pro, { bias: "lower", height: 960, mode: "nearest", width: 1280 })?.channel.id, 1,
+    assert.equal(selectChannelProfile(g2Pro, { bias: "lower", height: 960, mode: "size", width: 1280 })?.channel.id, 1,
       "1280x960 selects Medium, whose 960x1280 holds the same area");
-    assert.equal(selectChannelProfile(g2Pro, { bias: "lower", height: 1300, mode: "nearest", width: 1100 })?.channel.id, 1,
+    assert.equal(selectChannelProfile(g2Pro, { bias: "lower", height: 1300, mode: "size", width: 1100 })?.channel.id, 1,
       "1100x1300 selects Medium, the highest channel at or under it");
-    assert.equal(selectChannelProfile(c5, { bias: "lower", height: 640, mode: "nearest", width: 480 })?.channel.id, 0,
+    assert.equal(selectChannelProfile(c5, { bias: "lower", height: 640, mode: "size", width: 480 })?.channel.id, 0,
       "480x640 selects High, whose 640x480 holds the same area");
   });
 
@@ -473,14 +483,62 @@ describe("resolution: area mapping at list time and at request time", () => {
 
     const g2Pro = buildAdvertisedProfiles(nativeEntries(G2_PRO_CHANNELS));
 
-    assert.equal(selectChannelProfile(g2Pro, { bias: "higher", height: 720, mode: "nearest", width: 1280 })?.channel.id, 1,
+    assert.equal(selectChannelProfile(g2Pro, { bias: "higher", height: 720, mode: "size", width: 1280 })?.channel.id, 1,
       "1280x720 selects Medium, the smallest channel at or over it");
-    assert.equal(selectChannelProfile(g2Pro, { bias: "higher", height: 960, mode: "nearest", width: 1280 })?.channel.id, 1,
+    assert.equal(selectChannelProfile(g2Pro, { bias: "higher", height: 960, mode: "size", width: 1280 })?.channel.id, 1,
       "1280x960 selects Medium, whose 960x1280 holds the same area");
     assert.equal(selectSubstrateChannelFrom(buildAdvertisedProfiles(nativeEntries(G6_PRO_ENTRY_CHANNELS)), { hostSystem: "raspbian", pin: null })?.channel.id, 2,
       "the G6 Pro Entry's buffer on a Pi reads Low, since Medium's 1440x1920 holds more pixels than 1920x1080");
     assert.equal(selectSubstrateChannelFrom(buildAdvertisedProfiles(nativeEntries(AI_PRO_CHANNELS)), { hostSystem: "raspbian", pin: null })?.channel.id, 1,
       "the AI Pro's buffer on a Pi reads Medium");
+  });
+
+  // The id of the channel that bias nearest, copy mode's posture, takes for a request over a built list.
+  const nearestChannel = (list: readonly ChannelProfile[], width: number, height: number): number | undefined => {
+
+    return selectChannelProfile(list, { bias: "nearest", height: height, mode: "size", width: width })?.channel.id;
+  };
+
+  // Bias nearest compares the request's area with each channel's and takes the closest, which is never a matter of width: on the portrait cameras a landscape
+  // request is wider than the channel that serves it, and a request just under a channel takes that channel rather than the one below.
+  test("bias nearest takes the channel closest to the request by area on the portrait cameras", () => {
+
+    const g6ProEntry = buildAdvertisedProfiles(nativeEntries(G6_PRO_ENTRY_CHANNELS));
+    const doorbellLite = buildAdvertisedProfiles(nativeEntries(DOORBELL_LITE_CHANNELS));
+    const g2Pro = buildAdvertisedProfiles(nativeEntries(G2_PRO_CHANNELS));
+
+    assert.equal(nearestChannel(g6ProEntry, 2400, 3200), 0, "the G6 Pro Entry's 2400x3200 takes High, closer in area than Medium");
+    assert.equal(nearestChannel(g6ProEntry, 1920, 1080), 1, "the G6 Pro Entry's 1920x1080 takes Medium, closer in area than Low");
+    assert.equal(nearestChannel(g6ProEntry, 1200, 1600), 1, "the G6 Pro Entry's 1200x1600 takes Medium, closer in area than Low");
+    assert.equal(nearestChannel(g6ProEntry, 1280, 720), 2, "the G6 Pro Entry's 1280x720 takes Low, closer in area than Medium");
+    assert.equal(nearestChannel(g6ProEntry, 640, 360), 2, "the G6 Pro Entry's 640x360 takes Low, closer in area than Medium");
+    assert.equal(nearestChannel(doorbellLite, 1536, 2048), 0, "the Doorbell Lite's 1536x2048 takes High, closer in area than Medium");
+    assert.equal(nearestChannel(doorbellLite, 1920, 1080), 1, "the Doorbell Lite's 1920x1080 takes Medium, closer in area than High");
+    assert.equal(nearestChannel(doorbellLite, 1280, 720), 1, "the Doorbell Lite's 1280x720 takes Medium, closer in area than Low");
+    assert.equal(nearestChannel(doorbellLite, 640, 360), 2, "the Doorbell Lite's 640x360 takes Low, closer in area than Medium");
+    assert.equal(nearestChannel(g2Pro, 1920, 1080), 0, "the G2 Pro's 1920x1080 takes High, closer in area than Medium");
+    assert.equal(nearestChannel(g2Pro, 1280, 720), 1, "the G2 Pro's 1280x720 takes Medium, closer in area than Low");
+    assert.equal(nearestChannel(g2Pro, 1024, 768), 1, "the G2 Pro's 1024x768 takes Medium, closer in area than Low");
+    assert.equal(nearestChannel(g2Pro, 640, 360), 2, "the G2 Pro's 640x360 takes Low, closer in area than Medium");
+  });
+
+  // A request whose area equals a transposed channel's sits no distance from it, so bias nearest takes that channel, though its width is nearer another's.
+  test("bias nearest takes an equal-area channel", () => {
+
+    const g2Pro = buildAdvertisedProfiles(nativeEntries(G2_PRO_CHANNELS));
+
+    assert.equal(nearestChannel(g2Pro, 1280, 960), 1, "the G2 Pro's 1280x960 takes Medium, whose 960x1280 holds the same area");
+  });
+
+  // On a landscape camera bias nearest takes the channel above the request where that channel is the closer one, and the one below it otherwise.
+  test("bias nearest takes the closer channel on the landscape cameras, the one above the request included", () => {
+
+    const g5Flex = buildAdvertisedProfiles(nativeEntries(G5_FLEX_CHANNELS));
+    const c5 = buildAdvertisedProfiles(nativeEntries(C5_WITNESS_CHANNELS));
+
+    assert.equal(nearestChannel(g5Flex, 2560, 1440), 0, "the G5 Flex's 2560x1440 takes High, closer in area than Medium");
+    assert.equal(nearestChannel(g5Flex, 1024, 768), 1, "the G5 Flex's 1024x768 takes Medium, closer in area than Low");
+    assert.equal(nearestChannel(c5, 640, 360), 1, "the C5's 640x360 takes Low, closer in area than High");
   });
 });
 
