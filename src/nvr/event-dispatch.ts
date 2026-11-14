@@ -87,7 +87,7 @@ export class ProtectEventDispatch {
   // return).
   public async run(signal: AbortSignal): Promise<void> {
 
-    for await (const event of this.nvr.client.events({ signal })) {
+    for await(const event of this.nvr.client.events({ signal })) {
 
       switch(event.kind) {
 
@@ -850,7 +850,7 @@ export class ProtectEventDispatch {
       return;
     }
 
-    for await (const packet of this.nvr.client.rawPackets({ signal })) {
+    for await(const packet of this.nvr.client.rawPackets({ signal })) {
 
       this.nvr.mqtt?.publishGuarded(mqttTopic(this.nvr.ufp.mac, mqttTopics.telemetry.topic), JSON.stringify(packet));
     }

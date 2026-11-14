@@ -38,7 +38,7 @@ describe("the state-store double (TestStateStore)", () => {
 
     const received: unknown[] = [];
 
-    for await (const value of store.observe((state) => state.cameras.get(camera.id)?.name, { signal: controller.signal })) {
+    for await(const value of store.observe((state) => state.cameras.get(camera.id)?.name, { signal: controller.signal })) {
 
       received.push(value);
     }
@@ -109,7 +109,7 @@ describe("the state-store double (TestStateStore)", () => {
 
     const loop = (async (): Promise<void> => {
 
-      for await (const value of store.observe((state) => state.cameras.get(camera.id)?.name, { signal: controller.signal })) {
+      for await(const value of store.observe((state) => state.cameras.get(camera.id)?.name, { signal: controller.signal })) {
 
         consumed.push(value);
 

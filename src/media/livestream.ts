@@ -187,7 +187,7 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
 
     yield { ...init, type: "init" };
 
-    for await (const fragment of this.#proc.segments({ signal: this.#signal })) {
+    for await(const fragment of this.#proc.segments({ signal: this.#signal })) {
 
       const split = splitMoofMdat(fragment);
 

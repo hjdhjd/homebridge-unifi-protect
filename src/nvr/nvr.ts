@@ -1285,7 +1285,7 @@ export class ProtectNvr {
 
       this.spawnLoop("the " + key + " list", async () => {
 
-        for await (const adoptedIds of this.client.state.observe(ids, { signal: this.signal })) {
+        for await(const adoptedIds of this.client.state.observe(ids, { signal: this.signal })) {
 
           this.reconcileMembership(key, adoptedIds);
         }
@@ -1355,7 +1355,7 @@ export class ProtectNvr {
 
     this.spawnLoop("the controller connection", async () => {
 
-      for await (const transition of this.client.connection.observe({ signal: this.signal })) {
+      for await(const transition of this.client.connection.observe({ signal: this.signal })) {
 
         // Conclude an induced reboot the moment the connection recovers - a non-healthy -> healthy edge while rebooting. The decision is the pure
         // shouldResumeFromInducedReboot; this is the single existing consumer of the connection-state stream, so the check lives here rather than a second subscription.

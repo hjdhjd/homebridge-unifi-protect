@@ -46,7 +46,7 @@ async function drainRecordingStream(delegate: ProtectRecordingDelegate, streamId
 
   const packets: RecordingPacket[] = [];
 
-  for await (const packet of delegate.handleRecordingStreamRequest(streamId, signal)) {
+  for await(const packet of delegate.handleRecordingStreamRequest(streamId, signal)) {
 
     packets.push(packet);
   }

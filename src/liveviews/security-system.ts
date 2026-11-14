@@ -249,9 +249,9 @@ export class ProtectSecuritySystem extends ProtectBase {
     service.updateCharacteristic(SecuritySystemCurrentState, this.accessory.context.securityState ?? SecuritySystemCurrentState.DISARMED)
       .getCharacteristic(SecuritySystemCurrentState).onGet(this.answering(() => {
 
-        return this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED :
-          (this.accessory.context.securityState ?? SecuritySystemCurrentState.DISARMED);
-      }));
+      return this.isAlarmTriggered ? this.hap.Characteristic.SecuritySystemCurrentState.ALARM_TRIGGERED :
+        (this.accessory.context.securityState ?? SecuritySystemCurrentState.DISARMED);
+    }));
 
     // Handlers for triggering a change in the security system state.
     this.answerHeld(service, SecuritySystemTargetState);

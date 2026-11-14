@@ -228,7 +228,7 @@ export abstract class ProtectBase {
 
       loop: async () => {
 
-        for await (const value of this.nvr.client.state.observe(selector, { signal })) {
+        for await(const value of this.nvr.client.state.observe(selector, { signal })) {
 
           // A value can still drain from the store's queue after teardown aborted our signal (the iterator empties its queue before it closes). Reacting then would run
           // a handler against a record the membership loop is removing, so we drop the trailing yield and let the loop end.

@@ -286,7 +286,7 @@ describe("recording delegate transmit-path behavior", () => {
 
     const packets: RecordingPacket[] = [];
 
-    for await (const packet of delegate.handleRecordingStreamRequest(1, new AbortController().signal)) {
+    for await(const packet of delegate.handleRecordingStreamRequest(1, new AbortController().signal)) {
 
       packets.push(packet);
     }
@@ -341,7 +341,7 @@ describe("recording delegate transmit-path behavior", () => {
     const reconcileSpy = t.mock.method(supervisor, "reconcile");
     const packets: RecordingPacket[] = [];
 
-    for await (const packet of delegate.handleRecordingStreamRequest(1, new AbortController().signal)) {
+    for await(const packet of delegate.handleRecordingStreamRequest(1, new AbortController().signal)) {
 
       packets.push(packet);
     }

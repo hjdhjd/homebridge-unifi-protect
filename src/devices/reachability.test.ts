@@ -47,7 +47,7 @@ class TestProtectDevice extends ProtectDevice {
 // is the unreachable-without-throwing case. Returns the mutable health / record handles so a test can flip either input and re-read the real getter. The casts are
 // confined to this construction step; the instance itself is the production class.
 const makeReachableDevice = (accessory: TestProtectAccessory):
-{ connection: { isHealthy: boolean }; device: { config: { state: string }; present: boolean }; instance: TestProtectDevice } => {
+  { connection: { isHealthy: boolean }; device: { config: { state: string }; present: boolean }; instance: TestProtectDevice } => {
 
   const connection = { isHealthy: true };
   const device = { config: { state: "CONNECTED" }, name: "Test Accessory", peek(): { state: string } | undefined { return this.present ? this.config : undefined; },
@@ -123,7 +123,7 @@ describe("per-accessory abort signal composition (composeSignals)", () => {
 
     const consume = (async (): Promise<void> => {
 
-      for await (const _tick of ticks()) {
+      for await(const _tick of ticks()) {
 
         iterations++;
       }

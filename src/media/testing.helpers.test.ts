@@ -67,7 +67,7 @@ describe("harness growth: the recording transmit doubles", () => {
 
     const segments: Segment[] = [];
 
-    for await (const segment of subscription) {
+    for await(const segment of subscription) {
 
       segments.push(segment);
     }
@@ -173,7 +173,7 @@ describe("harness growth: the timeshift behavior doubles", () => {
 
     const segments: Segment[] = [];
 
-    for await (const segment of double) {
+    for await(const segment of double) {
 
       segments.push(segment);
     }

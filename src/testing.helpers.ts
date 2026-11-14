@@ -733,7 +733,7 @@ export class TestStreamingDelegate implements StreamingDelegate {
    * @param options.maxSourcePixels - The hardware pixel ceiling ffmpegOptions reports. Defaults to no ceiling.
    */
   public constructor({ accessory = null, builtFor = { hksvCapable: false, isDoorbell: false, twoWayAudio: false }, maxSourcePixels = Infinity }:
-  { accessory?: Nullable<ProtectAccessory>; builtFor?: ControllerIdentity; maxSourcePixels?: number } = {}) {
+    { accessory?: Nullable<ProtectAccessory>; builtFor?: ControllerIdentity; maxSourcePixels?: number } = {}) {
 
     this.builtFor = builtFor;
 

@@ -346,7 +346,7 @@ export function makeSensorConfig(options: { airQuality?: Partial<ProtectSensorAi
   // never interchangeable even where the member names collide. The defaults derive from the policy leaf's disabled constant, so the fixture and production agree on
   // what "nothing configured" looks like, and only the carbon dioxide alert a test drives departs from it.
   const airQualityThreshold = (isEnabled = DISABLED_THRESHOLD_SETTINGS.isEnabled, highThreshold = DISABLED_THRESHOLD_SETTINGS.highThreshold):
-  ProtectAirQualityThresholdSettings => ({ highThreshold, isEnabled, lowThreshold: DISABLED_THRESHOLD_SETTINGS.lowThreshold });
+    ProtectAirQualityThresholdSettings => ({ highThreshold, isEnabled, lowThreshold: DISABLED_THRESHOLD_SETTINGS.lowThreshold });
 
   // Build the air-quality stats record only with the metrics a test supplies; each present metric is a ProtectAirQualityMetricInterface ({ status, value }) shape, so the
   // status string is carried alongside the value rather than overloading a bare { value }. An all-quiet sensor supplies no metrics, so stats is absent entirely.

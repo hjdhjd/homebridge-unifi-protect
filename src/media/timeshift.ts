@@ -238,7 +238,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
 
     try {
 
-      for await (const segment of subscription) {
+      for await(const segment of subscription) {
 
         // Identity guard in the loop body, mirroring the finally's guard. A segment can still drain from THIS subscription's queue after it has been replaced: the pool
         // delivers already-queued segments before honoring disposal, so a restart (dispose old, commit new) can hand this loop a stale segment from the old subscription.

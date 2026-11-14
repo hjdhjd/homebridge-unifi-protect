@@ -299,7 +299,7 @@ export class ProtectRecordingDelegate implements CameraRecordingDelegate {
         // fragment each; we transmit both but count only media toward the transmitted-video tally, so a restarted process's fresh init segment is uncounted by
         // construction rather than requiring any compensating adjustment.
         // eslint-disable-next-line no-await-in-loop -- Intentional: the outer loop handles FFmpeg restarts on discontinuity.
-        for await (const segment of this.ffmpegStream.stream({ signal: combinedSignal })) {
+        for await(const segment of this.ffmpegStream.stream({ signal: combinedSignal })) {
 
           // If we've stopped transmitting, a discontinuity fired, or the recording is terminating, exit the segment loop. isDiscontinuity and isTerminated
           // are mutated asynchronously by the event listeners above.
