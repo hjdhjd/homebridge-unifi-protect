@@ -174,10 +174,7 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     // Configure accessory information.
     this.configureInfo();
 
-    // Configure the battery status.
-    this.configureBatteryService();
-
-    // Configure the sensor services that have been enabled.
+    // Configure the battery and the sensor services that have been enabled.
     this.updateDevice({ initialized: false });
 
     // Configure the status indicator light switch.
@@ -189,14 +186,29 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     return true;
   }
 
-  // Configure the battery service for HomeKit.
+  /* Configure the battery service for HomeKit, and keep its state current. A sensor carries the service only while the controller reports a battery level for it: every
+   * sensor's record has the battery block, and a mains-powered one, the UP Air Quality among them, reports no level in it, so a service stood up regardless would show
+   * HomeKit a battery the sensor does not have. The service follows the lifecycle rule every capability-driven sensor service shares...a battery sensor that drops
+   * offline keeps its battery, and one restored from the accessory cache onto a sensor that has none goes away on the first pass that can see the device.
+   */
   private configureBatteryService(): void {
 
-    // Acquire the service.
-    const { service } = this.acquireService({ serviceType: this.hap.Service.Battery });
+    const { isLow, percentage } = this.ufp.batteryStatus;
+    const { service } = this.validService({ serviceType: this.hap.Service.Battery,
+      validate: (hasService) => environmentalServiceGate({ capability: percentage !== null, hasService, isReachable: this.isReachable }) });
 
-    // Initialize the battery state.
-    this.updateBatteryStatus();
+    if(!service) {
+
+      return;
+    }
+
+    // A service held through an offline window can meet a record with no level in it, and keeps the level it last showed rather than taking a made-up one.
+    if(percentage !== null) {
+
+      service.updateCharacteristic(this.hap.Characteristic.BatteryLevel, percentage);
+    }
+
+    service.updateCharacteristic(this.hap.Characteristic.StatusLowBattery, isLow);
 
     this.answerHeld(service, this.hap.Characteristic.BatteryLevel);
     this.answerHeld(service, this.hap.Characteristic.StatusLowBattery);
@@ -207,8 +219,8 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
 
     const currentEnabledSensors: string[] = [];
 
-    // Update the battery status for the accessory.
-    this.updateBatteryStatus();
+    // Reconcile the battery service and its state for the accessory.
+    this.configureBatteryService();
 
     // Configure the air quality sensor.
     if(this.configureAirQualitySensor()) {
@@ -805,17 +817,6 @@ export class ProtectSensor extends ProtectDevice<Sensor> {
     this.configureStateCharacteristics(service);
 
     return true;
-  }
-
-  // Update the battery status in HomeKit.
-  private updateBatteryStatus(): void {
-
-    // Find the battery service, if it exists.
-    const batteryService = this.accessory.getService(this.hap.Service.Battery);
-
-    // Update the battery status.
-    batteryService?.updateCharacteristic(this.hap.Characteristic.BatteryLevel, this.ufp.batteryStatus.percentage ?? 0);
-    batteryService?.updateCharacteristic(this.hap.Characteristic.StatusLowBattery, this.ufp.batteryStatus.isLow);
   }
 
   /* Reconcile one environmental characteristic - the temperature or humidity a sensor reports - against whichever of the two sources this hardware reports through,

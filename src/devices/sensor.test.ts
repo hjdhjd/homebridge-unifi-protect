@@ -7,8 +7,8 @@
  * occupancy, the status-LED routing, the info writes / observers, and the hints derivation; this suite asserts only that the sensor family wires them (for example, the
  * MotionSensor service appears when motionSettings.isEnabled and the userOptions opt in) - it does not re-net their internals.
  *
- * The sensor-specific surface: the always-present Battery service (configureBatteryService is unconditional, and updateBatteryStatus writes BatteryLevel /
- * StatusLowBattery), the per-mode services (the alarm family's alarm sound and glass-break twins / ambient light / contact-via-mountType / humidity / temperature) with
+ * The sensor-specific surface: the Battery service a sensor carries only while the controller reports a battery level, with its BatteryLevel and StatusLowBattery
+ * writes, the per-mode services (the alarm family's alarm sound and glass-break twins / ambient light / contact-via-mountType / humidity / temperature) with
  * their read-through getters, the ambient 0.0001 HomeKit floor and the two-source read-select behind temperature and humidity (the stats block for the USL family, the
  * air-quality block for UP Air Quality hardware) with its resolve-else-hold write path, the StatusTampered state characteristic each carries, and the
  * per-mode MQTT publishes; the leak (default LeakSensor, internal / external subtypes) plus the moisture variant (Sensor.MoistureSensor swaps to a subtyped
@@ -189,17 +189,76 @@ describe("real ProtectSensor construction and family behavior", () => {
     controllers.length = 0;
   });
 
-  test("seven observers register, construction wakes none, and the always-present Battery service carries its battery state", () => {
+  test("the observers register, construction wakes none, and a sensor reporting a battery level carries the Battery service with its battery state", () => {
 
     assert.equal(store.observerCount, 8, "the base observers, the MQTT availability observer and the sensor's five are registered against the store double");
     assert.equal(constructionWakes, 0, "no observer wake was published during construction - observers arm against the baseline and stay silent");
 
     const battery = accessory.getService(Service.Battery);
 
-    assert.ok(battery, "configureBatteryService is unconditional, so an all-quiet sensor still carries the Battery service");
+    assert.ok(battery, "an otherwise all-quiet sensor that reports a battery level carries the Battery service");
     assert.equal(battery.getCharacteristic(Characteristic.BatteryLevel).value, 100, "BatteryLevel initialized from batteryStatus.percentage");
     assert.equal(battery.getCharacteristic(Characteristic.StatusLowBattery).value, Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL,
       "StatusLowBattery initialized from batteryStatus.isLow");
+  });
+
+  test("a sensor the controller reports no battery level for carries no Battery service, and gains one when a level arrives", async () => {
+
+    // The mains-powered shape: the controller still sends the battery block, with no level in it. The fixture starts with a Battery, as an accessory restored from the
+    // cache of an earlier run does, so the first pass that reads no level on a device we can see is what takes it away.
+    const built = buildSensor();
+
+    await settle();
+
+    assert.ok(built.accessory.getService(Service.Battery), "the service exists while a level is reported");
+
+    built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, modelKey: "sensorBatteryStatus", percentage: null } });
+
+    await settle();
+
+    assert.equal(built.sensor.isReachable, true, "the device is reachable for this pass, so its missing level is believed");
+    assert.equal(built.accessory.getService(Service.Battery), undefined, "a reachable sensor reporting no level sheds its Battery service");
+
+    // A second pass with the level still missing, driven by a change beside it in the record, so a reconcile genuinely runs against a sensor with no Battery.
+    built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: true, modelKey: "sensorBatteryStatus", percentage: null } });
+
+    await settle();
+
+    assert.equal(built.accessory.getService(Service.Battery), undefined, "the service stays away for as long as no level is reported");
+
+    built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: true, modelKey: "sensorBatteryStatus", percentage: 12 } });
+
+    await settle();
+
+    const battery = built.accessory.getService(Service.Battery);
+
+    assert.ok(battery, "a level arriving brings the service back");
+    assert.equal(battery.getCharacteristic(Characteristic.BatteryLevel).value, 12, "the returned service reports the level the controller sent");
+    assert.equal(battery.getCharacteristic(Characteristic.StatusLowBattery).value, Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW,
+      "the returned service reports the low state the controller sent");
+
+    built.sensor.cleanup();
+  });
+
+  test("an unreachable sensor holds its Battery service and the level it last showed", async () => {
+
+    // The offline window. A battery sensor that drops off must keep its battery, so a level that goes missing is believed only on a device we can see, and the held
+    // service keeps the last level rather than taking a made-up one.
+    const built = buildSensor({ batteryPercentage: 64 });
+
+    await settle();
+
+    built.store.pushSensorPatch("test-sensor-1", { batteryStatus: { isLow: false, modelKey: "sensorBatteryStatus", percentage: null }, state: "DISCONNECTED" });
+
+    await settle();
+
+    const battery = built.accessory.getService(Service.Battery);
+
+    assert.equal(built.sensor.isReachable, false, "the device is genuinely unreachable for this pass");
+    assert.ok(battery, "the service held through the offline window");
+    assert.equal(battery.getCharacteristic(Characteristic.BatteryLevel).value, 64, "the held service still shows the last level the controller reported");
+
+    built.sensor.cleanup();
   });
 
   test("an all-quiet sensor carries no per-mode services and emits no enabled-diff log at construction", () => {
