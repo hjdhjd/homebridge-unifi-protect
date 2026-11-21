@@ -48,7 +48,7 @@ export interface ChannelRequest {
 export type VideoEncoding = { mode: "copy"; transmux: boolean } |
   { encoderOptions: VideoEncoderOptions; mode: "transcode" };
 
-// The resolved encoding decision: how the video is encoded, plus the target bitrate in kbps. The bitrate rides alongside rather than inside the transcode arm because
+// The resolved encoding decision: how the video is encoded, plus the target bitrate in kbps. The bitrate sits alongside rather than inside the transcode arm because
 // the streaming-request log reports it for every session, copy-mode ones included.
 export type VideoEncodingDecision = VideoEncoding & { targetBitrate: number };
 
@@ -127,18 +127,15 @@ export function resolveChannelRequest(input: { isTranscoding: boolean; requestHe
  *   1. Target bitrate, seeded from what HomeKit asked for. A transcode honors the user's configured transcode bitrate when they have set one (the high-latency bitrate
  *      on a high-latency session), then comes down to the input channel's own ceiling if it is above it - we cannot produce more bitrate than the source carries. A
  *      copy passes the request through untouched, since the camera's own encode is what it is.
- *   2. Interpolation. When on high-performance hardware like Apple Silicon, using the TSB, and we don't have low-FPS cameras like the package camera, enable the use of
- *      the CPU-intensive FFmpeg minterpolate filter to enable very smooth video, especially when there's motion involved. M3+ Apple Silicon environments are able to
- *      reliably use this filter in realtime and with great results; other platforms do not get this treatment yet.
- *   3. The encoding itself. A transcode composes the encoder-options bag homebridge-plugin-utils renders, taking its frame rate from the source channel while
- *      interpolating (the filters resample to the rate HomeKit asked for). A copy reports only whether the input needs transmuxing.
+ *   2. The output frame rate: the lower of the source channel's rate and the rate HomeKit asked for. A camera slower than the request is sent at its own rate rather
+ *      than raised to HomeKit's, because the only way to raise a frame rate here is to repeat frames, and repeated frames stay on screen for uneven lengths of time...a
+ *      20 fps camera padded to 30 shows its frames for 33 and 67 milliseconds by turns. A camera faster than the request has frames dropped to meet it.
+ *   3. The encoding itself. A transcode composes the encoder-options bag homebridge-plugin-utils renders at that output rate, the same bag whichever transport feeds
+ *      it, because the delegate hands FFmpeg a buffer-backed session's input one frame at a time. A copy reports only whether the input needs transmuxing.
  *
  * @param input.channelBitrate              - The selected source channel's bitrate ceiling, in kbps; the delegate converts it from the controller's bits per second.
  * @param input.channelFps                  - The selected source channel's frame rate.
- * @param input.cpuGeneration               - The host CPU's generation, as the platform's codec support detected it.
- * @param input.hostSystem                  - The host platform; only "macOS.Apple" admits interpolation today.
  * @param input.isHighLatency               - Whether HomeKit negotiated a high-latency session, from {@link resolveTranscodeDecision}.
- * @param input.isPackageCamera             - Whether this is the doorbell's package camera.
  * @param input.isTranscoding               - Whether this session re-encodes the video, from {@link resolveTranscodeDecision}.
  * @param input.requestBitrate              - The maximum bitrate HomeKit requested, in kbps.
  * @param input.requestFps                  - The frame rate HomeKit requested.
@@ -148,15 +145,14 @@ export function resolveChannelRequest(input: { isTranscoding: boolean; requestHe
  * @param input.requestWidth                - The frame width HomeKit requested, in pixels.
  * @param input.transcodeBitrate            - The user's configured transcode bitrate, in kbps; zero leaves HomeKit's request in place.
  * @param input.transcodeHighLatencyBitrate - The user's configured high-latency transcode bitrate, in kbps; zero leaves HomeKit's request in place.
- * @param input.useTsb                      - Whether this session rides the timeshift buffer's pooled fMP4 socket rather than direct RTSP.
+ * @param input.useTsb                      - Whether this session draws from the timeshift buffer's pooled fMP4 socket rather than direct RTSP.
  * @param input.videoCodec                  - The camera's source video codec, carried in the transcode bag so FFmpeg's decoder and encoder read one pipeline description.
  *
  * @returns The resolved {@link VideoEncodingDecision}.
  */
-export function resolveVideoEncoding(input: { channelBitrate: number; channelFps: number; cpuGeneration: number; hostSystem: string; isHighLatency: boolean;
-  isPackageCamera: boolean; isTranscoding: boolean; requestBitrate: number; requestFps: number; requestHeight: number; requestLevel: H264Level;
-  requestProfile: H264Profile; requestWidth: number; transcodeBitrate: number; transcodeHighLatencyBitrate: number; useTsb: boolean;
-  videoCodec: string; }): VideoEncodingDecision {
+export function resolveVideoEncoding(input: { channelBitrate: number; channelFps: number; isHighLatency: boolean; isTranscoding: boolean; requestBitrate: number;
+  requestFps: number; requestHeight: number; requestLevel: H264Level; requestProfile: H264Profile; requestWidth: number; transcodeBitrate: number;
+  transcodeHighLatencyBitrate: number; useTsb: boolean; videoCodec: string; }): VideoEncodingDecision {
 
   // 1. Set the initial bitrate we should use for this request based on what HomeKit is requesting.
   let targetBitrate = input.requestBitrate;
@@ -179,8 +175,8 @@ export function resolveVideoEncoding(input: { channelBitrate: number; channelFps
     }
   }
 
-  // 2. Decide whether to interpolate. See the ordered decision above for where this filter pays for itself and where it does not.
-  const useInterpolationFilter = input.useTsb && !input.isPackageCamera && ((input.hostSystem === "macOS.Apple") && (input.cpuGeneration >= 3));
+  // 2. Settle the output frame rate. See the ordered decision above for why a camera slower than HomeKit's request keeps its own rate.
+  const outputFps = Math.min(input.channelFps, input.requestFps);
 
   // 3. Copy the camera's stream through when we are not transcoding; the livestream API's fMP4 is the one input that needs transmuxing on the way out.
   if(!input.isTranscoding) {
@@ -193,17 +189,13 @@ export function resolveVideoEncoding(input: { channelBitrate: number; channelFps
     encoderOptions: {
 
       bitrate: targetBitrate,
-      fps: useInterpolationFilter ? input.channelFps : input.requestFps,
+      fps: outputFps,
       height: input.requestHeight,
       idrInterval: HOMEKIT_IDR_INTERVAL,
       inputCodec: input.videoCodec,
       inputFps: input.channelFps,
       level: input.requestLevel,
       profile: input.requestProfile,
-      // When interpolating, hand the encoder the fps and interpolation filters to smooth the presentation timestamps; it composes them into its own chain and bridges
-      // any GPU-to-CPU download transfer itself.
-      ...(useInterpolationFilter ? { videoFilters: [ "fps=" + input.requestFps.toString(),
-        "minterpolate=fps=" + input.requestFps.toString() + ":mi_mode=mci:mc_mode=aobmc:me=fss:me_mode=bidir:vsbmc=1:scd=none" ] } : {}),
       width: input.requestWidth
     },
     mode: "transcode",

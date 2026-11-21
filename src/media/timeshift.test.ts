@@ -2,9 +2,10 @@
  *
  * timeshift.test.ts: Behavior coverage of the HKSV timeshift buffer - the first standalone net over ProtectTimeshiftBuffer.
  *
- * The timeshift buffer's public surface (the segment/discontinuity/firstKeyframe/terminated events, the start/stop/transmit lifecycle, the buffer/getLast/snapshotSource/
- * getKeyframeAlignedStart read helpers, and the selfHeal reboot) has only ever been exercised indirectly through the recording-delegate suites. This suite drives it as a
- * STANDALONE unit - there is no recording delegate in the loop, so the timeshift's own emission decisions are asserted directly rather than conflated with a consumer's.
+ * The timeshift buffer's public surface (the segment/discontinuity/firstKeyframe/terminated events, the start/stop/transmit lifecycle, the buffer/livePreload/
+ * snapshotSource/getKeyframeAlignedStart read helpers, and the selfHeal reboot) has only ever been exercised indirectly through the recording-delegate suites. This suite
+ * drives it as a STANDALONE unit - there is no recording delegate in the loop, so the timeshift's own emission decisions are asserted directly rather than conflated with
+ * a consumer's.
  *
  * The SUT is fed by the harness's controllable livestream-subscription double, which a test pushes segments into one at a time (init / keyframe / non-keyframe /
  * discontinuity-marked) and can end or throw-into. The keyframe-staleness gate - the timeshift's only time-dependent behavior - is made deterministic by the injected
@@ -18,22 +19,27 @@
  * transmitStart's own concat emit the "segment" event, forwarding tests assert on the forwarded PAYLOAD (which fragment's data), never the event count.
  */
 import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
+import { PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectClient, ProtectLivestreamUnavailableError } from "unifi-protect";
 import type { SegmentRole, SnapshotSource } from "./timeshift.ts";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { after, describe, test } from "node:test";
 import { makeChannelProfile, makeControllableLivestreamDouble, makeKeyframeFragment, makeNonKeyframeFragment, makeTestCameraHost } from "./testing.helpers.ts";
+import { makeFragment, settle } from "homebridge-plugin-utils/testing";
 import { AMCREST_INIT_SEGMENT } from "../camera.fixtures.ts";
-import { PROTECT_LIVESTREAM_API_IDR_INTERVAL } from "../settings.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
+import { SAMPLE_FLAG_NON_SYNC } from "homebridge-plugin-utils";
 import type { Segment } from "unifi-protect";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
-import { settle } from "homebridge-plugin-utils/testing";
 
 // The keyframe-staleness threshold the timeshift compares against: PROTECT_LIVESTREAM_API_IDR_INTERVAL (5s) doubled, in milliseconds. A keyframe older than this makes
 // snapshotSource read "stale"; younger reads "fresh". The suite drives the boundary deterministically by advancing the TestClock across exactly this much.
 const STALENESS_THRESHOLD_MS = PROTECT_LIVESTREAM_API_IDR_INTERVAL * 2 * 1000;
+
+// The live-view preload's window, PROTECT_LIVESTREAM_API_IDR_INTERVAL in milliseconds: the preload a caller asking for the whole window takes, and the one a preload
+// falls back to when no buffered keyframe meets its floor.
+const PRELOAD_FALLBACK_MS = PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000;
 
 // Every host this suite builds shares its makeTestNvr AbortController. Aborting them in teardown releases the harness signals so no background consume loop (the
 // timeshift drives one per start) outlives the suite.
@@ -59,6 +65,43 @@ function makeMediaSegment(fragment: { data: Buffer; mdat: Buffer; moof: Buffer }
   return { data: fragment.data, mdat: fragment.mdat, moof: fragment.moof, type: "media" };
 }
 
+// A media fragment as the suite builds one: the whole fragment and its moof and mdat halves.
+type MediaFragment = ReturnType<typeof makeKeyframeFragment>;
+
+// Carry a fragment built by HBPU's makeFragment as a media fragment. A box opens with its own size, so the fragment's first word says where its moof ends and its mdat
+// begins.
+function splitFragment(data: Buffer): MediaFragment {
+
+  const moofSize = data.readUInt32BE(0);
+
+  return { data, mdat: data.subarray(moofSize), moof: data.subarray(0, moofSize) };
+}
+
+// A fragment whose keyframe is its second sample rather than its first, so it holds a keyframe without starting with one.
+function makeLaterSampleKeyframeFragment(): MediaFragment {
+
+  return splitFragment(makeFragment({ run: { includeDuration: true, includeSize: true, usePerSampleFlags: true },
+    samples: [ { duration: 3000, flags: SAMPLE_FLAG_NON_SYNC, size: 8 }, { duration: 3000, flags: 0, size: 8 } ], trackId: 1 }));
+}
+
+// The given number of fragments that hold no keyframe, for a row that fills the buffer past the live-view preload's fallback window.
+function nonKeyframeFragments(count: number): MediaFragment[] {
+
+  return Array.from({ length: count }, () => makeNonKeyframeFragment());
+}
+
+// The bytes the given fragments carry, which a live-view preload row sets its floor from.
+function bytesOf(fragments: readonly MediaFragment[]): number {
+
+  return fragments.reduce((total, fragment) => total + fragment.data.length, 0);
+}
+
+// The exact preload a live view expects from the given fragments: the init segment's bytes, then each fragment's in order.
+function preloadOf(init: Buffer, fragments: readonly MediaFragment[]): Buffer {
+
+  return Buffer.concat([ init, ...fragments.map((fragment) => fragment.data) ]);
+}
+
 // The arranged, started timeshift plus the handles a test asserts against. clock is the controllable TestClock the timeshift reads via platform.clock (advance it to
 // drive the staleness gate); double is the controllable livestream the test pushes segments into; events captures every emitted segment/discontinuity/terminated; host
 // exposes the interface call logs (livestreamCalls, rebootCalls, the settable hasFeature/isReachable); nvr is the settable TestProtectNvr (set nvr.phase for the
@@ -76,7 +119,7 @@ interface StartedTimeshift {
 
 // Arrange a started timeshift driven by a controllable livestream double. Builds the host, installs the supplied subscription queue (default a single fresh controllable
 // double), sets the configured buffer duration, subscribes event recorders, and awaits start() so the subscription is committed and isStarted is true. The clock starts
-// at the TestClock default (zero) - a getLastKeyframe test advances it to a nonzero base BEFORE pushing its keyframe (the falsy-zero guard trap). configuredDuration
+// at the TestClock default (zero) - a snapshotSource test advances it to a nonzero base BEFORE pushing its keyframe (the falsy-zero guard trap). configuredDuration
 // defaults generously (1000ms = 10 segments) so trim tests can set a smaller value explicitly.
 async function buildStartedTimeshift(
   options: { configuredDuration?: number; double?: ControllableLivestreamDouble; subscriptions?: ControllableLivestreamDouble[] } = {}): Promise<StartedTimeshift> {
@@ -103,6 +146,29 @@ async function buildStartedTimeshift(
   await timeshift.start(makeChannelProfile(host));
 
   return { clock, double, events, host, logEntries, nvr, timeshift };
+}
+
+// Arrange a started timeshift at the production buffer depth holding the given fragments, oldest first, and hand back the init segment's bytes beside it so a
+// live-view preload row builds the exact preload it expects. The clock moves to a nonzero base first, so a snapshotSource read in the same row finds its keyframe
+// fresh. The double drains its whole queue on one wake and the buffer admits each segment as it arrives, so one settle admits every fragment, which the time
+// assertion confirms before any row reads the buffer.
+async function bufferFragments(fragments: readonly MediaFragment[]): Promise<{ init: Buffer; timeshift: ProtectTimeshiftBuffer }> {
+
+  const { clock, double, timeshift } = await buildStartedTimeshift({ configuredDuration: PROTECT_TIMESHIFT_BUFFER_MAXDURATION });
+
+  clock.advance(1000);
+
+  for(const fragment of fragments) {
+
+    double.push(makeMediaSegment(fragment));
+  }
+
+  await settle();
+
+  assert.equal(timeshift.time, fragments.length * timeshift.segmentLength, "the buffer holds every fragment pushed into it");
+  assert.ok(double.initSegment, "the started double carries its init segment");
+
+  return { init: double.initSegment.data, timeshift };
 }
 
 describe("timeshift buffer behavior", () => {
@@ -367,6 +433,51 @@ describe("timeshift buffer behavior", () => {
 
     assert.equal(timeshift.time, 100, "the keyframe adds one segment of buffer time");
     assert.equal(timeshift.snapshotSource().kind, "fresh", "snapshotSource reads fresh with a keyframe at a nonzero clock base");
+  });
+
+  // A fragment whose keyframe is a later sample is buffered, and the snapshot and the recording start, which count only a fragment that starts with a keyframe, are
+  // served from neither it nor its keyframe. A live view's preload may start at it, which the livePreload rows cover.
+  test("a fragment whose keyframe is not its first sample serves no snapshot and no recording start", async () => {
+
+    const { clock, double, timeshift } = await buildStartedTimeshift();
+
+    clock.advance(1000);
+    double.push(makeMediaSegment(makeLaterSampleKeyframeFragment()));
+
+    await settle();
+
+    assert.equal(timeshift.time, 100, "the fragment adds one segment of buffer time");
+    assert.equal(timeshift.snapshotSource().kind, "empty", "snapshotSource reads empty because no buffered fragment starts with a keyframe");
+    assert.equal(timeshift.getKeyframeAlignedStart(0), null, "the recording start finds no keyframe to align to");
+  });
+
+  // The decisions processSegment makes count only a fragment that starts with a keyframe, so a fragment whose keyframe is a later sample announces no first keyframe,
+  // arms no staleness clock and ends no reconnect's admission suppression, even though the buffer stores where its keyframe sits for a live view's preload.
+  test("a fragment whose keyframe is a later sample leaves the first-keyframe event, the staleness clock and the discontinuity resume untouched", async () => {
+
+    const { clock, double, timeshift } = await buildStartedTimeshift();
+
+    let fired = 0;
+
+    timeshift.on("firstKeyframe", (): void => { fired++; });
+
+    clock.advance(1000);
+    double.push(makeMediaSegment(makeLaterSampleKeyframeFragment()));
+
+    await settle();
+    clock.advance(STALENESS_THRESHOLD_MS + 1);
+
+    assert.equal(fired, 0, "the later-sample keyframe announces no first keyframe");
+    assert.equal(timeshift.snapshotSource().kind, "empty", "the later-sample keyframe arms no staleness clock, so the buffer reads empty rather than stale");
+
+    double.push(makeMediaSegment(makeNonKeyframeFragment(), { discontinuity: true }));
+
+    await settle();
+    double.push(makeMediaSegment(makeLaterSampleKeyframeFragment()));
+
+    await settle();
+
+    assert.equal(timeshift.time, 0, "the later-sample keyframe after a reconnect stays suppressed until a fragment that starts with a keyframe arrives");
   });
 
   // Target (h): the buffer trims at its configured segment count. With a small configured duration (200ms = 2 segments), pushing more than two media segments caps time
@@ -786,28 +897,200 @@ describe("timeshift buffer behavior", () => {
     assert.ok(timeshift.buffer, "the buffer is non-null once a segment is buffered");
   });
 
-  // Target (v): getLast returns the last N segments plus init, the whole buffer when the request exceeds the buffer, and null on a 0 duration. getLast's no-initSegment
-  // ternary-false arm (segments present but no init segment) is unreachable-by-construction (start commits only a non-null init) - acknowledged, not faked.
-  test("getLast returns a duration-bounded buffer, the whole buffer when over-requested, and null on zero", async () => {
+  // The live-view preload rows each assert the exact preload: the init segment, then every fragment from the start livePreload picks.
+
+  // The preload starts at the latest fragment holding a keyframe and carries every fragment after it. A zero floor is met from any keyframe, so the start is the
+  // latest keyframe rather than an older one.
+  test("livePreload starts at the latest keyframe and carries every fragment after it", async () => {
+
+    const fragments = [ makeKeyframeFragment(), makeNonKeyframeFragment(), makeKeyframeFragment(), makeNonKeyframeFragment(), makeNonKeyframeFragment() ];
+    const { init, timeshift } = await bufferFragments(fragments);
+
+    assert.deepEqual(timeshift.livePreload(0), preloadOf(init, fragments.slice(2)), "the preload is the init segment, the latest keyframe and every fragment after it");
+  });
+
+  // A fragment whose keyframe is a later sample is a live-view start, because FFmpeg drops the samples ahead of the keyframe. A snapshot hands FFmpeg its fragment from
+  // the first byte, so in the same buffer it still comes from the older fragment that starts with a keyframe.
+  test("livePreload starts at a fragment whose keyframe is a later sample while snapshotSource serves the older first-sample keyframe", async () => {
+
+    const startsWithKeyframe = makeKeyframeFragment();
+    const fragments = [ startsWithKeyframe, makeNonKeyframeFragment(), makeLaterSampleKeyframeFragment(), makeNonKeyframeFragment() ];
+    const { init, timeshift } = await bufferFragments(fragments);
+    const source = timeshift.snapshotSource();
+
+    assert.deepEqual(timeshift.livePreload(0), preloadOf(init, fragments.slice(2)), "the preload starts at the fragment whose keyframe is its second sample");
+    assert.equal(source.kind, "fresh", "snapshotSource reads fresh from the older fragment that starts with a keyframe");
+    assert.deepEqual(source.data, preloadOf(init, [startsWithKeyframe]), "the snapshot is the init segment and the fragment that starts with a keyframe");
+  });
+
+  // With no keyframe buffered, the preload is the last PROTECT_LIVESTREAM_API_IDR_INTERVAL seconds of fragments, or the whole buffer when it is shorter. The oldest
+  // fragments of the longer buffer differ in their bytes from the newer ones, so the exact preload shows the window keeps the newest fragments and drops the oldest.
+  test("livePreload with no keyframe buffered is the last keyframe interval of fragments, or the whole buffer when shorter", async () => {
+
+    const older = splitFragment(makeFragment({ run: { includeDuration: true, includeSize: true, sampleFlagsValue: SAMPLE_FLAG_NON_SYNC, useFirstSampleFlags: true },
+      samples: [{ duration: 3000, size: 8 }], trackId: 1 }));
+    const longer = [ ...Array.from({ length: 10 }, () => older), ...nonKeyframeFragments(50) ];
+    const long = await bufferFragments(longer);
+    const windowFragments = PRELOAD_FALLBACK_MS / long.timeshift.segmentLength;
+
+    assert.ok(long.timeshift.time > PRELOAD_FALLBACK_MS, "the longer buffer holds more than the fallback window");
+    assert.deepEqual(long.timeshift.livePreload(0), preloadOf(long.init, longer.slice(-windowFragments)),
+      "the longer buffer's preload is the init segment and its newest fragments across the fallback window");
+
+    const shorter = [ older, makeNonKeyframeFragment(), makeNonKeyframeFragment() ];
+    const short = await bufferFragments(shorter);
+
+    assert.deepEqual(short.timeshift.livePreload(0), preloadOf(short.init, shorter), "the shorter buffer's preload is the init segment and the whole buffer");
+  });
+
+  // The preload is null with nothing buffered: on a started buffer before its first fragment, and once a stop has cleared the buffer and released its init segment.
+  test("livePreload is null with nothing buffered", async () => {
 
     const { double, timeshift } = await buildStartedTimeshift();
 
-    for(let i = 0; i < 3; i++) {
+    assert.equal(timeshift.livePreload(0), null, "the preload is null on a started buffer before its first fragment");
 
-      double.push(makeMediaSegment(makeKeyframeFragment()));
+    double.push(makeMediaSegment(makeKeyframeFragment()));
 
-      // eslint-disable-next-line no-await-in-loop -- Each push is settled before the next so the buffer fills one segment at a time.
-      await settle();
-    }
+    await settle();
 
-    assert.equal(timeshift.getLast(0), null, "getLast returns null on a zero duration");
+    assert.ok(timeshift.livePreload(0), "the preload carries the buffered fragment before the stop");
 
-    const last = timeshift.getLast(100);
-    const whole = timeshift.getLast(100000);
+    timeshift.stop();
 
-    assert.ok(last, "getLast returns a buffer for a one-segment duration");
-    assert.ok(whole, "getLast returns the whole buffer when the request exceeds the buffer");
-    assert.ok(whole.length > last.length, "the over-requested buffer is larger than the one-segment slice");
+    assert.equal(timeshift.livePreload(0), null, "the preload is null once a stop has cleared the buffer");
+  });
+
+  // A latest keyframe whose fragments to the buffer's end fall short of the floor stays the first picture FFmpeg decodes. The start backs up from it a fragment at a
+  // time and stops at the first fragment from which the bytes meet the floor, because FFmpeg discards the frames ahead of the keyframe and still reads them toward its
+  // probe. Each floor sits one byte past what the fragment after the expected start leaves, so a floor that counted the init segment would stop a fragment short, and
+  // the second start lies past an older keyframe, which the start does not stop at.
+  test("livePreload backs up from the latest keyframe only as far as the floor needs", async () => {
+
+    const fragments = [ makeNonKeyframeFragment(), makeKeyframeFragment(), makeNonKeyframeFragment(), makeKeyframeFragment(), makeNonKeyframeFragment(),
+      makeKeyframeFragment(), makeNonKeyframeFragment() ];
+    const { init, timeshift } = await bufferFragments(fragments);
+
+    assert.deepEqual(timeshift.livePreload(bytesOf(fragments.slice(5)) + 1), preloadOf(init, fragments.slice(4)),
+      "the start backs up one fragment when the latest keyframe leaves one byte less than the floor");
+    assert.deepEqual(timeshift.livePreload(bytesOf(fragments.slice(3)) + 1), preloadOf(init, fragments.slice(2)),
+      "the start backs up past an older keyframe to the first fragment that meets the floor");
+  });
+
+  // The latest keyframe is the start however far back it sits, and backing up applies only inside the fallback window. Here the keyframe sits older than that window:
+  // the preload starts at it when the floor is met, and stays there under a floor nothing meets rather than moving forward to the window.
+  test("livePreload starts at the latest keyframe when it sits older than the fallback window", async () => {
+
+    const fragments = [ makeKeyframeFragment(), ...nonKeyframeFragments(59) ];
+    const { init, timeshift } = await bufferFragments(fragments);
+
+    assert.ok(timeshift.time > PRELOAD_FALLBACK_MS, "the buffer holds more than the fallback window");
+    assert.deepEqual(timeshift.livePreload(0), preloadOf(init, fragments), "the preload starts at the keyframe, beyond the fallback window");
+    assert.deepEqual(timeshift.livePreload(bytesOf(fragments) + 1), preloadOf(init, fragments), "a floor nothing meets leaves the start at the keyframe");
+  });
+
+  // The start never backs up past the fallback window. When the floor is more than that window holds, the preload is the window a buffer with no keyframe gets: the
+  // last PROTECT_LIVESTREAM_API_IDR_INTERVAL seconds of fragments, or the whole buffer when it is shorter. The longer buffer's window starts between its keyframes, so
+  // it differs from a start at any of them.
+  test("livePreload backs up no further than the last keyframe interval of fragments when the floor is more than it holds", async () => {
+
+    const longer = [ makeKeyframeFragment(), ...nonKeyframeFragments(29), makeKeyframeFragment(), ...nonKeyframeFragments(29) ];
+    const long = await bufferFragments(longer);
+    const windowFragments = PRELOAD_FALLBACK_MS / long.timeshift.segmentLength;
+
+    assert.ok(long.timeshift.time > PRELOAD_FALLBACK_MS, "the longer buffer holds more than the fallback window");
+    assert.deepEqual(long.timeshift.livePreload(bytesOf(longer) + 1), preloadOf(long.init, longer.slice(-windowFragments)),
+      "the longer buffer's preload is the init segment and its newest fragments across the fallback window");
+
+    const shorter = [ makeNonKeyframeFragment(), makeKeyframeFragment(), makeNonKeyframeFragment() ];
+    const short = await bufferFragments(shorter);
+
+    assert.deepEqual(short.timeshift.livePreload(bytesOf(shorter) + 1), preloadOf(short.init, shorter),
+      "the shorter buffer's preload is the init segment and the whole buffer");
+  });
+
+  // A floor equal to the bytes from the latest keyframe to the buffer's end is met, so the latest keyframe is the start.
+  test("livePreload takes the latest keyframe when its fragments meet the floor exactly", async () => {
+
+    const fragments = [ makeNonKeyframeFragment(), makeKeyframeFragment(), makeNonKeyframeFragment(), makeKeyframeFragment(), makeNonKeyframeFragment() ];
+    const { init, timeshift } = await bufferFragments(fragments);
+
+    assert.deepEqual(timeshift.livePreload(bytesOf(fragments.slice(3))), preloadOf(init, fragments.slice(3)),
+      "the preload starts at the latest keyframe when its fragments carry exactly the floor");
+  });
+
+  // The whole-window rows each assert the exact preload a caller asking for the whole window is handed: the init segment, then every fragment from the window's
+  // start to the buffer's end.
+
+  // The whole window starts at the window's own start whatever the keyframes around it. This buffer's latest keyframe sits mid-window and an older one sits before
+  // the window, so a start at any keyframe it holds differs from the window's, and the keyframe start a view that does not ask for the window takes is read beside it.
+  test("livePreload with the whole window asked for starts at the window's start, wherever the keyframes sit", async () => {
+
+    const fragments = [ ...nonKeyframeFragments(10), makeKeyframeFragment(), ...nonKeyframeFragments(29), makeKeyframeFragment(), ...nonKeyframeFragments(29) ];
+    const { init, timeshift } = await bufferFragments(fragments);
+    const windowFragments = PRELOAD_FALLBACK_MS / timeshift.segmentLength;
+
+    assert.ok(timeshift.time > PRELOAD_FALLBACK_MS, "the buffer holds more than the window");
+    assert.deepEqual(timeshift.livePreload(0), preloadOf(init, fragments.slice(40)), "the vacuity guard: without the whole window the preload starts at the keyframe");
+    assert.deepEqual(timeshift.livePreload(0, { wholeWindow: true }), preloadOf(init, fragments.slice(-windowFragments)),
+      "the whole window is the init segment and the newest fragments across the window, from its start rather than from a keyframe");
+  });
+
+  // With no keyframe buffered, the whole window is still the window: the newest fragments across it, never the whole buffer and never nothing.
+  test("livePreload with the whole window asked for and no keyframe buffered is the window's fragments", async () => {
+
+    const fragments = nonKeyframeFragments(60);
+    const { init, timeshift } = await bufferFragments(fragments);
+    const windowFragments = PRELOAD_FALLBACK_MS / timeshift.segmentLength;
+
+    assert.ok(timeshift.time > PRELOAD_FALLBACK_MS, "the buffer holds more than the window");
+    assert.deepEqual(timeshift.livePreload(0, { wholeWindow: true }), preloadOf(init, fragments.slice(-windowFragments)),
+      "the whole window is the init segment and the newest fragments across the window");
+  });
+
+  // A buffer shorter than the window is the whole window entire, though its latest keyframe would give a view that does not ask for the window a shorter preload.
+  test("livePreload with the whole window asked for is the whole buffer when the buffer is shorter than the window", async () => {
+
+    const fragments = [ makeNonKeyframeFragment(), makeKeyframeFragment(), makeNonKeyframeFragment(), makeKeyframeFragment(), makeNonKeyframeFragment() ];
+    const { init, timeshift } = await bufferFragments(fragments);
+
+    assert.deepEqual(timeshift.livePreload(0), preloadOf(init, fragments.slice(3)), "the vacuity guard: without the whole window the preload starts at the keyframe");
+    assert.deepEqual(timeshift.livePreload(0, { wholeWindow: true }), preloadOf(init, fragments), "the whole window is the init segment and the whole buffer");
+  });
+
+  // The floor plays no part in the whole window. This buffer's only keyframe sits older than the window, where a view that does not ask for the window starts under
+  // any floor, so a floor more than the window carries, or more than the whole buffer carries, would back the start up past the window if it counted.
+  test("livePreload with the whole window asked for takes no account of the floor", async () => {
+
+    const fragments = [ makeKeyframeFragment(), ...nonKeyframeFragments(59) ];
+    const { init, timeshift } = await bufferFragments(fragments);
+    const windowFragments = PRELOAD_FALLBACK_MS / timeshift.segmentLength;
+    const windowPreload = preloadOf(init, fragments.slice(-windowFragments));
+
+    assert.deepEqual(timeshift.livePreload(bytesOf(fragments) + 1), preloadOf(init, fragments),
+      "the vacuity guard: without the whole window the preload starts at the keyframe, beyond the window");
+    assert.deepEqual(timeshift.livePreload(bytesOf(fragments.slice(-windowFragments)) + 1, { wholeWindow: true }), windowPreload,
+      "a floor one byte past what the window carries leaves the whole window as it is");
+    assert.deepEqual(timeshift.livePreload(bytesOf(fragments) + 1, { wholeWindow: true }), windowPreload,
+      "a floor past what the whole buffer carries leaves the whole window as it is");
+  });
+
+  // The whole window is null with nothing buffered, as every preload is: on a started buffer before its first fragment, and once a stop has cleared the buffer.
+  test("livePreload with the whole window asked for is null with nothing buffered", async () => {
+
+    const { double, timeshift } = await buildStartedTimeshift();
+
+    assert.equal(timeshift.livePreload(0, { wholeWindow: true }), null, "the whole window is null on a started buffer before its first fragment");
+
+    double.push(makeMediaSegment(makeKeyframeFragment()));
+
+    await settle();
+
+    assert.ok(timeshift.livePreload(0, { wholeWindow: true }), "the whole window carries the buffered fragment before the stop");
+
+    timeshift.stop();
+
+    assert.equal(timeshift.livePreload(0, { wholeWindow: true }), null, "the whole window is null once a stop has cleared the buffer");
   });
 
   // Target (w): getKeyframeAlignedStart returns the nearest keyframe at or before the prebuffer start as { seekOffsetMs, startIndex }, and null when no keyframe precedes

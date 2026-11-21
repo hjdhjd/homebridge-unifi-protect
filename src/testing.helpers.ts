@@ -586,8 +586,8 @@ export function makeRecordingDelegateDouble(state: { isRecording?: boolean; isTr
 export interface TestTimeshiftBuffer {
 
   channelProfile: Nullable<ChannelProfile>;
-  getLast: (duration: number) => Nullable<Buffer>;
   isStarted: boolean;
+  livePreload: (minimumBytes: number, options?: { wholeWindow?: boolean }) => Nullable<Buffer>;
   snapshotSource: () => SnapshotSource;
 }
 
@@ -610,8 +610,8 @@ export function makeTimeshiftSupervisorDouble(): TestTimeshiftSupervisor {
   const buffer: TestTimeshiftBuffer = {
 
     channelProfile: null,
-    getLast: (): Nullable<Buffer> => null,
     isStarted: false,
+    livePreload: (): Nullable<Buffer> => null,
     snapshotSource: (): SnapshotSource => ({ kind: "empty" })
   };
 

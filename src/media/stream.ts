@@ -5,13 +5,13 @@
  * This module is heavily inspired by the homebridge and homebridge-camera-ffmpeg source code. Thank you for your contributions to the HomeKit world.
  */
 import { AudioRecordingCodecType, AudioStreamingCodecType, AudioStreamingSamplerate, BackpressureWriter, FfmpegOptions,
-  FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HbpuAbortError, MediaContainerType, RtpDemuxer, SRTPCryptoSuites, StreamRequestTypes,
-  VideoCodecType, formatBps, formatErrorMessage, formatUrlHost, guardedDispatch, isHbpuAbortReason, mqttTopic } from "homebridge-plugin-utils";
+  FfmpegStreamingProcess, H264Level, H264Profile, HKSV_FRAGMENT_LENGTH, HbpuAbortError, MediaContainerType, Mp4FrameFeed, RtpDemuxer, SRTPCryptoSuites,
+  StreamRequestTypes, VideoCodecType, formatBps, formatErrorMessage, formatUrlHost, guardedDispatch, isHbpuAbortReason, mqttTopic } from "homebridge-plugin-utils";
 import type { CameraController, CameraControllerOptions, CameraStreamingDelegate, HAP, PrepareStreamCallback, PrepareStreamRequest, PrepareStreamResponse, Resolution,
   SnapshotRequest, SnapshotRequestCallback, StartStreamRequest, StreamRequestCallback, StreamingRequest } from "homebridge";
 import type { Clock, HomebridgePluginLogging, IpFamily, Nullable, PortReservation } from "homebridge-plugin-utils";
 import type { ControllerIdentity, StreamingDelegate, StreamingDelegateFactory } from "./stream-delegate.ts";
-import { HARDWARE_TRANSCODE_MARKER, PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_LIVE_VIEW_START_DEADLINE_MS,
+import { HARDWARE_TRANSCODE_MARKER, PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVE_VIEW_START_DEADLINE_MS,
   PROTECT_PROBESIZE_OVERRIDE_MAX, PROTECT_PROBESIZE_OVERRIDE_PERMANENT_THRESHOLD, PROTECT_PROBESIZE_OVERRIDE_RESET_MS,
   PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectReservedNames, isPackageCameraContext } from "../types.ts";
@@ -563,13 +563,45 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     callback(undefined, response);
   }
 
-  // Consume Segments from a livestream subscription and write them through to FFmpeg via the supplied BackpressureWriter. FFmpeg needs a valid fMP4 header before any
-  // MOOF/MDAT data, so we prepend the header exactly once on the first media: either the pre-existing timeshift buffer slice (which already contains the init segment
-  // followed by recent frames) or the subscription's cached init segment data on its own. The unifi-protect library's pool yields the init as its own Segment, so we
-  // SKIP the init-typed segment here (writing both the prepended init data and the init segment would double-write the fMP4 header and corrupt FFmpeg's -f mp4 input)
-  // and consume the cached initSegment.data instead. Error classification is centralised in logLivestreamIterationError so every livestream consumer uses identical
-  // phrasing.
-  private async consumeStreamSegments(ffmpegStream: ProtectStreamingFfmpegProcess, subscription: LivestreamSubscription, segmentWriter: BackpressureWriter,
+  // Build the frame feed a buffer-backed live view writes FFmpeg's input through, over that session's writer and on the platform's clock, the one that writer paces
+  // on...the feed times each fragment's start and the writer holds it, so the two have to read the same time. A fragment whose video the feed cannot read frame by
+  // frame is written whole, which costs the live view its smoothness but never its stream, so we say so at warn. A fragment with no video in it has no frames to pace
+  // and loses nothing by going whole, so it is noted at debug alone. The feed reports each reason once per header it is handed, and each live view hands its own feed
+  // one header, so each line comes once per live view with no state of our own to clear.
+  private createFrameFeed(writer: BackpressureWriter): Mp4FrameFeed {
+
+    return new Mp4FrameFeed(writer, {
+
+      clock: this.platform.clock,
+      onUnpaced: (_fragment, reason): void => {
+
+        if(reason === "no-video") {
+
+          this.log.debug("A livestream fragment with no video in it was sent to HomeKit as it arrived.");
+
+          return;
+        }
+
+        this.log.warn("Some of this camera's video could not be read frame by frame, so it was sent to HomeKit as it arrived. " +
+          "Live views may look less smooth.");
+      }
+    });
+  }
+
+  /* Consume Segments from a livestream subscription and feed them to FFmpeg through the supplied frame feed. FFmpeg needs a valid fMP4 header before any MOOF/MDAT
+   * data, so we write the header whole, exactly once, on the first media: either the pre-existing timeshift buffer slice (which already contains the init segment
+   * followed by recent frames) or the subscription's cached init segment data on its own. The unifi-protect library's pool yields the init as its own Segment, so we
+   * SKIP the init-typed segment here (writing both the header and the init segment would double-write the fMP4 header and corrupt FFmpeg's -f mp4 input) and
+   * consume the cached initSegment.data instead. Error classification is centralised in logLivestreamIterationError so every livestream consumer uses identical
+   * phrasing.
+   *
+   * Every media fragment after the header reaches FFmpeg as its video frames, the first when the video's own time says it is due and each later one a frame's
+   * duration after the one before it. FFmpeg passes a frame on as soon as its bytes arrive, so a fragment written whole would leave FFmpeg as a burst of frames and
+   * then a gap, and a viewer would see the motion stutter at every fragment. No write is awaited: the feed times each fragment from the moment it is handed over, and
+   * a fragment still holding frames gives them up once the one behind it is due, so issuing each fragment the moment it arrives keeps a late fragment from making
+   * every fragment after it late too.
+   */
+  private async consumeStreamSegments(ffmpegStream: ProtectStreamingFfmpegProcess, subscription: LivestreamSubscription, feed: Mp4FrameFeed,
     tsBuffer: Nullable<Buffer>): Promise<void> {
 
     let headerWritten = false;
@@ -614,12 +646,13 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
             return;
           }
 
-          void segmentWriter.write(header).catch((error: unknown) => this.log.debug("Live stream backpressure write dropped.", { error }));
+          void feed.writeHeader(header).catch((error: unknown) => this.log.debug("Live stream backpressure write dropped.", { error }));
         }
 
-        // Write the media fragment. The homebridge-plugin-utils write() returns a typed-rejecting Promise; the .catch (debug) swallows BackpressureClosedStreamError /
-        // signal.reason on teardown (the common case when FFmpeg exits mid-write). No highWaterMark (unbounded) and no segment-count accounting, unlike HKSV.
-        void segmentWriter.write(segment.data).catch((error: unknown) => this.log.debug("Live stream backpressure write dropped.", { error }));
+        // Feed the media fragment as its frames, without awaiting it. The feed's write returns a typed-rejecting Promise; the .catch (debug) swallows
+        // BackpressureClosedStreamError / signal.reason on teardown (the common case when FFmpeg exits mid-write), when the frames of a fragment still waiting their turn
+        // are dropped. No highWaterMark (unbounded) and no segment-count accounting, unlike HKSV.
+        void feed.writeFragment(segment.data).catch((error: unknown) => this.log.debug("Live stream backpressure write dropped.", { error }));
       }
     } catch(error) {
 
@@ -765,10 +798,7 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
       channelBitrate: channelProfile.channel.bitrate / 1000,
       channelFps: channelProfile.channel.fps,
-      cpuGeneration: this.platform.codecSupport.cpuGeneration,
-      hostSystem: this.platform.codecSupport.hostSystem,
       isHighLatency,
-      isPackageCamera: isPackageCameraContext(this.protectCamera.accessory.context),
       isTranscoding,
       requestBitrate: request.video.max_bit_rate,
       requestFps: request.video.fps,
@@ -801,13 +831,22 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // If we have the timeshift buffer enabled, and we've selected the same quality for the livestream as our timeshift buffer, we use the timeshift buffer to
     // significantly accelerate our livestream startup. Using the timeshift buffer provides advantages:
     //
-    // - Since we typically have several seconds of video already queued up in the timeshift buffer, FFmpeg will get a significant speed up in startup performance.
-    //   FFmpeg takes time at the beginning of each session to analyze the input before allowing you to perform any action. By using the timeshift buffer, we're able to
-    //   give FFmpeg all that data right at the beginning, effectively reducing that startup time to the point of being imperceptible.
+    // - FFmpeg analyzes the start of each session's input, up to its probe size, before allowing you to perform any action, and the live fragments arrive a frame at a
+    //   time. The buffer's preload hands FFmpeg the init segment and the recent fragments from the latest keyframe that leaves it at least a probe size of video, all at
+    //   once, so the analysis finishes without waiting on the camera and FFmpeg has as little older video as possible to work through before it shows the present. A
+    //   high latency session takes the buffer's whole window instead, the init segment and the last PROTECT_LIVESTREAM_API_IDR_INTERVAL seconds of fragments wherever
+    //   their keyframes sit. The buffer's livePreload states what each start is for.
     //
     // - Since we are using an already existing connection to the Protect controller, we don't need to create another connection which incurs an additional delay, as well
     //   as a resource hit on the Protect controller.
-    const tsBuffer: Nullable<Buffer> = useTsb ? (this.timeshift?.buffer.getLast(PROTECT_LIVESTREAM_API_IDR_INTERVAL * 1000) ?? null) : null;
+    const tsBuffer: Nullable<Buffer> = useTsb ? (this.timeshift?.buffer.livePreload(this.probesize, { wholeWindow: isHighLatency }) ?? null) : null;
+
+    // Note what this live view starts from: the preload's size beside the probe size FFmpeg is given below, the floor the buffer holds a preload to unless the view
+    // takes its whole window.
+    if(tsBuffer) {
+
+      this.log.debug("Live view preload.", { bytes: tsBuffer.length, probesize: this.probesize });
+    }
 
     // -hide_banner                     Suppress printing the startup banner in FFmpeg.
     // -nostats                         Suppress printing progress reports while encoding in FFmpeg.
@@ -1066,8 +1105,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
 
     if(useTsb) {
 
-      // Feed segments to FFmpeg with backpressure handling...if FFmpeg can't keep up, segments are queued and written when it's ready.
-      segmentWriter = new BackpressureWriter(() => ffmpegStream.stdin, { signal: sessionInfo.abortController.signal });
+      // Write FFmpeg's input with backpressure handling...if FFmpeg can't keep up, writes are queued and go out when it's ready. The writer holds each fragment's frames
+      // on the platform's clock until they are due, and it stays in segmentWriter because the bridge above aborts it when FFmpeg exits.
+      segmentWriter = new BackpressureWriter(() => ffmpegStream.stdin, { clock: this.platform.clock, signal: sessionInfo.abortController.signal });
 
       // Subscribe to the pooled livestream via the camera interface. This call is synchronous and returns the subscription handle immediately; the underlying connection
       // begins establishing in the background. We start consuming segments below within the same synchronous frame, before any asynchronous segment can be delivered.
@@ -1081,8 +1121,8 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       // (double controller load, broken self-heal/discontinuity coupling).
       subscription = this.protectCamera.livestream(channelProfile, { signal: sessionInfo.abortController.signal, urgency: () => PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS });
 
-      // Drive the segment iterator in the background.
-      void this.consumeStreamSegments(ffmpegStream, subscription, segmentWriter, tsBuffer);
+      // Drive the segment iterator in the background, feeding FFmpeg through a frame feed over the writer.
+      void this.consumeStreamSegments(ffmpegStream, subscription, this.createFrameFeed(segmentWriter), tsBuffer);
 
       /* Wait for the session to establish, within the live view's start deadline. HomeKit's answer comes from the FFmpeg ready bridge above, and FFmpeg says nothing
        * until video reaches it, so a livestream that never delivers would otherwise hold HomeKit's request until HAP times it out. The deadline is measured from

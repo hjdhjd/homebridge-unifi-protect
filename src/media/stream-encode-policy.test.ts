@@ -5,7 +5,7 @@
  * Each is a pure function - no `this`, no I/O - so every cell is provable against constructed inputs, the property that makes pure decision modules exhaustively
  * testable in a way `this`-bound logic is not. The transcode table walks each circumstance that forces a re-encode and the high-latency packet-time boundary; the
  * channel-request table walks the transcode and hardware-encoder axes; the encoding table walks the bitrate hints, the channel ceiling, the copy-mode transmux, and
- * every axis of the interpolation predicate.
+ * the transcode bag, which is the same whichever transport feeds the session.
  */
 import { H264Level, H264Profile, HOMEKIT_IDR_INTERVAL } from "homebridge-plugin-utils";
 import { PROTECT_MAX_SOURCE_HEIGHT, PROTECT_MAX_SOURCE_WIDTH } from "../settings.ts";
@@ -28,13 +28,13 @@ function channelInput(overrides: Partial<Parameters<typeof resolveChannelRequest
   return { isTranscoding: false, requestHeight: 1080, requestWidth: 1920, usesHardwareEncoder: false, ...overrides };
 }
 
-// The neutral encoding input: a copy-mode direct-RTSP session on a plain Linux host, HomeKit asking for 1920x1080@30 at 3000 kbps, fed by a 30 fps channel whose own
-// ceiling of 6000 kbps sits above the request, from an H.264 camera, with no configured transcode bitrates. Every bitrate here is in kbps.
+// The neutral encoding input: a copy-mode direct-RTSP session, HomeKit asking for 1920x1080@30 at 3000 kbps, fed by a 30 fps channel whose own ceiling of 6000 kbps
+// sits above the request, from an H.264 camera, with no configured transcode bitrates. Every bitrate here is in kbps.
 function encodingInput(overrides: Partial<Parameters<typeof resolveVideoEncoding>[0]> = {}): Parameters<typeof resolveVideoEncoding>[0] {
 
-  return { channelBitrate: 6000, channelFps: 30, cpuGeneration: 0, hostSystem: "linux", isHighLatency: false, isPackageCamera: false, isTranscoding: false,
-    requestBitrate: 3000, requestFps: 30, requestHeight: 1080, requestLevel: H264Level.LEVEL4_0, requestProfile: H264Profile.MAIN, requestWidth: 1920,
-    transcodeBitrate: 0, transcodeHighLatencyBitrate: 0, useTsb: false, videoCodec: "h264", ...overrides };
+  return { channelBitrate: 6000, channelFps: 30, isHighLatency: false, isTranscoding: false, requestBitrate: 3000, requestFps: 30, requestHeight: 1080,
+    requestLevel: H264Level.LEVEL4_0, requestProfile: H264Profile.MAIN, requestWidth: 1920, transcodeBitrate: 0, transcodeHighLatencyBitrate: 0, useTsb: false,
+    videoCodec: "h264", ...overrides };
 }
 
 // The encoder-options bag the neutral encoding input is expected to produce once transcoding is on: HomeKit's request in full, the camera's H.264 source codec, the
@@ -149,6 +149,16 @@ describe("resolveVideoEncoding - the transcode bag", () => {
     assert.deepEqual(resolveVideoEncoding(encodingInput({ isTranscoding: true })), { encoderOptions: transcodeBag(), mode: "transcode", targetBitrate: 3000 });
   });
 
+  test("a buffer-backed transcode carries the same bag as a direct-RTSP one, with no filters", () => {
+
+    assert.deepEqual(resolveVideoEncoding(encodingInput({ isTranscoding: true, useTsb: true })),
+      { encoderOptions: transcodeBag(), mode: "transcode", targetBitrate: 3000 });
+    assert.deepEqual(resolveVideoEncoding(encodingInput({ channelFps: 15, isTranscoding: true, requestFps: 30, useTsb: true })),
+      { encoderOptions: transcodeBag({ fps: 15, inputFps: 15 }), mode: "transcode", targetBitrate: 3000 });
+    assert.deepEqual(resolveVideoEncoding(encodingInput({ channelFps: 30, isTranscoding: true, requestFps: 15, useTsb: true })),
+      { encoderOptions: transcodeBag({ fps: 15 }), mode: "transcode", targetBitrate: 3000 });
+  });
+
   test("HomeKit's requested level, profile, and dimensions pass through to the encoder untouched", () => {
 
     assert.deepEqual(resolveVideoEncoding(encodingInput({ isTranscoding: true, requestHeight: 720, requestLevel: H264Level.LEVEL3_1,
@@ -156,10 +166,18 @@ describe("resolveVideoEncoding - the transcode bag", () => {
     { encoderOptions: transcodeBag({ height: 720, level: H264Level.LEVEL3_1, profile: H264Profile.BASELINE, width: 1280 }), mode: "transcode", targetBitrate: 3000 });
   });
 
-  test("the source channel's frame rate is what the encoder is told it is fed, independent of the rate HomeKit asked for", () => {
+  test("a channel slower than HomeKit's request is sent at its own frame rate, never raised to the request", () => {
 
     assert.deepEqual(resolveVideoEncoding(encodingInput({ channelFps: 15, isTranscoding: true, requestFps: 30 })),
-      { encoderOptions: transcodeBag({ inputFps: 15 }), mode: "transcode", targetBitrate: 3000 });
+      { encoderOptions: transcodeBag({ fps: 15, inputFps: 15 }), mode: "transcode", targetBitrate: 3000 });
+    assert.deepEqual(resolveVideoEncoding(encodingInput({ channelFps: 20, isTranscoding: true, requestFps: 30 })),
+      { encoderOptions: transcodeBag({ fps: 20, inputFps: 20 }), mode: "transcode", targetBitrate: 3000 });
+  });
+
+  test("a channel faster than HomeKit's request comes down to the request, and the encoder is still told the channel's rate is what it is fed", () => {
+
+    assert.deepEqual(resolveVideoEncoding(encodingInput({ channelFps: 30, isTranscoding: true, requestFps: 15 })),
+      { encoderOptions: transcodeBag({ fps: 15, inputFps: 30 }), mode: "transcode", targetBitrate: 3000 });
   });
 
   test("the camera's source codec is the input codec the transcode bag describes, and a copy's result is the same whatever the codec", () => {
@@ -216,47 +234,5 @@ describe("resolveVideoEncoding - the bitrate hints and the channel's ceiling", (
 
     assert.deepEqual(resolveVideoEncoding(encodingInput({ channelBitrate: 1500, isTranscoding: true, transcodeBitrate: 2500 })),
       { encoderOptions: transcodeBag({ bitrate: 1500 }), mode: "transcode", targetBitrate: 1500 });
-  });
-});
-
-describe("resolveVideoEncoding - the interpolation predicate", () => {
-
-  // The interpolating population: riding the timeshift buffer, on M3-or-later Apple Silicon, and not the low-frame-rate package camera. The channel's frame rate is
-  // deliberately below the requested rate throughout, so an interpolating cell and a plain one are always distinguishable by the encoder's declared output rate.
-  const interpolating = { channelFps: 15, cpuGeneration: 3, hostSystem: "macOS.Apple", isPackageCamera: false, isTranscoding: true, requestFps: 30, useTsb: true };
-
-  test("the interpolating population is handed the fps and minterpolate filters and takes its output rate from the channel", () => {
-
-    assert.deepEqual(resolveVideoEncoding(encodingInput(interpolating)), {
-
-      encoderOptions: transcodeBag({ fps: 15, inputFps: 15,
-        videoFilters: [ "fps=30", "minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:me=fss:me_mode=bidir:vsbmc=1:scd=none" ] }),
-      mode: "transcode",
-      targetBitrate: 3000
-    });
-  });
-
-  test("the package camera is excluded - its frame rate is too low for the filter to pay for itself", () => {
-
-    assert.deepEqual(resolveVideoEncoding(encodingInput({ ...interpolating, isPackageCamera: true })),
-      { encoderOptions: transcodeBag({ inputFps: 15 }), mode: "transcode", targetBitrate: 3000 });
-  });
-
-  test("an earlier Apple Silicon generation is excluded", () => {
-
-    assert.deepEqual(resolveVideoEncoding(encodingInput({ ...interpolating, cpuGeneration: 2 })),
-      { encoderOptions: transcodeBag({ inputFps: 15 }), mode: "transcode", targetBitrate: 3000 });
-  });
-
-  test("a host that is not Apple Silicon is excluded, whatever its generation reads as", () => {
-
-    assert.deepEqual(resolveVideoEncoding(encodingInput({ ...interpolating, hostSystem: "macOS.Intel" })),
-      { encoderOptions: transcodeBag({ inputFps: 15 }), mode: "transcode", targetBitrate: 3000 });
-  });
-
-  test("a direct-RTSP session is excluded - interpolation rides the timeshift buffer only", () => {
-
-    assert.deepEqual(resolveVideoEncoding(encodingInput({ ...interpolating, useTsb: false })),
-      { encoderOptions: transcodeBag({ inputFps: 15 }), mode: "transcode", targetBitrate: 3000 });
   });
 });

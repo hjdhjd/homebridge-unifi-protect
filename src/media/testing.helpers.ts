@@ -268,8 +268,8 @@ export function makeChannelProfile(host: TestCameraHost, index = 0): ChannelProf
   return { channel, name: channel.name, resolution: [ 1920, 1080, 30 ], url: "rtsps://test" };
 }
 
-// Synthesize a genuine fMP4 media fragment on the published fMP4 builders so the production isKeyframe TRUN-flag parse runs against REAL bytes on the REAL path - no
-// isKeyframe injection point, so the test exercises the actual fMP4 keyframe coupling rather than a test-only divergence. The fragment is moof>traf>trun with a
+// Synthesize a genuine fMP4 media fragment on the published fMP4 builders so the production findKeyframe TRUN-flag parse runs against REAL bytes on the REAL path - no
+// keyframe injection point, so the test exercises the actual fMP4 keyframe coupling rather than a test-only divergence. The fragment is moof>traf>trun with a
 // first_sample_flags-bearing trun (the builder sets the data_offset and first_sample_flags TRUN flags, sample_count 1, data_offset 0). The ONLY difference between a
 // keyframe and a non-keyframe fragment is that first_sample_flags value: 0 leaves the SAMPLE_FLAG_NON_SYNC bit clear, marking a sync sample (a keyframe), while
 // SAMPLE_FLAG_NON_SYNC sets it, marking a non-sync sample (a non-keyframe) the production parse rejects. The mdat carries an empty body - the timeshift never decodes
@@ -284,7 +284,7 @@ function makeMediaFragment(options: { keyframe?: boolean } = {}): { data: Buffer
   return { data: Buffer.concat([ moof, mdat ]), mdat, moof };
 }
 
-// The keyframe-bearing fragment: makeMediaFragment with its default keyframe-true selection, so the production isKeyframe parse returns true. This is a thin
+// The keyframe-bearing fragment: makeMediaFragment with its default keyframe-true selection, so the production findKeyframe parse answers zero. This is a thin
 // wrapper whose default keyframe path writes first_sample_flags 0, so the KEYFRAME_FRAGMENT const, the segment-yielding parking double, and the keyframe
 // self-test all read the identical bytes.
 export function makeKeyframeFragment(): { data: Buffer; mdat: Buffer; moof: Buffer } {
@@ -292,8 +292,8 @@ export function makeKeyframeFragment(): { data: Buffer; mdat: Buffer; moof: Buff
   return makeMediaFragment();
 }
 
-// The non-keyframe-bearing fragment: makeMediaFragment with keyframe false, so the trun first_sample_flags carries SAMPLE_FLAG_NON_SYNC and the production isKeyframe
-// parse returns false on the REAL path. The timeshift suite pushes this through the controllable double to exercise the discontinuity keyframe-gate (a
+// The non-keyframe-bearing fragment: makeMediaFragment with keyframe false, so the trun first_sample_flags carries SAMPLE_FLAG_NON_SYNC and the production findKeyframe
+// parse answers null on the REAL path. The timeshift suite pushes this through the controllable double to exercise the discontinuity keyframe-gate (a
 // discontinuity-marked non-keyframe must defer the discontinuity emit until a clean keyframe arrives) and to drive any non-keyframe classification. Built at the use
 // site rather than cached in a module const so there is no unused-when-the-suite-changes SSOT cruft to drift.
 export function makeNonKeyframeFragment(): { data: Buffer; mdat: Buffer; moof: Buffer } {
@@ -314,7 +314,7 @@ const NO_TRACKS: LivestreamDescription = { tracks: [] };
  *     false, an empty iterator, no-op reassess/dispose. The construction suites never exercise it; it exists only so the host's livestream return type-checks
  *     against the production type.
  *   - mediaSegments > 0: the ESTABLISHED segment-yielding profile - initSegment populated, state "live", whenEstablished resolves true, and an iterator yielding one init
- *     segment then mediaSegments keyframe-bearing media segments so the timeshift fills its buffer with real fMP4 the production isKeyframe parse accepts.
+ *     segment then mediaSegments keyframe-bearing media segments so the timeshift fills its buffer with real fMP4 the production findKeyframe parse accepts.
  *
  * Required, not incidental: after yielding its media segments the established iterator MUST PARK, never completing. A finite generator returns done, which ends the
  * timeshift's consumeSegments for-await, runs its finally -> finalizeSubscription -> clearBuffer, and wipes the just-filled buffer (the this.subscription?.id ===

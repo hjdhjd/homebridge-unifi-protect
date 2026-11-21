@@ -4,7 +4,7 @@
  *
  * recording-delegate.test.ts proved the decline contract but could not reach the transmit path: against a segment-less livestream stub the timeshift buffer never fills,
  * so the gate always declines, and reaching transmit at all would spawn a real FFmpeg child. This suite clears both blockers FFmpeg-free. It fills the timeshift buffer
- * with the harness's segment-yielding livestream double (real keyframe-bearing fMP4 the production isKeyframe parse accepts), and it constructs the FFmpeg process
+ * with the harness's segment-yielding livestream double (real keyframe-bearing fMP4 the production findKeyframe check accepts), and it constructs the FFmpeg process
  * through the platform's recording-process factory interface - injecting an FFmpeg-free TestRecordingProcess - so the delegate runs its full accept-path logic
  * with no child.
  *

@@ -10,17 +10,18 @@ import { describe, test } from "node:test";
 import { makeControllableLivestreamDouble, makeKeyframeFragment, makeLivestreamSubscriptionDouble, makeNonKeyframeFragment } from "./testing.helpers.ts";
 import type { Segment } from "unifi-protect";
 import assert from "node:assert/strict";
-import { isKeyframe } from "homebridge-plugin-utils";
+import { findKeyframe } from "homebridge-plugin-utils";
 import { settle } from "homebridge-plugin-utils/testing";
 
 describe("harness growth: the recording transmit doubles", () => {
 
-  // The keyframe-fragment box builder must synthesize a genuine fMP4 fragment the PRODUCTION isKeyframe parse accepts - there is no isKeyframe injection point to
-  // substitute a fake, so the transmit test exercises the real fMP4 keyframe coupling. If the builder ever drifts (a wrong box nesting, a flipped TRUN flag, the NON_SYNC
-  // bit set), production would read these segments as non-keyframes and the timeshift's keyframe-aligned start would never resolve.
-  test("makeKeyframeFragment synthesizes a fragment the production isKeyframe parse accepts", () => {
+  // The keyframe-fragment box builder must synthesize a genuine fMP4 fragment that starts with a keyframe by the PRODUCTION check, findKeyframe answering zero - there
+  // is no keyframe injection point to substitute a fake, so the transmit test exercises the real fMP4 keyframe coupling. If the builder ever drifts (a wrong box
+  // nesting, a flipped TRUN flag, the NON_SYNC bit set), production would read these segments as non-keyframes and the timeshift's keyframe-aligned start would never
+  // resolve.
+  test("makeKeyframeFragment synthesizes a fragment the production findKeyframe check reads as starting with a keyframe", () => {
 
-    assert.equal(isKeyframe(makeKeyframeFragment().data), true, "the synthesized moof>traf>trun fragment reads as a sync sample (keyframe)");
+    assert.equal(findKeyframe(makeKeyframeFragment().data), 0, "the synthesized moof>traf>trun fragment's first sample reads as a sync sample (keyframe)");
   });
 
   // The established (segment-yielding) livestream double reports the live profile and yields one init segment then exactly the requested media segments. We drain the
@@ -78,20 +79,13 @@ describe("harness growth: the recording transmit doubles", () => {
 
 describe("harness growth: the timeshift behavior doubles", () => {
 
-  // The non-keyframe builder is the negative counterpart to the held keyframe self-test: it must synthesize a fragment the PRODUCTION isKeyframe parse REJECTS, so the
-  // timeshift suite's discontinuity keyframe-gate (a discontinuity-marked non-keyframe must defer until a clean keyframe) is genuinely exercised. There is no isKeyframe
-  // injection point to substitute a fake, so the only way to drive the non-keyframe path is real bytes with the SAMPLE_FLAG_NON_SYNC bit set.
-  test("makeNonKeyframeFragment synthesizes a fragment the production isKeyframe parse rejects", () => {
+  // The non-keyframe builder is the negative counterpart to the held keyframe self-test: it must synthesize a fragment the PRODUCTION findKeyframe check finds no
+  // keyframe in, so the timeshift suite's discontinuity keyframe-gate (a discontinuity-marked non-keyframe must defer until a clean keyframe) is genuinely exercised and
+  // its live-view preload rows read the fragment as holding no keyframe at all. There is no keyframe injection point to substitute a fake, so the only way to drive the
+  // non-keyframe path is real bytes with the SAMPLE_FLAG_NON_SYNC bit set.
+  test("makeNonKeyframeFragment synthesizes a fragment the production findKeyframe check finds no keyframe in", () => {
 
-    assert.equal(isKeyframe(makeNonKeyframeFragment().data), false, "the synthesized non-sync fragment reads as a non-keyframe");
-  });
-
-  // Because makeKeyframeFragment is a thin selector over the shared makeMediaFragment, its bytes must stay stable: the KEYFRAME_FRAGMENT const, the
-  // segment-yielding parking double, and the recording-transmit path all read these bytes, so a drift would silently churn that net. The keyframe still reads
-  // as a sync sample.
-  test("makeKeyframeFragment still synthesizes a fragment the production isKeyframe parse accepts after the SSOT refactor", () => {
-
-    assert.equal(isKeyframe(makeKeyframeFragment().data), true, "the keyframe fragment still reads as a sync sample after the refactor");
+    assert.equal(findKeyframe(makeNonKeyframeFragment().data), null, "the synthesized non-sync fragment reads as holding no keyframe");
   });
 
   // The controllable double, pushed once then iterated, yields exactly that pushed segment. The first next() runs the generator from the top, drains the one queued
