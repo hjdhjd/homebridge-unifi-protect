@@ -6,7 +6,7 @@ import type { Clock, HomebridgePluginLogging, Nullable } from "homebridge-plugin
 import type { LivestreamAudioFormat, LivestreamVideoFormat } from "./stream-delegate.ts";
 import { PROTECT_LIVESTREAM_ACTIVE_TOLERANCE_MS, PROTECT_LIVESTREAM_API_IDR_INTERVAL, PROTECT_LIVESTREAM_IDLE_TOLERANCE_MS, PROTECT_SEGMENT_RESOLUTION }
   from "../settings.ts";
-import { findKeyframe, formatErrorMessage } from "homebridge-plugin-utils";
+import { findKeyframe, formatErrorMessage, startsWithKeyframe } from "homebridge-plugin-utils";
 import { livestreamAudioFormat, livestreamVideoFormat } from "./stream-delegate.ts";
 import type { ChannelProfile } from "./resolution.ts";
 import { EventEmitter } from "node:events";
@@ -58,15 +58,17 @@ interface KeyframeAlignedStart {
   startIndex: number;
 }
 
-// A single buffered timeshift entry: the fMP4 fragment and where its first keyframe sits, findKeyframe's zero-based sample index, or null when it holds none. Each use
-// reads the index its own way. Zero means the fragment starts with a keyframe, so FFmpeg can decode it from its first byte; any index means the fragment holds one,
-// which is enough for a start where FFmpeg drops the samples ahead of the keyframe. The fragment and its keyframe index are bound together in one struct so they are
-// stored, trimmed, and cleared as an indivisible unit. This makes a desync between a fragment and its keyframe index structurally unrepresentable rather than a rule
-// a caller must uphold by convention.
+// A single buffered timeshift entry: the fMP4 fragment and the two things the buffer asks about its keyframe, each answered once at arrival. holdsKeyframe says the
+// fragment carries a keyframe somewhere, which is enough for a start where FFmpeg drops the samples ahead of the keyframe. startsWithKeyframe says a decoder handed
+// the fragment as its first shows a keyframe first, which the snapshot and the recording start need. The second is HBPU's own answer rather than a test of where
+// the keyframe sits, because a packager may put a sample that takes no time ahead of each keyframe, and such a fragment still starts with its keyframe. The fragment
+// and its answers are bound together in one struct so they are stored, trimmed, and cleared as an indivisible unit. This makes a desync between a fragment and its
+// answers structurally unrepresentable rather than a rule a caller must uphold by convention.
 interface TimeshiftSegment {
 
   data: Buffer;
-  keyframeIndex: Nullable<number>;
+  holdsKeyframe: boolean;
+  startsWithKeyframe: boolean;
 }
 
 // The freshness-aware snapshot source answer. The snapshot path reads this single three-state value instead of composing buffer reads of its own: "fresh"
@@ -355,18 +357,20 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       this.clearBuffer();
     }
 
-    // Parse the fMP4 TRUN sample flags once to find where this fragment's first keyframe (sync sample) sits rather than relying on timing heuristics, giving a definitive
-    // answer on every segment, which the buffer stores with the fragment for every later read. The decisions made here count a fragment only when its first sample is
-    // the keyframe, because they serve the snapshot and the recording start, each of which needs every sample it hands FFmpeg to decode. A live view's preload alone
-    // reads the stored index for a keyframe anywhere in the fragment.
-    const keyframeIndex = findKeyframe(segment.data);
-    const startsWithKeyframe = keyframeIndex === 0;
+    // Parse the fMP4 TRUN sample flags to learn whether this fragment holds a keyframe (sync sample) rather than relying on timing heuristics, giving a definitive
+    // answer on every segment, which the buffer stores with the fragment for every later read. A fragment that holds one is then put to HBPU's startsWithKeyframe, which
+    // says whether a decoder handed the fragment as its first shows that keyframe first: it does when the keyframe is the first sample, and when every sample ahead of
+    // it takes no time, the layout a packager writes when it carries the parameter sets in a sample of their own. Only a fragment that holds a keyframe is asked the
+    // second question, so every other fragment costs the one parse. The decisions made here count a fragment only when it starts with a keyframe, because they serve
+    // the snapshot and the recording start, each of which hands FFmpeg the fragment as its first. A live view's preload alone reads holdsKeyframe.
+    const holdsKeyframe = findKeyframe(segment.data) !== null;
+    const entry: TimeshiftSegment = { data: segment.data, holdsKeyframe, startsWithKeyframe: holdsKeyframe && startsWithKeyframe(segment.data) };
 
     // Track when we last saw a keyframe for staleness detection, and disarm the discontinuity suppression on the recovery keyframe. This disarm runs BEFORE the
     // admission-suppression check below, so the recovery keyframe itself both ends suppression AND is admitted; gating admission before the disarm would skip the very
     // keyframe the buffer is waiting to resume on. The discontinuity-marked segment is NOT guaranteed to be a keyframe (the unifi-protect library stamps it on the first
     // media after a reconnect without a keyframe check), so this keyframe gate is required, not incidental - it is what defers the resume until a clean keyframe arrives.
-    if(startsWithKeyframe) {
+    if(entry.startsWithKeyframe) {
 
       this._lastKeyframeTime = this.clock.now();
 
@@ -390,9 +394,9 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       return;
     }
 
-    // Admit the segment: append it with its keyframe index as one struct (so the fragment and its index never drift), then trim the front to the configured window. A
-    // single shift removes a fragment and its keyframe index together.
-    this._segments.push({ data: segment.data, keyframeIndex });
+    // Admit the segment: append it with its keyframe answers as one struct (so the fragment and its answers never drift), then trim the front to the configured window.
+    // A single shift removes a fragment and its keyframe answers together.
+    this._segments.push(entry);
 
     if(this._segments.length > this.segmentCount) {
 
@@ -408,7 +412,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
 
     // Announce the first keyframe this start admits. This runs last, after the admission, the trim and the forward above, so the buffer has finished with the segment
     // before any listener runs, and a listener reading snapshotSource() finds the keyframe in the buffer.
-    if(startsWithKeyframe && this._pendingFirstKeyframe) {
+    if(entry.startsWithKeyframe && this._pendingFirstKeyframe) {
 
       this._pendingFirstKeyframe = false;
       this.emit("firstKeyframe");
@@ -541,7 +545,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
       }
 
       bytes += segment.data.length;
-      keyframeSeen ||= segment.keyframeIndex !== null;
+      keyframeSeen ||= segment.holdsKeyframe;
 
       if(keyframeSeen && ((bytes >= minimumBytes) || (i <= windowStart))) {
 
@@ -573,13 +577,13 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     }
 
     // Walk backwards to the most recent fragment that starts with a keyframe and hand back the minimal init + keyframe buffer plus the capture fps. Each entry binds its
-    // fragment to its keyframe index in one struct, so a keyframe entry always carries its matching fragment; the local read satisfies noUncheckedIndexedAccess and
+    // fragment to its keyframe answers in one struct, so a keyframe entry always carries its matching fragment; the local read satisfies noUncheckedIndexedAccess and
     // degrades to the empty answer when no such fragment remains (the only keyframe was trimmed out of the window even though the staleness clock still reads fresh).
     for(let i = this._segments.length - 1; i >= 0; i--) {
 
       const seg = this._segments[i];
 
-      if(seg?.keyframeIndex === 0) {
+      if(seg?.startsWithKeyframe) {
 
         return { data: Buffer.concat([ this.subscription.initSegment.data, seg.data ]), fps: this._channelProfile?.channel.fps ?? 30, kind: "fresh" };
       }
@@ -602,7 +606,7 @@ export class ProtectTimeshiftBuffer extends EventEmitter<TimeshiftBufferEvents> 
     // the very first frame.
     for(let i = prebufferStartIndex; i >= 0; i--) {
 
-      if(this._segments[i]?.keyframeIndex === 0) {
+      if(this._segments[i]?.startsWithKeyframe) {
 
         return { seekOffsetMs: (prebufferStartIndex - i) * this._segmentLength, startIndex: i };
       }

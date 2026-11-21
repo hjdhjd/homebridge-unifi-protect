@@ -63,6 +63,15 @@ function makeLaterSampleKeyframeFragment(): MediaFragment {
     samples: [ { duration: 3000, flags: SAMPLE_FLAG_NON_SYNC, size: 8 }, { duration: 3000, flags: 0, size: 8 } ], trackId: 1 }));
 }
 
+// A fragment whose keyframe is its second sample behind a sample that takes no time, the layout a packager writes when it carries the parameter sets in a sample of
+// their own ahead of each keyframe. A decoder handed it as its first shows the keyframe first, so it starts with a keyframe though the keyframe is not its first
+// sample. It differs from makeLaterSampleKeyframeFragment in the first sample's duration alone.
+function makeZeroDurationLeadKeyframeFragment(): MediaFragment {
+
+  return splitFragment(makeFragment({ run: { includeDuration: true, includeSize: true, usePerSampleFlags: true },
+    samples: [ { duration: 0, flags: SAMPLE_FLAG_NON_SYNC, size: 8 }, { duration: 3000, flags: 0, size: 8 } ], trackId: 1 }));
+}
+
 // The given number of fragments that hold no keyframe, for a row that fills the buffer past the live-view preload's fallback window.
 function nonKeyframeFragments(count: number): MediaFragment[] {
 
@@ -431,7 +440,7 @@ describe("timeshift buffer behavior", () => {
   });
 
   // The decisions processSegment makes count only a fragment that starts with a keyframe, so a fragment whose keyframe is a later sample announces no first keyframe,
-  // arms no staleness clock and ends no reconnect's admission suppression, even though the buffer stores where its keyframe sits for a live view's preload.
+  // arms no staleness clock and ends no reconnect's admission suppression, even though the buffer notes that it holds a keyframe for a live view's preload.
   test("a fragment whose keyframe is a later sample leaves the first-keyframe event, the staleness clock and the discontinuity resume untouched", async () => {
 
     const { clock, double, timeshift } = await buildStartedTimeshift();
@@ -457,6 +466,58 @@ describe("timeshift buffer behavior", () => {
     await settle();
 
     assert.equal(timeshift.time, 0, "the later-sample keyframe after a reconnect stays suppressed until a fragment that starts with a keyframe arrives");
+  });
+
+  // A fragment whose keyframe follows only a sample that takes no time starts with its keyframe, so the snapshot and the recording start are served from it as they
+  // are from a fragment whose first sample is the keyframe. The row before the last holds the other side: a sample that takes time ahead of the keyframe serves neither.
+  test("a fragment whose keyframe follows a zero-duration sample serves the snapshot and the recording start", async () => {
+
+    const { clock, double, timeshift } = await buildStartedTimeshift();
+    const fragment = makeZeroDurationLeadKeyframeFragment();
+
+    clock.advance(1000);
+    double.push(makeMediaSegment(makeNonKeyframeFragment()));
+    double.push(makeMediaSegment(fragment));
+
+    await settle();
+
+    const source = timeshift.snapshotSource();
+
+    assert.equal(source.kind, "fresh", "snapshotSource reads fresh because the buffered fragment starts with its keyframe");
+    assert.ok(source.data.subarray(-fragment.data.length).equals(fragment.data), "the snapshot is served from that fragment");
+    assert.deepEqual(timeshift.getKeyframeAlignedStart(100), { seekOffsetMs: 0, startIndex: 1 }, "a recording with one segment of prebuffer starts at that fragment");
+  });
+
+  // The decisions processSegment makes count a fragment whose keyframe follows only a sample that takes no time: it announces the first keyframe, arms the staleness
+  // clock and ends a reconnect's admission suppression, as a fragment whose first sample is the keyframe does.
+  test("a fragment whose keyframe follows a zero-duration sample announces the first keyframe, arms the staleness clock and resumes after a reconnect", async () => {
+
+    const { clock, double, timeshift } = await buildStartedTimeshift();
+
+    let fired = 0;
+
+    timeshift.on("firstKeyframe", (): void => { fired++; });
+
+    clock.advance(1000);
+    double.push(makeMediaSegment(makeZeroDurationLeadKeyframeFragment()));
+
+    await settle();
+    clock.advance(STALENESS_THRESHOLD_MS + 1);
+
+    assert.equal(fired, 1, "the fragment announces the first keyframe");
+    assert.equal(timeshift.snapshotSource().kind, "stale", "the fragment arms the staleness clock, so the buffer reads stale rather than empty once it ages");
+
+    double.push(makeMediaSegment(makeNonKeyframeFragment(), { discontinuity: true }));
+
+    await settle();
+
+    assert.equal(timeshift.time, 0, "the reconnect clears the buffer and suppresses admission");
+
+    double.push(makeMediaSegment(makeZeroDurationLeadKeyframeFragment()));
+
+    await settle();
+
+    assert.equal(timeshift.time, 100, "the fragment ends the reconnect's suppression and is admitted");
   });
 
   // Target (h): the buffer trims at its configured segment count. With a small configured duration (200ms = 2 segments), pushing more than two media segments caps time
