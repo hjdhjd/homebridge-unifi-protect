@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 8.3.0 (2026-11-20)
+  * Improvement: much smoother live views. Apple's Home app plays video exactly as it arrives and does no smoothing of its own, so HBUP now does that work for it...video from every camera reaches your Apple devices at a steady, even pace, and motion looks fluid and natural. Newer Apple Silicon Macs do it with less CPU, too.
+  * Improvement: your voice comes through more clearly at the camera when you use two-way audio.
+  * Fix: third-party cameras that use Protect's Improved stream compatibility mode now get snapshots, and their HomeKit Secure Video recordings start from a clean point in the video. HBUP wasn't recognizing where those cameras' video could be picked up from. Thanks to @ztolley for reporting this and tracking down the cause.
+  * Fix: sensors that don't report a battery level, like the UP Air Quality sensor, no longer show a battery in HomeKit.
+  * Housekeeping.
+
 ## 8.2.2 (2026-11-14)
   * Improvement: portrait cameras are now detected more reliably, and every camera is offered a fuller range of resolutions in its own shape, so the Apple device viewing it can ask for a size that matches the camera.
   * Improvement: a live view HBUP passes through without transcoding now uses the camera stream closest in size to what your Apple device asked for, rather than the largest one that fits under it.
