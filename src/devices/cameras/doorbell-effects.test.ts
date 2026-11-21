@@ -501,7 +501,9 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.ok(triggerSwitch, "Enable.Doorbell.Trigger materializes the doorbell-trigger switch");
 
-      const ring = built.nvr.events as unknown as RecordingRingDispatch;
+      const ring = built.nvr.events;
+
+      assert.ok(ring instanceof RecordingRingDispatch, "the controller holds the recording ring dispatch this test injected");
 
       assert.equal(ring.rings.length, 0, "no ring has fired before the trigger");
 
@@ -523,7 +525,9 @@ describe("doorbell capability observer effects and the trigger ring (doorbell-ef
 
       assert.ok(triggerSwitch, "the doorbell-trigger switch materialized");
 
-      const ring = built.nvr.events as unknown as RecordingRingDispatch;
+      const ring = built.nvr.events;
+
+      assert.ok(ring instanceof RecordingRingDispatch, "the controller holds the recording ring dispatch this test injected");
 
       // onSet false: the handler's else branch never calls doorbellEventHandler (it only re-asserts an in-flight ring), so no ring is routed.
       await triggerSet(triggerSwitch.getCharacteristic(Characteristic.On), false);

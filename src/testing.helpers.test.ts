@@ -5,7 +5,8 @@
  * The harness is itself code, and a bug in a helper would silently corrupt every consumer test that depends on it, so the helpers earn the same coverage rigor as
  * production code. HAP and Homebridge are not restated here: every accessory, service and characteristic a suite builds is the real thing, and HBPU's own suite covers
  * the Homebridge double it runs through. What these rows cover is what the harness adds on top: the state store facade and the state builder that seeds it, the
- * accessory builder's identities, the read helpers over HAP's change record, and the controller log the streaming stub's stand-in controller keeps.
+ * accessory builder's identities, the read helpers over HAP's change record, the controller log the streaming stub's stand-in controller keeps, and the decoder
+ * arguments that stub answers.
  */
 import { Characteristic, Service, TestStateStore, TestStreamingDelegate, accessoryUuid, controllerEvents, eventsFrom, makeProtectState, makeTestAccessory,
   makeTestApi, runtime, writesTo } from "./testing.helpers.ts";
@@ -250,6 +251,30 @@ describe("harness growth: accessory identities, the change-record readers, and t
     assert.deepEqual(log.map((event) => event.kind), [ "configure", "remove", "configure" ], "the log holds HAP's configure and remove calls in order");
     assert.deepEqual(log.map((event) => event.seq), [ 0, 1, 2 ], "sequence numbers are monotonic");
     assert.deepEqual(log.map((event) => event.controller), [ first, first, second ], "each entry names the controller HAP ran the hook on");
+  });
+});
+
+describe("harness growth: the streaming delegate stub's video decoder", () => {
+
+  // HBPU's options answer a software decode once the hardware decoder has refused their stream, so a stub that kept answering hardware arguments under its refusal
+  // flag would let a row read hardware decoding where production decodes in software.
+  test("the stub answers the decoder arguments a row set until its refusal flag stands, none while it stands, and the arguments again once the refusal is reset", () => {
+
+    const stream = new TestStreamingDelegate();
+    const decoder = [ "-hwaccel", "invented" ];
+
+    stream.videoDecoderArgs = decoder;
+
+    assert.deepEqual(stream.ffmpegOptions.videoDecoder({ inputCodec: "h264" }), decoder, "the arguments a row set are answered while nothing has refused");
+
+    stream.hardwareDecoderRefused = true;
+
+    assert.deepEqual(stream.ffmpegOptions.videoDecoder({ inputCodec: "h264" }), [], "a refused stub answers the empty list of a software decode");
+
+    stream.ffmpegOptions.resetHardwareDecoderRefusal();
+
+    assert.deepEqual(stream.ffmpegOptions.videoDecoder({ inputCodec: "h264" }), decoder, "and the arguments again once the refusal is reset");
+    assert.deepEqual(stream.videoDecoderCalls.map((call) => call.refused), [ false, true, false ], "each read records whether the refusal stood");
   });
 });
 

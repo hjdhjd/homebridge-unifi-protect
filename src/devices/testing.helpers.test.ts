@@ -673,7 +673,10 @@ describe("A2 base-capability foundation: the shared dispatch, the sensor carrier
     const sensor = makeSensorConfig({ id: "sensor-fire" });
     const store = new TestStateStore(makeProtectState({ sensors: [sensor] }));
     const { controller, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): TestRecordingDispatch => new TestRecordingDispatch(innerNvr), store });
-    const recording = nvr.events as TestRecordingDispatch;
+    const recording = nvr.events;
+
+    assert.ok(recording instanceof TestRecordingDispatch, "the controller holds the recording dispatch this test injected");
+
     const accessory = makeTestAccessory("Test Sensor", sensor.mac);
     const projection = new TestSensorProjection("sensor-fire", store) as unknown as Sensor;
     const device = new TestBaseDevice(nvr as unknown as ProtectNvr, accessory, projection);

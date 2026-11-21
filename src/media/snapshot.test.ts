@@ -1,31 +1,40 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * snapshot.test.ts: Behavior coverage of ProtectSnapshot's multi-source acquisition: the timeshift-freshness branch (finding #5), the package-camera ordering, the cache
- * window, the hedge that runs a slow RTSP attempt beside a delayed controller-API attempt, and the video filter chain an FFmpeg snapshot runs.
+ * window, the hedge that runs a slow RTSP attempt beside a delayed controller-API attempt, the video filter chain an FFmpeg snapshot runs, the quiet answer its
+ * FFmpeg source hands a failed process, and the FFmpeg runs themselves: the command each FFmpeg source and the crop pass hand FFmpeg, and what a clean exit, a failed
+ * exit and a spawn failure each answer.
  *
  * The acquisition chain tries the timeshift buffer first, then RTSP with the controller command hedged beside it once RTSP runs long, then the cache. The hedge's
- * timing and abort rules are driven directly through the exported hedgeSnapshotAttempts on the host's TestClock, with each attempt a controllable double, because
- * a real RTSP attempt spawns FFmpeg. The video filter chain is read the same way, through the exported snapshotFilterArgs over a double of the camera's FFmpeg
- * options, because only a spawned FFmpeg runs it. The rest of this suite drives the whole acquisition chain over doubles and asserts
- * SOURCE SELECTION - which source the chain uses - never a real FFmpeg spawn: the timeshift buffer's snapshotSource is steered to "stale" or "empty" so the buffer
- * declines before the FFmpeg pipeline, and the RTSP and controller sources are wired to decline too (no channel to select, the controller command rejects), so the whole
- * chain resolves without producing (or caching) any image. The assertions that matter are that a STALE buffer declines and notes it at debug (so a stalled buffer never
- * serves, and then caches, a frozen image), that an EMPTY buffer declines SILENTLY (no staleness to claim), and that in both cases the chain moves past the buffer to the
- * next source. The freshness DECISION itself - whether the buffer reads fresh, stale, or empty - is covered directly over ProtectTimeshiftBuffer in timeshift.test.ts.
+ * timing and abort rules are driven directly through the exported hedgeSnapshotAttempts on the host's TestClock, with each attempt a controllable double, so a row
+ * holds each attempt's answer and the instant it lands. The video filter chain is read the same way, through the exported snapshotFilterArgs over a double of the
+ * camera's FFmpeg options whose crop and fit a row reads back, since the delegate stub the FFmpeg runs read carries a crop filter and no fit.
+ *
+ * Every FFmpeg run the acquisition makes, a source's and the crop pass's, goes through the platform's exec process factory, here HBPU's TestExecProcessFactory, so a
+ * row reads a run's command and init from the recorded create call and drives its output and its exit with no FFmpeg anywhere. A run settles only on its lever and
+ * the acquisition's deadline runs on the test clock, so such a row starts the acquisition without awaiting it, finds the run, pulls the lever, and only then reads
+ * the answer, and every such row ends through the shared teardown. The rows ask for no size, since the stub renders no fit.
+ *
+ * The source-selection rows steer the timeshift buffer's snapshotSource to "stale" or "empty" so the buffer declines before its FFmpeg run, and wire the RTSP and
+ * controller sources to decline too (no channel to select, the controller command rejects), so the whole chain resolves without producing (or caching) any image.
+ * The assertions that matter are that a STALE buffer declines and notes it at debug (so a stalled buffer never serves, and then caches, a frozen image), that an EMPTY
+ * buffer declines SILENTLY (no staleness to claim), and that in both cases the chain moves past the buffer to the next source. The freshness DECISION itself -
+ * whether the buffer reads fresh, stale, or empty - is covered directly over ProtectTimeshiftBuffer in timeshift.test.ts.
  */
 import type { FfmpegOptions, Nullable } from "homebridge-plugin-utils";
+import { HbpuAbortError, onAbort } from "homebridge-plugin-utils";
 import type { HedgedSnapshot, SnapshotAttempt } from "./snapshot.ts";
-import { ProtectSnapshot, hedgeSnapshotAttempts, snapshotCutoff, snapshotFilterArgs } from "./snapshot.ts";
+import { ProtectSnapshot, hedgeSnapshotAttempts, quietOnFailed, snapshotCutoff, snapshotFilterArgs } from "./snapshot.ts";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
+import { TestExecProcessFactory, assertNoUnhandledRejections, capturingLog, expectAt, logCount, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import { TestStreamingDelegate, makeTimeshiftSupervisorDouble } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
-import { logCount, settle, settleUntil } from "homebridge-plugin-utils/testing";
+import { endPendingProcesses, makeChannelProfile, makeTestCameraHost } from "./testing.helpers.ts";
+import type { ChannelProfile } from "./resolution.ts";
 import type { SnapshotSource } from "./timeshift.ts";
 import type { StreamingDelegate } from "./stream-delegate.ts";
 import type { TestCameraHost } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
-import { makeTestCameraHost } from "./testing.helpers.ts";
-import { onAbort } from "homebridge-plugin-utils";
 
 // Every host this suite builds shares its makeTestNvr AbortController. Aborting them in teardown releases the harness signals.
 const controllers: AbortController[] = [];
@@ -637,5 +646,290 @@ describe("snapshotFilterArgs - the configured crop, then the fit inside the requ
   test("cropping off without a request runs no filter", () => {
 
     assert.deepEqual(snapshotFilterArgs({ cropping: false, ffmpegOptions }), [], "no filter arguments at all");
+  });
+});
+
+/* The quiet answer a snapshot's FFmpeg source and the hardware decoder check hand their process, read with no process behind it: a routine failure is the one debug
+ * sentence, and HBPU is told it was handled so it adds no report of its own.
+ */
+describe("quietOnFailed - the quiet answer to a failed one-shot FFmpeg pipeline", () => {
+
+  test("a failed pipeline is answered with the one debug sentence and no report", () => {
+
+    const sentence = "An FFmpeg pipeline whose failure is routine exited without completing, and its caller carries on without its output.";
+    const log = capturingLog();
+    const verdict = quietOnFailed(log)({ reason: new HbpuAbortError("failed", { cause: { exitCode: 1, exitSignal: null } }),
+      stderrLog: ["An invented stderr line."] });
+
+    assert.equal(verdict, "handled", "HBPU logs no report of its own");
+    assert.deepEqual(log.entries, [{ level: "debug", message: sentence, params: [] }], "the one debug sentence is the whole of what the answer writes");
+  });
+});
+
+// The sentence the quiet answer logs at debug and the line a failed crop logs at error, transcribed so a sentence that drifts in its one home reddens a row.
+const QUIET_SENTENCE = "An FFmpeg pipeline whose failure is routine exited without completing, and its caller carries on without its output.";
+const CROP_FAILED_LINE = "Unable to crop snapshot.";
+
+// The bytes a fresh buffer hands a snapshot and the frame rate it reports for them, and the image each source and the crop pass answer with, all invented.
+const FRESH_BYTES = Buffer.from("invented keyframe bytes from the buffer");
+const FRESH_FPS = 15;
+const FFMPEG_IMAGE = Buffer.from("an invented image from FFmpeg");
+const CONTROLLER_IMAGE = Buffer.from("an invented image from the controller");
+const CROPPED_IMAGE = Buffer.from("an invented cropped image");
+
+// A snapshot whose FFmpeg runs go through the row's own exec process factory, and the handles a row reads: the factory, the host, the delegate stub whose FFmpeg
+// options every run is built over, the captured log and the snapshot under test.
+interface FfmpegSnapshotRig {
+
+  exec: TestExecProcessFactory;
+  host: TestCameraHost;
+  logEntries: readonly TestLogEntry[];
+  snapshot: ProtectSnapshot;
+  stream: TestStreamingDelegate;
+}
+
+// An acquisition the row started without awaiting it: its answer, and whether that answer has settled.
+interface Acquisition {
+
+  readonly result: Promise<Nullable<Buffer>>;
+  readonly settled: boolean;
+}
+
+/* Build a ProtectSnapshot whose FFmpeg runs go through the row's own exec process factory. The buffer answers a fresh source when the row asks for one and nothing
+ * otherwise, the RTSP source selects the host's first channel only when the row asks for it, and the controller answers its invented image. Cropping is on only when
+ * the row asks for it, and a feature option answers only when the row names it.
+ */
+function arrangeFfmpegSnapshot(options: { crop?: boolean; features?: string[]; fresh?: boolean; rtsp?: boolean } = {}): FfmpegSnapshotRig {
+
+  const exec = new TestExecProcessFactory();
+  const { controller, host, logEntries } = makeTestCameraHost({ execProcessFactory: exec });
+  const features = options.features ?? [];
+  const stream = new TestStreamingDelegate();
+  const supervisor = makeTimeshiftSupervisorDouble();
+
+  controllers.push(controller);
+
+  host.hints.crop = options.crop ?? false;
+  host.hints.highResSnapshots = true;
+  host.hasFeature = (option: string): boolean => features.includes(option);
+  host.selectChannel = (): Nullable<ChannelProfile> => (options.rtsp ? makeChannelProfile(host) : null);
+  host.snapshotFromController = (): Promise<Buffer> => Promise.resolve(CONTROLLER_IMAGE);
+  supervisor.buffer.snapshotSource = (): SnapshotSource => (options.fresh ? { data: FRESH_BYTES, fps: FRESH_FPS, kind: "fresh" } : { kind: "empty" });
+  stream.timeshift = supervisor as unknown as StreamingDelegate["timeshift"];
+  host.stream = stream;
+
+  return { exec, host, logEntries, snapshot: new ProtectSnapshot(host), stream };
+}
+
+// Start an acquisition for a request that names no size, without awaiting it, so a row can pull the lever of the run it waits on before it reads the answer.
+function acquire(rig: FfmpegSnapshotRig): Acquisition {
+
+  let settled = false;
+
+  const result = rig.snapshot.getSnapshot();
+
+  void result.then(() => { settled = true; }, () => { settled = true; });
+
+  return {
+
+    result,
+    get settled(): boolean {
+
+      return settled;
+    }
+  };
+}
+
+// The run the acquisition made at the given place among its runs, once it has made it, so an acquisition that never reaches the run fails the row here.
+async function runAt(rig: FfmpegSnapshotRig, index: number, description: string): Promise<TestExecProcessFactory["createCalls"][number]> {
+
+  await settleUntil(() => rig.exec.createCalls.length > index, { description: description + " to start" });
+
+  return expectAt(rig.exec.createCalls, index, description);
+}
+
+// The acquisition's answer once it has settled, without the clock moving. An acquisition still waiting on a run the row has not ended fails the row here rather than at
+// the suite's timeout.
+async function answered(acquisition: Acquisition): Promise<Nullable<Buffer>> {
+
+  await settleUntil(() => acquisition.settled, { description: "the snapshot acquisition to answer" });
+
+  return acquisition.result;
+}
+
+// The exact command a snapshot's FFmpeg source hands FFmpeg for a request that names no size, from the shared head to the JPEG on standard output, with the decoder
+// flags and the source's own input in their places.
+function snapshotArgs(input: string[], decoder: string[] = []): string[] {
+
+  return [ "-hide_banner", "-nostats", "-fflags", "+discardcorrupt+genpts", ...decoder, "-max_delay", "500000", "-flags", "low_delay", "-skip_frame", "nointra",
+    ...input, "-fps_mode", "vfr", "-frames:v", "1", "-q:v", "2", "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1" ];
+}
+
+// The input a fresh buffer's run reads: its own frame rate and probe size, from the bytes on standard input.
+const FRESH_INPUT = [ "-r", FRESH_FPS.toString(), "-probesize", FRESH_BYTES.length.toString(), "-f", "mp4", "-i", "pipe:0" ];
+
+describe("ProtectSnapshot's FFmpeg runs - the command, the input and what each ending answers", () => {
+
+  test("a fresh buffer runs one FFmpeg over the delegate's options with its exact command and the buffer's bytes as input, and a clean exit's output is the snapshot",
+    async () => {
+
+      const rig = arrangeFfmpegSnapshot({ fresh: true });
+      const decoder = [ "-hwaccel", "invented" ];
+
+      rig.stream.videoDecoderArgs = decoder;
+
+      const acquisition = acquire(rig);
+      const run = await runAt(rig, 0, "the buffer's FFmpeg run");
+
+      assert.equal(run.options, rig.stream.ffmpegOptions, "the run is built over the delegate's FFmpeg options");
+      assert.deepEqual(run.init.args, snapshotArgs(FRESH_INPUT, decoder), "the exact command, the decoder's flags and the buffer's input in their places");
+      assert.equal(run.init.stdin, FRESH_BYTES, "the buffer's bytes are the run's input");
+      assert.equal(run.init.signal?.aborted, false, "the run carries a signal, standing while the acquisition runs");
+
+      run.process.writeStdout(FFMPEG_IMAGE);
+      run.process.exit({ exitCode: 0, exitSignal: null });
+
+      assert.ok((await answered(acquisition))?.equals(FFMPEG_IMAGE), "the run's output is the snapshot");
+      assert.equal(rig.exec.createCalls.length, 1, "the snapshot took one FFmpeg run");
+
+      await endPendingProcesses([rig.exec]);
+    });
+
+  test("a failed exit of the buffer's run logs the quiet sentence once and the acquisition moves on to the next source", async () => {
+
+    const rig = arrangeFfmpegSnapshot({ fresh: true });
+    const acquisition = acquire(rig);
+    const run = await runAt(rig, 0, "the buffer's FFmpeg run");
+
+    // The run writes an image before it fails, so the row tells a failed run, whose output is never served, from a clean run that wrote nothing.
+    run.process.writeStdout(FFMPEG_IMAGE);
+    run.process.exit({ exitCode: 1, exitSignal: null });
+
+    assert.ok((await answered(acquisition))?.equals(CONTROLLER_IMAGE), "the acquisition moved on to the controller's image");
+    assert.equal(logCount(rig.logEntries, "debug", QUIET_SENTENCE), 1, "the failed run is answered with the quiet sentence, once");
+
+    await endPendingProcesses([rig.exec]);
+  });
+
+  test("a buffer's run that fails to spawn logs the quiet sentence once, the acquisition moves on, and no rejection escapes", async () => {
+
+    const rig = arrangeFfmpegSnapshot({ fresh: true });
+
+    const image = await assertNoUnhandledRejections(async () => {
+
+      const acquisition = acquire(rig);
+      const run = await runAt(rig, 0, "the buffer's FFmpeg run");
+
+      run.process.failSpawn(new Error("An invented spawn failure."));
+
+      return answered(acquisition);
+    });
+
+    assert.ok(image?.equals(CONTROLLER_IMAGE), "the acquisition moved on to the controller's image");
+    assert.equal(logCount(rig.logEntries, "debug", QUIET_SENTENCE), 1, "the spawn failure is answered with the quiet sentence, once");
+
+    await endPendingProcesses([rig.exec]);
+  });
+
+  test("a controller image on a cropping camera is cropped by one FFmpeg run with its exact command and no ending callback, and its output is the snapshot",
+    async () => {
+
+      const rig = arrangeFfmpegSnapshot({ crop: true });
+      const acquisition = acquire(rig);
+      const run = await runAt(rig, 0, "the crop's FFmpeg run");
+
+      assert.equal(run.options, rig.stream.ffmpegOptions, "the crop is built over the delegate's FFmpeg options");
+      assert.deepEqual(run.init.args, [ "-hide_banner", "-nostats", "-i", "pipe:0", "-filter:v", "crop=320:240:16:8", "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1" ],
+        "the exact command, with the camera's crop filter");
+      assert.equal(run.init.stdin, CONTROLLER_IMAGE, "the controller's image is the crop's input");
+      assert.deepEqual(Object.keys(run.init).toSorted(), [ "args", "signal", "stdin" ], "the crop hands no ending callback, so its failure keeps HBPU's report");
+
+      run.process.writeStdout(CROPPED_IMAGE);
+      run.process.exit({ exitCode: 0, exitSignal: null });
+
+      assert.ok((await answered(acquisition))?.equals(CROPPED_IMAGE), "the cropped image is the snapshot");
+      assert.equal(rig.exec.createCalls.length, 1, "the crop is the one FFmpeg run, since neither FFmpeg source had a source to read");
+
+      await endPendingProcesses([rig.exec]);
+    });
+
+  test("a crop that fails logs the crop's error once, answers the uncropped image, and never logs the quiet sentence", async () => {
+
+    const rig = arrangeFfmpegSnapshot({ crop: true });
+    const acquisition = acquire(rig);
+    const run = await runAt(rig, 0, "the crop's FFmpeg run");
+
+    run.process.exit({ exitCode: 1, exitSignal: null });
+
+    assert.ok((await answered(acquisition))?.equals(CONTROLLER_IMAGE), "the uncropped image is the snapshot");
+    assert.equal(logCount(rig.logEntries, "error", CROP_FAILED_LINE), 1, "the crop's failure is logged at error, once");
+    assert.equal(logCount(rig.logEntries, "debug", QUIET_SENTENCE), 0, "the crop is never answered with the quiet sentence");
+
+    await endPendingProcesses([rig.exec]);
+  });
+
+  test("a crop that fails to spawn logs the crop's error once and answers the uncropped image", async () => {
+
+    const rig = arrangeFfmpegSnapshot({ crop: true });
+    const acquisition = acquire(rig);
+    const run = await runAt(rig, 0, "the crop's FFmpeg run");
+
+    run.process.failSpawn(new Error("An invented spawn failure."));
+
+    assert.ok((await answered(acquisition))?.equals(CONTROLLER_IMAGE), "the uncropped image is the snapshot");
+    assert.equal(logCount(rig.logEntries, "error", CROP_FAILED_LINE), 1, "the crop's failure is logged at error, once");
+
+    await endPendingProcesses([rig.exec]);
+  });
+
+  test("with no fresh buffer and a channel to select, the RTSP source runs one FFmpeg with its exact command and nothing on its input", async () => {
+
+    const rig = arrangeFfmpegSnapshot({ rtsp: true });
+    const acquisition = acquire(rig);
+    const run = await runAt(rig, 0, "the RTSP source's FFmpeg run");
+    const channel = makeChannelProfile(rig.host);
+
+    assert.deepEqual(run.init.args, snapshotArgs([ "-avioflags", "direct", "-r", channel.channel.fps.toString(), "-probesize", rig.stream.probesize.toString(),
+      "-rtsp_transport", "tcp", "-i", channel.url ]), "the exact command, reading the channel's stream");
+    assert.equal(run.init.stdin, undefined, "the RTSP source hands its run no input");
+
+    await settle();
+
+    assert.deepEqual(run.process.stdinWrites, [], "and nothing reaches the run's standard input");
+
+    run.process.writeStdout(FFMPEG_IMAGE);
+    run.process.exit({ exitCode: 0, exitSignal: null });
+
+    assert.ok((await answered(acquisition))?.equals(FFMPEG_IMAGE), "the RTSP run's output is the snapshot");
+
+    await endPendingProcesses([rig.exec]);
+  });
+
+  test("under Debug.Video.Snapshot a snapshot's command opens with -loglevel level+verbose", async () => {
+
+    const rig = arrangeFfmpegSnapshot({ features: ["Debug.Video.Snapshot"], fresh: true });
+    const acquisition = acquire(rig);
+    const run = await runAt(rig, 0, "the buffer's FFmpeg run");
+
+    assert.deepEqual(run.init.args, [ "-loglevel", "level+verbose", ...snapshotArgs(FRESH_INPUT) ], "the exact command, opening with the verbose log level");
+
+    run.process.writeStdout(FFMPEG_IMAGE);
+    run.process.exit({ exitCode: 0, exitSignal: null });
+    await answered(acquisition);
+
+    await endPendingProcesses([rig.exec]);
+  });
+
+  test("a clean exit with no output answers no image from the buffer, and the acquisition moves on to the next source", async () => {
+
+    const rig = arrangeFfmpegSnapshot({ fresh: true });
+    const acquisition = acquire(rig);
+    const run = await runAt(rig, 0, "the buffer's FFmpeg run");
+
+    run.process.exit({ exitCode: 0, exitSignal: null });
+
+    assert.ok((await answered(acquisition))?.equals(CONTROLLER_IMAGE), "the empty output is no image, so the acquisition moved on to the controller's image");
+
+    await endPendingProcesses([rig.exec]);
   });
 });

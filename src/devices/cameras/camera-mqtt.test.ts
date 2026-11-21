@@ -210,7 +210,9 @@ describe("camera-leaf MQTT handler bodies (camera-mqtt concern net)", () => {
 
       assert.ok(doorbell, "Enable.Doorbell.Trigger registers a /doorbell SET subscription on the plain camera");
 
-      const ring = nvr.events as unknown as RecordingRingDispatch;
+      const ring = nvr.events;
+
+      assert.ok(ring instanceof RecordingRingDispatch, "the controller holds the recording ring dispatch this test injected");
 
       assert.equal(ring.rings.length, 0, "no ring has fired before the SET");
 
@@ -233,7 +235,9 @@ describe("camera-leaf MQTT handler bodies (camera-mqtt concern net)", () => {
 
       assert.ok(doorbell, "the /doorbell SET subscription registered");
 
-      const ring = nvr.events as unknown as RecordingRingDispatch;
+      const ring = nvr.events;
+
+      assert.ok(ring instanceof RecordingRingDispatch, "the controller holds the recording ring dispatch this test injected");
 
       // The "false" value is gated out by value !== "true" before doorbellEventHandler is reached, so no ring is routed.
       await mqtt.invokeSet(cameraConfig.mac + "/doorbell/set", "false");

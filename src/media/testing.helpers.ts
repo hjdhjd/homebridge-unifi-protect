@@ -3,22 +3,25 @@
  * testing.helpers.ts: The media-subsystem test helpers for homebridge-unifi-protect.
  *
  * This file owns the doubles the streaming, recording, timeshift, and snapshot tests drive: TestCameraHost, the reusable stand-in for the camera-host contract the
- * media classes read their configuration and channel selection through, plus the fMP4 fragment builders and the livestream-subscription doubles that feed a real
- * timeshift buffer without a controller or an FFmpeg process. The fragment builders compose genuine boxes through homebridge-plugin-utils' real writers, so what a
- * buffer parses here is what it would parse on the wire, and the controllable livestream double exposes the steering a recovery or discontinuity test needs.
+ * media classes read their configuration and channel selection through, plus the fMP4 fragment builders, the splitter for a fragment HBPU's builder made, the one
+ * media Segment builder every suite and double feeds a livestream through, the livestream-subscription doubles that feed a real timeshift buffer without a
+ * controller or an FFmpeg process, and the teardown that ends every FFmpeg process double a row's factories left running.
+ * The fragment builders compose genuine boxes through homebridge-plugin-utils' real writers, so what a buffer parses here is what it would parse on the wire, and the
+ * controllable livestream double exposes the steering a recovery or discontinuity test needs.
  *
  * Fidelity to the cited contracts, not invention, is the line these doubles hold: the camera-host surface is the plugin's own, and the segment and subscription shapes
  * are unifi-protect's. The cross-cutting core - the Homebridge runtime, the state store, and the streaming and timeshift stubs - lives in the root harness every
  * subsystem's testing.helpers.ts imports from.
  */
 import type { ChannelProfile, SelectChannelOptions } from "./resolution.ts";
-import type { HomebridgePluginLogging, Nullable, RecordingProcessFactory } from "homebridge-plugin-utils";
+import type { ExecProcessFactory, HomebridgePluginLogging, Nullable, RecordingProcessFactory, RtpDemuxerFactory, RtpPortAllocator,
+  StreamingProcessFactory } from "homebridge-plugin-utils";
 import type { LivestreamDescription, LivestreamInit, LivestreamSubscriptionState, ProtectCameraConfig, Segment, SnapshotOptions, TalkbackSession } from "unifi-protect";
 import type { LivestreamHostOptions, ProtectCameraHost } from "./camera-host.ts";
-import { SAMPLE_FLAG_NON_SYNC, onAbort } from "homebridge-plugin-utils";
-import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
+import { SAMPLE_FLAG_NON_SYNC, onAbort, splitMoofMdat } from "homebridge-plugin-utils";
+import type { TestClock, TestExecProcessFactory, TestLogEntry, TestStreamingProcess, TestStreamingProcessFactory } from "homebridge-plugin-utils/testing";
+import { TestExecProcess, makeBox, makeContainer, makeTrunBox, settle } from "homebridge-plugin-utils/testing";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
-import { makeBox, makeContainer, makeTrunBox } from "homebridge-plugin-utils/testing";
 import type { API } from "homebridge";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
@@ -29,6 +32,7 @@ import type { ProtectPlatform } from "../platform.ts";
 import type { StreamingDelegate } from "./stream-delegate.ts";
 import type { TestProtectAccessory } from "../testing.helpers.ts";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
+import { TestTalkbackFactory } from "unifi-protect/testing";
 import { makeCameraConfig } from "../devices/testing.helpers.ts";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
@@ -59,7 +63,8 @@ export class TestCameraHost implements ProtectCameraHost {
   public accessory: ProtectAccessory;
   public accessoryName = "Test Camera";
   public api: API;
-  // The flashlight states a streaming session drove, in order. The delegates under these suites never start or stop a session, so it reads empty there.
+  // The flashlight states a streaming session drove, in order. Only a package camera's session drives the flashlight, so it reads empty over the host's default
+  // accessory, which is no package camera's.
   public readonly driveFlashlightCalls: boolean[] = [];
 
   // The settable feature predicate; defaults to "no feature enabled", the quiet default the delegate construction paths read against.
@@ -156,7 +161,11 @@ export class TestCameraHost implements ProtectCameraHost {
   // The streaming delegate handle the snapshot/recording/timeshift consumers read; default undefined so the snapshot timeshift/RTSP sources early-return on their
   // !stream guards and the pipeline falls through to the controller source.
   public stream: StreamingDelegate | undefined = undefined;
-  public readonly talkbackCalls: { signal?: AbortSignal }[] = [];
+
+  // The factory the talkback interface connects through: unifi-protect's TestTalkbackFactory, which connects a real TalkbackSession over a fake socket and records each
+  // call with its signal and the socket its session dials. A row reaches a connect through the factory's connectCalls, and swaps in a factory built with autoOpen
+  // off to hold a session's open pending until it emits the open itself.
+  public talkbackFactory = new TestTalkbackFactory();
 
   // The camera-narrowed Protect device projection; settable, default a G2 Pro config so featureFlags / videoCodec reads resolve to a real record.
   public ufp: Readonly<ProtectCameraConfig>;
@@ -237,16 +246,11 @@ export class TestCameraHost implements ProtectCameraHost {
     return this.snapshotResult;
   }
 
-  // The recordable talkback interface. NOT exercised by the construction suites - TalkbackSession has a private constructor and #private fields, so there is no
-  // constructible literal; the never-called stub returns a confined sentinel cast, the same harness pattern TestStreamingDelegate uses for its opaque
-  // CameraController sentinel.
+  // The talkback interface, answered by the talkback factory with a real session over its fake socket, so a relayed two-way audio start opens, sends through and
+  // closes the session unifi-protect ships, with only its wire to the controller faked.
   public async talkback(opts?: { signal?: AbortSignal }): Promise<TalkbackSession> {
 
-    this.talkbackCalls.push(opts ?? {});
-
-    // The opaque sentinel: TalkbackSession is uninstantiable from a test, and the construction suites never call talkback, so the return is a confined cast no
-    // path reads.
-    return { hbupTestSentinel: "talkback-session" } as unknown as TalkbackSession;
+    return this.talkbackFactory.connect(opts);
   }
 }
 
@@ -299,6 +303,34 @@ export function makeKeyframeFragment(): { data: Buffer; mdat: Buffer; moof: Buff
 export function makeNonKeyframeFragment(): { data: Buffer; mdat: Buffer; moof: Buffer } {
 
   return makeMediaFragment({ keyframe: false });
+}
+
+// Carry a fragment's bytes as a media fragment, the shape the builders above hand out: the whole fragment and its moof and mdat halves, split where HBPU's
+// splitMoofMdat finds the mdat box, so a fragment HBPU's makeFragment builds reaches a suite as one the builders built would. A fragment with no mdat box throws,
+// because every fragment a suite builds carries one, and a split that passed it through would hand a consumer a segment no pool delivers.
+export function splitFragment(data: Buffer): { data: Buffer; mdat: Buffer; moof: Buffer } {
+
+  const boxes = splitMoofMdat(data);
+
+  if(!boxes) {
+
+    throw new Error("The fragment holds no mdat box to split it at.");
+  }
+
+  return { data, mdat: boxes.mdat, moof: boxes.moof };
+}
+
+// One media Segment around a fragment, in the shape unifi-protect's pool hands a consumer: the fragment's bytes and its moof and mdat halves. The discontinuity flag
+// marks the first media after a reconnect, the one segment the pool sets it on, which a consumer's discontinuity handling keys on. Every suite and double that feeds a
+// livestream a media segment builds it here, so the segment a consumer reads has one shape across them.
+export function makeMediaSegment(fragment: { data: Buffer; mdat: Buffer; moof: Buffer }, options: { discontinuity?: boolean } = {}): Segment {
+
+  if(options.discontinuity) {
+
+    return { data: fragment.data, discontinuity: true, mdat: fragment.mdat, moof: fragment.moof, type: "media" };
+  }
+
+  return { data: fragment.data, mdat: fragment.mdat, moof: fragment.moof, type: "media" };
 }
 
 // The one keyframe fragment and init buffer the segment-yielding double reuses across every yield. The timeshift never mutates segment bytes (it parses and concatenates
@@ -363,7 +395,7 @@ export function makeLivestreamSubscriptionDouble(options: { description?: Livest
 
       for(let i = 0; i < mediaSegments; i++) {
 
-        yield { data: KEYFRAME_FRAGMENT.data, mdat: KEYFRAME_FRAGMENT.mdat, moof: KEYFRAME_FRAGMENT.moof, type: "media" };
+        yield makeMediaSegment(KEYFRAME_FRAGMENT);
       }
 
       // Park: await the dispose-abort so the consumer's for-await never completes and the filled buffer survives. onAbort resolves the park at once when the double is
@@ -575,24 +607,70 @@ export function makeControllableLivestreamDouble(options: { deferEstablishment?:
  * @param options - clock: an optional controllable TestClock forwarded into the makeTestNvr platform double's clock interface and re-returned, so a test holds the one
  *                  clock every delegate built against this host reads through platform.clock - the recording delegate's transmit pacing and the streaming delegate's
  *                  probesize reset among them - and advances it to fire what is due (omitted, makeTestNvr creates a fresh TestClock seeded at TEST_CLOCK_EPOCH);
- *                  recordingProcessFactory: the test recording-process factory injected into the makeTestNvr platform double's recordingProcessFactory interface, so a
- *                  transmit test's delegate constructs its FFmpeg process through the test double (omitted, makeTestNvr installs a fresh default factory); userOptions:
- *                  feature-option config strings forwarded to the makeTestNvr context's REAL FeatureOptions engine (for a later behavior test that steers a feature-gated
- *                  delegate path); the default empty context is the quiet-default host.
+ *                  codecSupport: the codec support forwarded into the makeTestNvr platform double's codecSupport interface, a real FfmpegCodecs for a live view whose
+ *                  audio encoder reads a codec, in place before the delegate is built (omitted, makeTestNvr installs its host-system stub); execProcessFactory: the
+ *                  exec-process factory injected into the makeTestNvr platform double's execProcessFactory interface, so a snapshot's FFmpeg runs and the hardware
+ *                  decoder check run through the test double the row holds (omitted, makeTestNvr installs a fresh default factory); recordingProcessFactory: the
+ *                  test recording-process factory injected into the makeTestNvr platform double's recordingProcessFactory interface, so a transmit test's delegate
+ *                  constructs its FFmpeg process through the test double (omitted, makeTestNvr installs a fresh default factory); rtpDemuxerFactory: the RTP demuxer
+ *                  factory injected into the makeTestNvr platform double's rtpDemuxerFactory interface, so a two-way live view's delegate builds its demuxer through the
+ *                  double the row holds (omitted, makeTestNvr installs a fresh default factory); rtpPorts: the RTP port allocator installed on the makeTestNvr platform
+ *                  double, one over HBPU's probe-socket double for a row that scripts a prepare's reservations (omitted, makeTestNvr installs a real allocator);
+ *                  streamingProcessFactory: the test streaming-process factory injected into the makeTestNvr platform double's streamingProcessFactory interface, so a
+ *                  live view test's delegate constructs its FFmpeg processes through the test double the row holds (omitted, makeTestNvr installs a fresh default
+ *                  factory); userOptions: feature-option config strings forwarded to the makeTestNvr context's REAL FeatureOptions engine (for a later behavior test that
+ *                  steers a feature-gated delegate path); the default empty context is the quiet-default host.
  *
  * @returns accessory: the accessory backing the host; clock: the controllable TestClock installed on the platform double (the one clock every delegate built against
  *          this host reads, so a test advances it to release the recording delegate's transmit pacing or to fire the streaming delegate's probesize reset); controller:
  *          the AbortController behind the context's signal (abort it in suite teardown); host: the TestCameraHost double under test; logEntries: every line the
  *          construction and transmit paths logged (so a transmit test can assert on captured telemetry); nvr: the NVR double backing the context.
  */
-export function makeTestCameraHost(options: { clock?: TestClock; recordingProcessFactory?: RecordingProcessFactory; userOptions?: string[] } = {}):
+export function makeTestCameraHost(options: { clock?: TestClock; codecSupport?: { hostSystem: string }; execProcessFactory?: ExecProcessFactory;
+  recordingProcessFactory?: RecordingProcessFactory; rtpDemuxerFactory?: RtpDemuxerFactory; rtpPorts?: RtpPortAllocator;
+  streamingProcessFactory?: StreamingProcessFactory; userOptions?: string[]; } = {}):
 { accessory: TestProtectAccessory; clock: TestClock; controller: AbortController; host: TestCameraHost; logEntries: readonly TestLogEntry[]; nvr: TestProtectNvr } {
 
   const store = new TestStateStore(makeProtectState());
-  const { clock, controller, logEntries, nvr } = makeTestNvr({ clock: options.clock, recordingProcessFactory: options.recordingProcessFactory, store,
-    userOptions: options.userOptions });
+  const { clock, controller, logEntries, nvr } = makeTestNvr({ clock: options.clock, codecSupport: options.codecSupport, execProcessFactory: options.execProcessFactory,
+    recordingProcessFactory: options.recordingProcessFactory, rtpDemuxerFactory: options.rtpDemuxerFactory, rtpPorts: options.rtpPorts, store,
+    streamingProcessFactory: options.streamingProcessFactory, userOptions: options.userOptions });
   const accessory = makeTestAccessory();
   const host = new TestCameraHost({ accessory, nvr });
 
   return { accessory, clock, controller, host, logEntries, nvr };
+}
+
+/**
+ * End every FFmpeg process double the given factories built that has not ended, as a killed child ends, since a double has no child to kill: each streaming process
+ * and each one-shot run a row left running. A process's ending is read from the process itself, from exited for a streaming process and from result() for a one-shot
+ * run, each looked at after one settle, by which time an ending the row has already driven has settled. It is never read from stdin, which a caller may end while
+ * its process runs on, as the return-audio process's is ended with its session description. A pending run ended here while its own signal stands ends as failed and
+ * asks its onFailed, so a row reads its log lines before it ends through here.
+ *
+ * @param factories - The process factories whose recorded processes the row ends.
+ */
+export async function endPendingProcesses(factories: readonly (TestExecProcessFactory | TestStreamingProcessFactory)[]): Promise<void> {
+
+  const pending = new Set<TestExecProcess | TestStreamingProcess>();
+
+  for(const factory of factories) {
+
+    for(const { process } of factory.createCalls) {
+
+      const ending: Promise<unknown> = (process instanceof TestExecProcess) ? process.result() : process.exited;
+
+      pending.add(process);
+      void ending.then(() => void pending.delete(process), () => void pending.delete(process));
+    }
+  }
+
+  await settle();
+
+  for(const process of pending) {
+
+    process.exit({ exitCode: null, exitSignal: "SIGKILL" });
+  }
+
+  await settle();
 }

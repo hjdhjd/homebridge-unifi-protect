@@ -75,7 +75,10 @@ function buildMotionDevice(harnessOptions: { seedAccessory?: (accessory: TestPro
 
   controllers.push(controller);
 
-  const recording = nvr.events as TestRecordingDispatch;
+  const recording = nvr.events;
+
+  assert.ok(recording instanceof TestRecordingDispatch, "the controller holds the recording dispatch this builder injected");
+
   const accessory = makeTestAccessory("Test Sensor", sensorConfig.mac);
 
   // The device-leaf mqttId sources the bare MAC from the persisted accessory context, not this.ufp.mac, so seed it to match the projection's MAC for the topic-scope

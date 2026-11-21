@@ -436,8 +436,8 @@ describe("camera best-effort device-command paths (camera-best-effort concern ne
     });
 
     // A streaming session lights the flashlight and darkens it as it ends, and a session can end in an outage. The set handler refuses HomeKit then, so the session goes
-    // through this method, which is what keeps the flashlight's heartbeat from running on with nothing left to clear it. No suite drives a session's start or stop, so a
-    // text gate holds the stream to this method, and this row holds the method to what it does.
+    // through this method, which is what keeps the flashlight's heartbeat from running on with nothing left to clear it. No suite drives a package camera's session
+    // start or stop, so a text gate holds the stream to this method, and this row holds the method to what it does.
     test("the flashlight method darkens the switch and clears the heartbeat while the package camera reads unavailable, and a camera's does nothing", async () => {
 
       const { clock, nvr, projection } = await buildFlashlightFamily({ isDark: true });

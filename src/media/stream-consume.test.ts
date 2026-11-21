@@ -2,22 +2,22 @@
  *
  * stream-consume.test.ts: Behavior coverage of the path a buffer-backed live view's video takes into FFmpeg - the segment consumer and the frame feed it writes through.
  *
- * The streaming delegate spawns FFmpeg itself, so no suite starts a live view. This suite drives the private members a live view's input runs through instead, on
- * the real delegate: the consumer that reads the pooled livestream, and the builder of the frame feed that paces each fragment's frames, reached together through
- * one confined cast. A Writable stands for FFmpeg's stdin and records every write with the virtual time it arrived, the livestream is the controllable double with a
- * readable init segment, and the writer is a real BackpressureWriter on the host's TestClock, so the pacing runs on virtual time and each row reads the bytes FFmpeg
- * would receive and when it would receive them. Every fragment is built from invented samples with homebridge-plugin-utils' fMP4 builders.
+ * A row here reads each write FFmpeg's stdin receives with the virtual time it arrived, which the streaming process double's record of its stdin does not carry, so
+ * this suite drives the private members a live view's input runs through directly, on the real delegate: the consumer that reads the pooled livestream, and the
+ * builder of the frame feed that paces each fragment's frames, reached together through one confined cast. A Writable stands for FFmpeg's stdin and records every
+ * write with the virtual time it arrived, the livestream is the controllable double with a readable init segment, and the writer is a real BackpressureWriter on the
+ * host's TestClock, so the pacing runs on virtual time and each row reads the bytes FFmpeg would receive and when it would receive them. Every fragment is built from
+ * invented samples with homebridge-plugin-utils' fMP4 builders.
  */
-import { BackpressureWriter, HDLR_TYPE_VIDE, splitMoofMdat } from "homebridge-plugin-utils";
+import { BackpressureWriter, HDLR_TYPE_VIDE } from "homebridge-plugin-utils";
 import type { Mp4FrameFeed, Nullable } from "homebridge-plugin-utils";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { after, describe, test } from "node:test";
 import { logCount, makeFragment, makeInitSegment, settle } from "homebridge-plugin-utils/testing";
-import { makeControllableLivestreamDouble, makeTestCameraHost } from "./testing.helpers.ts";
+import { makeControllableLivestreamDouble, makeMediaSegment, makeTestCameraHost, splitFragment } from "./testing.helpers.ts";
 import type { ControllableLivestreamDouble } from "./testing.helpers.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import { ProtectStreamingDelegate } from "./stream.ts";
-import type { Segment } from "unifi-protect";
 import { Writable } from "node:stream";
 import assert from "node:assert/strict";
 
@@ -67,25 +67,7 @@ function soundOf(sizes: number[]): Buffer {
 // The first piece the feed cuts from a fragment of framesOf: everything up to the end of its first frame, which sits after the moof and the mdat's eight-byte header.
 function firstFrameOf(fragment: Buffer, firstSize: number): Buffer {
 
-  return fragment.subarray(0, (splitMoofMdat(fragment)?.moof.length ?? 0) + 8 + firstSize);
-}
-
-// One media Segment around a fragment's bytes, its moof and mdat the views the pool hands a consumer. The discontinuity flag marks the first media after a reconnect.
-function mediaSegment(data: Buffer, options: { discontinuity?: boolean } = {}): Segment {
-
-  const boxes = splitMoofMdat(data);
-
-  if(!boxes) {
-
-    throw new Error("The fragment builder produced a fragment with no mdat.");
-  }
-
-  if(options.discontinuity) {
-
-    return { data, discontinuity: true, mdat: boxes.mdat, moof: boxes.moof, type: "media" };
-  }
-
-  return { data, mdat: boxes.mdat, moof: boxes.moof, type: "media" };
+  return fragment.subarray(0, splitFragment(fragment).moof.length + 8 + firstSize);
 }
 
 // The private members of the streaming delegate a live view's input runs through. The consumer reads nothing of the FFmpeg process it is handed but its stdin, so the
@@ -153,7 +135,7 @@ describe("a buffer-backed live view's input to FFmpeg", () => {
 
     const rig = startLiveView();
 
-    rig.double.push(mediaSegment(framesOf([ 40, 12, 18 ])));
+    rig.double.push(makeMediaSegment(splitFragment(framesOf([ 40, 12, 18 ]))));
 
     await settle();
 
@@ -166,7 +148,7 @@ describe("a buffer-backed live view's input to FFmpeg", () => {
     const preload = Buffer.concat([ INIT, framesOf([ 30, 20 ]) ]);
     const rig = startLiveView({ header: preload });
 
-    rig.double.push(mediaSegment(framesOf([ 40, 12, 18 ])));
+    rig.double.push(makeMediaSegment(splitFragment(framesOf([ 40, 12, 18 ]))));
 
     await settle();
 
@@ -178,7 +160,7 @@ describe("a buffer-backed live view's input to FFmpeg", () => {
     const rig = startLiveView();
     const fragment = framesOf([ 40, 12, 18 ]);
 
-    rig.double.push(mediaSegment(fragment));
+    rig.double.push(makeMediaSegment(splitFragment(fragment)));
 
     await settle();
 
@@ -208,7 +190,7 @@ describe("a buffer-backed live view's input to FFmpeg", () => {
     const first = framesOf([ 40, 12, 18 ]);
     const second = framesOf([ 25, 35, 15 ]);
 
-    rig.double.push(mediaSegment(first));
+    rig.double.push(makeMediaSegment(splitFragment(first)));
 
     // Virtual time moves a frame at a time, so each write is recorded at the moment it was due.
     await settle();
@@ -217,7 +199,7 @@ describe("a buffer-backed live view's input to FFmpeg", () => {
     rig.clock.advance(FRAME_MS);
     await settle();
 
-    rig.double.push(mediaSegment(second));
+    rig.double.push(makeMediaSegment(splitFragment(second)));
 
     await settle();
 
@@ -247,7 +229,7 @@ describe("a buffer-backed live view's input to FFmpeg", () => {
     const fragment = framesOf([ 40, 12, 18 ]);
 
     rig.double.push({ codec: "h264", data: INIT, description: { tracks: [] }, type: "init" });
-    rig.double.push(mediaSegment(fragment));
+    rig.double.push(makeMediaSegment(splitFragment(fragment)));
 
     await settle();
     rig.clock.advance(FRAME_MS * 2);
@@ -261,11 +243,11 @@ describe("a buffer-backed live view's input to FFmpeg", () => {
     const rig = startLiveView();
     const fragment = framesOf([ 40, 12, 18 ]);
 
-    rig.double.push(mediaSegment(fragment));
+    rig.double.push(makeMediaSegment(splitFragment(fragment)));
 
     await settle();
 
-    rig.double.push(mediaSegment(framesOf([ 25, 35, 15 ]), { discontinuity: true }));
+    rig.double.push(makeMediaSegment(splitFragment(framesOf([ 25, 35, 15 ])), { discontinuity: true }));
 
     await settle();
 
@@ -284,7 +266,7 @@ describe("a buffer-backed live view's input to FFmpeg", () => {
     const rig = startLiveView();
     const fragment = framesOf([ 40, 12, 18 ]);
 
-    rig.double.push(mediaSegment(fragment));
+    rig.double.push(makeMediaSegment(splitFragment(fragment)));
 
     await settle();
 
@@ -305,7 +287,7 @@ describe("a buffer-backed live view's input to FFmpeg", () => {
 
     const rig = startLiveView({ init: null });
 
-    rig.double.push(mediaSegment(framesOf([ 40, 12, 18 ])));
+    rig.double.push(makeMediaSegment(splitFragment(framesOf([ 40, 12, 18 ]))));
 
     await settle();
 
@@ -322,8 +304,8 @@ describe("a buffer-backed live view's input to FFmpeg", () => {
     const first = unreadableOf([ 40, 12 ]);
     const second = unreadableOf([ 25, 35 ]);
 
-    rig.double.push(mediaSegment(first));
-    rig.double.push(mediaSegment(second));
+    rig.double.push(makeMediaSegment(splitFragment(first)));
+    rig.double.push(makeMediaSegment(splitFragment(second)));
 
     await settle();
 
@@ -342,8 +324,8 @@ describe("a buffer-backed live view's input to FFmpeg", () => {
     const first = soundOf([ 7, 9 ]);
     const second = soundOf([11]);
 
-    rig.double.push(mediaSegment(first));
-    rig.double.push(mediaSegment(second));
+    rig.double.push(makeMediaSegment(splitFragment(first)));
+    rig.double.push(makeMediaSegment(splitFragment(second)));
 
     await settle();
 

@@ -114,7 +114,10 @@ function buildSensor(configOptions: Parameters<typeof makeSensorConfig>[0] = {},
     mqtt.connected = false;
   }
 
-  const recording = nvr.events as TestRecordingDispatch;
+  const recording = nvr.events;
+
+  assert.ok(recording instanceof TestRecordingDispatch, "the controller holds the recording dispatch this builder injected");
+
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Sensor", sensorConfig.mac);
 
   if(harnessOptions.restored) {

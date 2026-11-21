@@ -24,12 +24,12 @@ import { ProtectClient, ProtectLivestreamUnavailableError } from "unifi-protect"
 import type { SegmentRole, SnapshotSource } from "./timeshift.ts";
 import type { TestClock, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { after, describe, test } from "node:test";
-import { makeChannelProfile, makeControllableLivestreamDouble, makeKeyframeFragment, makeNonKeyframeFragment, makeTestCameraHost } from "./testing.helpers.ts";
+import { makeChannelProfile, makeControllableLivestreamDouble, makeKeyframeFragment, makeMediaSegment, makeNonKeyframeFragment, makeTestCameraHost,
+  splitFragment } from "./testing.helpers.ts";
 import { makeFragment, settle } from "homebridge-plugin-utils/testing";
 import { AMCREST_INIT_SEGMENT } from "../camera.fixtures.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
 import { SAMPLE_FLAG_NON_SYNC } from "homebridge-plugin-utils";
-import type { Segment } from "unifi-protect";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
 
@@ -53,29 +53,8 @@ after(() => {
   }
 });
 
-// Build one media Segment around a fragment's bytes. processSegment reads only type, discontinuity, and data; moof/mdat are type-required, so we supply the fragment's
-// own. The optional discontinuity flag marks the first media after a reconnect (the unifi-protect discontinuity:true), which the timeshift's discontinuity gate keys on.
-function makeMediaSegment(fragment: { data: Buffer; mdat: Buffer; moof: Buffer }, options: { discontinuity?: boolean } = {}): Segment {
-
-  if(options.discontinuity) {
-
-    return { data: fragment.data, discontinuity: true, mdat: fragment.mdat, moof: fragment.moof, type: "media" };
-  }
-
-  return { data: fragment.data, mdat: fragment.mdat, moof: fragment.moof, type: "media" };
-}
-
 // A media fragment as the suite builds one: the whole fragment and its moof and mdat halves.
 type MediaFragment = ReturnType<typeof makeKeyframeFragment>;
-
-// Carry a fragment built by HBPU's makeFragment as a media fragment. A box opens with its own size, so the fragment's first word says where its moof ends and its mdat
-// begins.
-function splitFragment(data: Buffer): MediaFragment {
-
-  const moofSize = data.readUInt32BE(0);
-
-  return { data, mdat: data.subarray(moofSize), moof: data.subarray(0, moofSize) };
-}
 
 // A fragment whose keyframe is its second sample rather than its first, so it holds a keyframe without starting with one.
 function makeLaterSampleKeyframeFragment(): MediaFragment {

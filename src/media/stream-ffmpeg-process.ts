@@ -1,9 +1,8 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * stream-ffmpeg-process.ts: The live-path FFmpeg streaming process specialization and its failed-teardown policy classifier.
+ * stream-ffmpeg-process.ts: The live view's answer to a failed FFmpeg process and the failed-teardown policy classifier it is built on.
  */
-import type { FfmpegOptions, HbpuAbortError, IpFamily } from "homebridge-plugin-utils";
-import { FfmpegStreamingProcess } from "homebridge-plugin-utils";
+import type { FfmpegEnding, FfmpegEndingVerdict, HomebridgePluginLogging } from "homebridge-plugin-utils";
 import { exhaustiveGuard } from "../types.ts";
 
 // Known-benign FFmpeg error patterns unique to the UniFi Protect livestream API path. These occasional inconsistencies in the controller's livestream output are not
@@ -21,7 +20,7 @@ const LIVESTREAM_API_ERROR_PATTERNS = [
 const LIVESTREAM_API_ERROR_MESSAGE = "FFmpeg ended unexpectedly due to issues processing the media stream provided by the UniFi Protect livestream API. This error can " +
   "be safely ignored - it will occur occasionally.";
 
-// Classify a failed FFmpeg teardown on the live (HomeKit) video path into one of three policy verdicts, given the accumulated stderr and whether this instance suppresses
+// Classify a failed FFmpeg teardown on the live (HomeKit) video path into one of its policy verdicts, given the accumulated stderr and whether the live view suppresses
 // livestream-API hiccups. The decision is a pure total function of those two observed values, with a fixed short-circuit precedence: first a known-benign livestream-API
 // hiccup, but ONLY when suppression is enabled, because a genuine RTSP/transcode/crop failure must still produce the canonical dump rather than the friendly sentence;
 // then an FFmpeg probesize-estimation failure, which is ungated because the probesize self-tune runs for every FFmpeg error regardless of source; otherwise the canonical
@@ -44,53 +43,52 @@ export function classifyTeardownFailure(stderrLog: readonly string[], suppressLi
   return "canonical";
 }
 
-// An FFmpeg streaming process specialization for the live (HomeKit) video path. The homebridge-plugin-utils base does not expose a teardown error-callback hook, so
-// we implement the failed-teardown logging order through the overridable logFailedTeardown hook: the override classifies the failure via
-// classifyTeardownFailure and dispatches each verdict to its I/O - a benign livestream-API hiccup substitutes a friendly sentence, a probesize-estimation failure
-// self-tunes the probesize for the next run, and anything else falls through to the canonical ERROR dump. The suppression flag is captured from useTsb at construction
-// and passed to the classifier. The return-audio FFmpeg uses the plain FfmpegStreamingProcess (no suppression, no probesize, no return-port watchdog) because it is
-// outbound.
-export class ProtectStreamingFfmpegProcess extends FfmpegStreamingProcess {
+/**
+ * The live view's answer to a failed FFmpeg process, handed to HBPU as the process's onFailed. HBPU asks it inside the abort that ends a failed process, ahead of the
+ * live view's ready and exit bridges, with the stderr lines the process read, and the answer decides what the log says: a known livestream API hiccup on a
+ * buffer-backed view logs the friendly sentence in place of HBPU's report, FFmpeg running out of probe size before it could estimate the stream's rate raises the
+ * probe size for the next start through the callback, which says so itself, and anything else is left to HBPU's full report. The decision is
+ * classifyTeardownFailure's and this turns its verdict into an effect, so each effect is reachable with no process behind it.
+ *
+ * @param options                             - The answer's inputs.
+ * @param options.log                         - The logger the friendly sentence is written to, the live view's own.
+ * @param options.onProbesizeError            - Called when FFmpeg could not estimate the stream's rate, to raise the probe size for the next start.
+ * @param options.suppressLivestreamApiErrors - Whether a known livestream API hiccup is answered with the friendly sentence, which holds for a buffer-backed view.
+ *
+ * @returns The onFailed callback, answering "handled" when it reported the failure itself and "default" to leave it to HBPU's report.
+ */
+export function liveViewOnFailed(options: { log: HomebridgePluginLogging; onProbesizeError: () => void; suppressLivestreamApiErrors: boolean }):
+(ending: FfmpegEnding) => FfmpegEndingVerdict {
 
-  readonly #onProbesizeError: () => void;
-  readonly #suppressLivestreamApiErrors: boolean;
+  const { log, onProbesizeError, suppressLivestreamApiErrors } = options;
 
-  constructor(options: FfmpegOptions, init: { args?: string[]; onProbesizeError: () => void; returnPort?: { ipFamily: IpFamily; port: number }; signal?: AbortSignal;
-    suppressLivestreamApiErrors: boolean; }) {
+  return (ending: FfmpegEnding): FfmpegEndingVerdict => {
 
-    super(options, { args: init.args, returnPort: init.returnPort, signal: init.signal });
-
-    this.#onProbesizeError = init.onProbesizeError;
-    this.#suppressLivestreamApiErrors = init.suppressLivestreamApiErrors;
-  }
-
-  protected override logFailedTeardown(reason: HbpuAbortError): void {
-
-    const verdict = classifyTeardownFailure(this.stderrLog, this.#suppressLivestreamApiErrors);
+    const verdict = classifyTeardownFailure(ending.stderrLog, suppressLivestreamApiErrors);
 
     switch(verdict) {
 
       case "benign-api":
 
-        this.log.error(LIVESTREAM_API_ERROR_MESSAGE);
+        log.error(LIVESTREAM_API_ERROR_MESSAGE);
 
-        return;
+        return "handled";
 
       case "probesize":
 
-        this.#onProbesizeError();
+        onProbesizeError();
 
-        return;
+        return "handled";
 
       case "canonical":
 
-        super.logFailedTeardown(reason);
-
-        return;
+        return "default";
 
       default:
 
         exhaustiveGuard(verdict);
+
+        return "default";
     }
-  }
+  };
 }

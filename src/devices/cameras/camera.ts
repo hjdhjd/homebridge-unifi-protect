@@ -739,9 +739,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
 
     const segmentLength = opts.segmentLength ?? PROTECT_SEGMENT_RESOLUTION;
 
-    // The RTSP-debug path (Debug.Video.Timeshift.UseRtsp) transcodes the camera's RTSP stream through FFmpeg to feed the timeshift buffer instead of the controller's
-    // native livestream. It is gated on the debug feature alone - no HKSV recording precondition - so it engages from startup for the standing buffer. The audio target
-    // is the recording stand-in rather than any HKSV recording configuration HomeKit selected.
+    // The RTSP-debug path (Debug.Video.Timeshift.UseRtsp) feeds the timeshift buffer from the camera's RTSP stream through FFmpeg instead of the controller's native
+    // livestream: FFmpeg copies the camera's video untouched into fMP4 and re-encodes only the audio. It is gated on the debug feature alone - no HKSV recording
+    // precondition - so it engages from startup for the standing buffer. The audio target is the recording stand-in rather than any HKSV recording configuration
+    // HomeKit selected.
     if(this.hasFeature("Debug.Video.Timeshift.UseRtsp") && this.stream) {
 
       // The debug feed dials the handed channel over RTSP, so a channel the controller has not enabled has nothing for FFmpeg to connect to. We say so once and fall

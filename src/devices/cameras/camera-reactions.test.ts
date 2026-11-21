@@ -116,7 +116,10 @@ async function buildCamera<C extends ProtectCamera = ProtectCamera>(options: { c
   const { clock, controller, factory, logEntries, nvr } = makeTestNvr({ dispatch: (innerNvr: ProtectNvr): ProtectEventDispatch => new TestRecordingDispatch(innerNvr),
     store,
     userOptions: options.userOptions });
-  const recording = nvr.events as TestRecordingDispatch;
+  const recording = nvr.events;
+
+  assert.ok(recording instanceof TestRecordingDispatch, "the controller holds the recording dispatch this builder injected");
+
   const accessory = makeTestAccessory("Test Camera", "74ACB9000001");
 
   options.seedAccessory?.(accessory);

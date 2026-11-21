@@ -68,7 +68,10 @@ function buildLight(configOptions: Parameters<typeof makeLightConfig>[0] = {},
     mqtt.connected = false;
   }
 
-  const recording = nvr.events as TestRecordingDispatch;
+  const recording = nvr.events;
+
+  assert.ok(recording instanceof TestRecordingDispatch, "the controller holds the recording dispatch this builder injected");
+
   const accessory = harnessOptions.accessory ?? makeTestAccessory("Test Light", lightConfig.mac);
 
   // The projection is named (not cast inline) so the MQTT SET-body tests read its updateCalls / set its updateRejection on the SAME instance the light's onSet

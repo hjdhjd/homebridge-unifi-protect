@@ -22,7 +22,8 @@
  * The restore sweep's rows hand the platform an accessory the way Homebridge hands one back from its cache, and read and write it through HAP's own paths.
  */
 import type { API, Logging } from "homebridge";
-import { APIEvent, FeatureOptions, FfmpegCodecs, HAPStatus, Perms, createMqttClient, parseFfmpegVersionParts } from "homebridge-plugin-utils";
+import { APIEvent, FeatureOptions, FfmpegCodecs, HAPStatus, Perms, createMqttClient, execProcessFactory, livestreamProcessFactory, parseFfmpegVersionParts,
+  recordingProcessFactory, rtpDemuxerFactory, streamingProcessFactory } from "homebridge-plugin-utils";
 import type { CapturingLog, TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { Characteristic, Service, TestStateStore, makeProtectState, makeTestAccessory, makeTestApi } from "./testing.helpers.ts";
 import type { ProtectNvrConfig, ProtectNvrLiveviewConfig } from "unifi-protect";
@@ -256,6 +257,19 @@ describe("platform construction and the configured controllers", () => {
     const { platform } = buildPlatform([]);
 
     assert.equal(platform.mqttFactory, createMqttClient, "the controllers build their clients through HBPU's own factory");
+  });
+
+  // Every FFmpeg process and RTP demuxer a camera builds goes through a factory the platform holds, so a platform Homebridge builds holds HBPU's own, the ones that run
+  // FFmpeg and bind a socket.
+  test("a platform built with three arguments holds each of HBPU's process factories", () => {
+
+    const { platform } = buildPlatform([]);
+
+    assert.equal(platform.execProcessFactory, execProcessFactory, "a one-shot FFmpeg run goes through HBPU's own exec process factory");
+    assert.equal(platform.livestreamProcessFactory, livestreamProcessFactory, "the RTSP debug adapter's FFmpeg goes through HBPU's own livestream process factory");
+    assert.equal(platform.recordingProcessFactory, recordingProcessFactory, "a recording's FFmpeg goes through HBPU's own recording process factory");
+    assert.equal(platform.rtpDemuxerFactory, rtpDemuxerFactory, "a two-way live view's demuxer goes through HBPU's own RTP demuxer factory");
+    assert.equal(platform.streamingProcessFactory, streamingProcessFactory, "a live view's FFmpeg goes through HBPU's own streaming process factory");
   });
 });
 

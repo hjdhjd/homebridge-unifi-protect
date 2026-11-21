@@ -3,9 +3,11 @@
  * platform.ts: homebridge-unifi-protect platform class.
  */
 import type { API, DynamicPlatformPlugin, Logging } from "homebridge";
-import { APIEvent, AccessoryPersistence, FeatureOptions, FfmpegCodecs, Perms, RtpPortAllocator, addressListingForm, createMqttClient, debugGatedLog, formatErrorMessage,
-  livestreamProcessFactory, notResponding, recordingProcessFactory, systemClock } from "homebridge-plugin-utils";
-import type { Clock, HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory, RetiredTranslation } from "homebridge-plugin-utils";
+import { APIEvent, AccessoryPersistence, FeatureOptions, FfmpegCodecs, Perms, RtpPortAllocator, addressListingForm, createMqttClient, debugGatedLog, execProcessFactory,
+  formatErrorMessage, livestreamProcessFactory, notResponding, recordingProcessFactory, rtpDemuxerFactory, streamingProcessFactory,
+  systemClock } from "homebridge-plugin-utils";
+import type { Clock, ExecProcessFactory, HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory, RetiredTranslation, RtpDemuxerFactory,
+  StreamingProcessFactory } from "homebridge-plugin-utils";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings.ts";
 import type { ProtectAccessory, ProtectPlatformConfig } from "./types.ts";
 import { featureOptionCategories, featureOptions } from "./options.ts";
@@ -40,6 +42,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   private _codecSupport: Nullable<FfmpegCodecs> = null;
   public readonly config: ProtectOptions;
   private readonly controllers: ProtectNvr[];
+  public readonly execProcessFactory: ExecProcessFactory;
   public readonly featureOptions: FeatureOptions;
   public readonly livestreamProcessFactory: LivestreamProcessFactory;
   public readonly log: Logging;
@@ -48,8 +51,10 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
   public readonly pluginLog: HomebridgePluginLogging;
   public readonly recordingProcessFactory: RecordingProcessFactory;
   public readonly retiredTranslation: RetiredTranslation;
+  public readonly rtpDemuxerFactory: RtpDemuxerFactory;
   public readonly rtpPorts: RtpPortAllocator;
   public readonly streamingDelegateFactory: StreamingDelegateFactory;
+  public readonly streamingProcessFactory: StreamingProcessFactory;
 
   // Homebridge constructs the platform with three arguments. The fourth is a suite's, handing over the factory every controller builds its MQTT client through.
   constructor(log: Logging, config: ProtectPlatformConfig | undefined, api: API, { mqttFactory = createMqttClient }: { mqttFactory?: typeof createMqttClient } = {}) {
@@ -70,6 +75,7 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
      */
     const retiredTranslation = translateRetiredOptions(config?.options ?? []);
 
+    this.execProcessFactory = execProcessFactory;
     this.featureOptions = new FeatureOptions(featureOptionCategories, featureOptions, [...retiredTranslation.configuredOptions]);
     this.livestreamProcessFactory = livestreamProcessFactory;
     this.log = log;
@@ -89,8 +95,10 @@ export class ProtectPlatform implements DynamicPlatformPlugin {
     this.pluginLog = debugGatedLog(this.log, () => this.testDebug({}));
     this.recordingProcessFactory = recordingProcessFactory;
     this.retiredTranslation = retiredTranslation;
+    this.rtpDemuxerFactory = rtpDemuxerFactory;
     this.rtpPorts = new RtpPortAllocator();
     this.streamingDelegateFactory = streamingDelegateFactory;
+    this.streamingProcessFactory = streamingProcessFactory;
 
     // The FFmpeg path, resolved from the feature option with the legacy configuration property as the transition fallback. An option that is enabled but left empty
     // counts as absent, so an emptied field falls through to the bundled build rather than launching an empty executable name.

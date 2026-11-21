@@ -2,9 +2,9 @@
  *
  * snapshot.ts: UniFi Protect HomeKit snapshot class.
  */
-import type { Clock, FfmpegOptions, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
-import { FfmpegExec, composeSignals, runWithAbort } from "homebridge-plugin-utils";
+import type { Clock, FfmpegEnding, FfmpegEndingVerdict, FfmpegOptions, HomebridgePluginLogging, Nullable } from "homebridge-plugin-utils";
 import { PROTECT_MAX_SOURCE_HEIGHT, PROTECT_MAX_SOURCE_WIDTH } from "../settings.ts";
+import { composeSignals, runWithAbort } from "homebridge-plugin-utils";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import type { SnapshotOptions } from "unifi-protect";
 import type { SnapshotRequest } from "homebridge";
@@ -64,18 +64,24 @@ function answerFrom(source: SnapshotSourceTag, image: Nullable<Buffer>): Nullabl
 }
 
 /**
- * A one-shot FFmpeg pipeline whose non-zero exit is routine rather than exceptional, so a failed teardown logs one debug line in place of the base class's ERROR dump
- * of the command and its stderr, which would otherwise fill the log on every routine failure. The homebridge-plugin-utils base exposes logFailedTeardown as exactly
- * this hook for known-benign failure shapes. A snapshot source is such a pipeline: the timeshift and RTSP sources are tried in turn, so a miss simply falls through
- * to the next source. The timeshift supervisor's hardware decoder check is too: it reads only whether FFmpeg reports the decoder's refusal, which the base
- * records whatever the exit. The separate crop pipeline keeps the default ERROR logging, since a crop failure is genuinely noteworthy.
+ * The quiet answer to a failed FFmpeg process, handed as onFailed to a one-shot pipeline whose non-zero exit is routine rather than exceptional: it logs one debug
+ * line in place of HBPU's error report of the command and its stderr, which would otherwise fill the log on every routine failure. A snapshot source is such a
+ * pipeline: the timeshift and RTSP sources are tried in turn, so a miss simply falls through to the next source. The timeshift supervisor's hardware decoder check is
+ * too: it reads only whether FFmpeg reports the decoder's refusal, which HBPU records whatever the exit. The separate crop pipeline keeps HBPU's report, since a crop
+ * failure is genuinely noteworthy.
+ *
+ * @param log - The logger the debug line is written to, the camera's own.
+ *
+ * @returns The onFailed callback, answering "handled" so HBPU logs nothing more for the failure.
  */
-export class QuietFfmpegExec extends FfmpegExec {
+export function quietOnFailed(log: HomebridgePluginLogging): (ending: FfmpegEnding) => FfmpegEndingVerdict {
 
-  protected override logFailedTeardown(): void {
+  return (): FfmpegEndingVerdict => {
 
-    this.log.debug("An FFmpeg pipeline whose failure is routine exited without completing, and its caller carries on without its output.");
-  }
+    log.debug("An FFmpeg pipeline whose failure is routine exited without completing, and its caller carries on without its output.");
+
+    return "handled";
+  };
 }
 
 // Camera snapshot class for Protect.
@@ -376,9 +382,11 @@ export class ProtectSnapshot {
       commandLineOptions.unshift("-loglevel", "level+verbose");
     }
 
-    // Instantiate and spawn FFmpeg. The composed signal ties this pipeline's lifetime to the acquisition deadline, so a timeout kills the child rather than leaving it
-    // running. When we have a timeshift buffer it is fed as canned stdin; the RTSP source reads from its input URL and supplies no stdin.
-    const ffmpeg = new QuietFfmpegExec(this.protectCamera.stream.ffmpegOptions, { args: commandLineOptions, signal, stdin: buffer });
+    // Run FFmpeg once through the platform's exec process factory. The composed signal ties this pipeline's lifetime to the acquisition deadline, so a timeout kills
+    // the child rather than leaving it running. When we have a timeshift buffer it is fed as canned stdin; the RTSP source reads from its input URL and supplies no
+    // stdin.
+    const ffmpeg = this.protectCamera.platform.execProcessFactory.create(this.protectCamera.stream.ffmpegOptions, { args: commandLineOptions,
+      onFailed: quietOnFailed(this.log), signal, stdin: buffer });
 
     // Retrieve the snapshot. The result accessor rejects only when the child never spawned (e.g., a missing FFmpeg binary), which we treat as this source failing so the
     // acquisition falls through to the next source rather than letting the error escape.
@@ -410,8 +418,8 @@ export class ProtectSnapshot {
       return null;
     }
 
-    // Crop the snapshot using FFmpeg with the crop filter. The JPEG to crop is fed as canned stdin, and the composed signal ties this pipeline to the acquisition
-    // deadline. Options we use are:
+    // Crop the snapshot using FFmpeg with the crop filter, run once through the platform's exec process factory. The JPEG to crop is fed as canned stdin, and the
+    // composed signal ties this pipeline to the acquisition deadline. Options we use are:
     //
     // -hide_banner         Suppress printing the startup banner in FFmpeg.
     // -nostats             Suppress printing progress reports while encoding in FFmpeg.
@@ -420,7 +428,7 @@ export class ProtectSnapshot {
     // -f image2pipe        Specifies the output format to use a pipe, since we are outputting to stdout and want to consume the data directly.
     // -c:v mjpeg           Specify the MJPEG encoder to get a JPEG file.
     // pipe:1               Output the cropped snapshot to standard output.
-    const ffmpeg = new FfmpegExec(this.protectCamera.stream.ffmpegOptions, { args: [
+    const ffmpeg = this.protectCamera.platform.execProcessFactory.create(this.protectCamera.stream.ffmpegOptions, { args: [
 
       "-hide_banner",
       "-nostats",

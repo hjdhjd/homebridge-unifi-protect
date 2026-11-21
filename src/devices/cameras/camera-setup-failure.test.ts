@@ -54,7 +54,7 @@ function liveRtspGets(mqtt: NonNullable<ReturnType<typeof makeTestNvr>["mqtt"]>)
 }
 
 // The doorbell trigger switches on the accessory, which the block's switches stand up on a live camera.
-function triggerSwitches(accessory: TestProtectAccessory): InstanceType<typeof Service.Switch>[] {
+function triggerSwitches(accessory: TestProtectAccessory): TestProtectAccessory["services"] {
 
   return accessory.services.filter((service) => (service.UUID === Service.Switch.UUID) && (service.subtype === ProtectReservedNames.SWITCH_DOORBELL_TRIGGER));
 }

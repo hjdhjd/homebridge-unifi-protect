@@ -19,11 +19,12 @@
  * vacuity-proofed by the same subscription later observing positive wakes. Test files run in separate processes under the node:test runner, so the subscriptions
  * never cross-talk with other suites.
  */
-import { Characteristic, Service, TestStateStore, accessoryUuid, controllerEvents, makeProtectState, makeTestAccessory } from "../../testing.helpers.ts";
+import { Characteristic, Service, TestStateStore, TestStreamingDelegate, accessoryUuid, controllerEvents, makeProtectState,
+  makeTestAccessory } from "../../testing.helpers.ts";
 import { G2_PRO_CHANNELS, G6_INSTANT_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../../camera.fixtures.ts";
 import { TestCameraProjection, makeCameraConfig, makeChimeConfig } from "../testing.helpers.ts";
 import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
-import type { TestProtectAccessory, TestStreamingDelegate, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
+import type { TestProtectAccessory, TestStreamingDelegateFactory } from "../../testing.helpers.ts";
 import { TestRecordingDispatch, makeTestNvr, restoreAccessories } from "../../nvr/testing.helpers.ts";
 import { after, afterEach, before, describe, test } from "node:test";
 import { assertNoUnhandledRejections, formatLogEntry, logCount, settle } from "homebridge-plugin-utils/testing";
@@ -463,7 +464,9 @@ describe("doorbell bare-motion package forward (suite C)", () => {
 
     harnessController = controller;
 
-    const recording = nvr.events as TestRecordingDispatch;
+    const recording = nvr.events;
+
+    assert.ok(recording instanceof TestRecordingDispatch, "the controller holds the recording dispatch this builder injected");
 
     doorbell = configured(new ProtectCamera(nvr as unknown as ProtectNvr, makeTestAccessory("Front Door", "74ACB9000001"),
       new TestCameraProjection(cameraConfig.id, store) as unknown as Camera));
@@ -490,7 +493,11 @@ describe("doorbell bare-motion package forward (suite C)", () => {
     // Mark the package camera recording for HKSV: the production forward reads packageCamera.stream.hksv.isRecording. The afterEach cleanup also reads hksv through
     // the capability's delegate teardown (isRecording -> updateRecordingActive, then timeshift.stop), so the stub carries those no-ops - the same shape the camera-
     // self-heal test seeds, cast once through the confined boundary.
-    (doorbell.packageCamera.stream as TestStreamingDelegate).hksv = { isRecording: true,
+    const packageStream = doorbell.packageCamera.stream;
+
+    assert.ok(packageStream instanceof TestStreamingDelegate, "the package camera's stream is the suite's streaming delegate double");
+
+    packageStream.hksv = { isRecording: true,
       timeshift: { isStarted: false, stop: (): void => { /* No-op: the double owns no buffer to release on teardown. */ } },
       updateRecordingActive: (): void => { /* No-op: the double records no HKSV state. */ } } as unknown as TestStreamingDelegate["hksv"];
 

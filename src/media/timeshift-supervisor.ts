@@ -12,8 +12,8 @@ import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamSubscription } from "./livestream.ts";
 import type { ProtectCameraHost } from "./camera-host.ts";
 import { ProtectTimeshiftBuffer } from "./timeshift.ts";
-import { QuietFfmpegExec } from "./snapshot.ts";
 import { formatResolution } from "./resolution.ts";
+import { quietOnFailed } from "./snapshot.ts";
 
 // The recording demand the HKSV recording delegate pushes into the supervisor: the recording configuration HomeKit has selected (undefined when HomeKit cannot
 // produce one, which the reconciler treats as "desired state is stopped") and whether HomeKit wants recording active.
@@ -469,8 +469,9 @@ export class ProtectTimeshiftSupervisor {
    * already.
    *
    * The listener discards this promise, so a rejection that escaped would float as an unhandled rejection. The whole body therefore runs inside the guard, which
-   * ends any fault, a child that never spawned among them, as one debug line and leaves that stream to HBPU's process-level detection at its first use. The check's
-   * process logs a failed exit at debug on its own.
+   * ends any fault, a child that never spawned among them, as one debug line and leaves that stream to HBPU's process-level detection at its first use. The check
+   * runs FFmpeg once through the platform's exec process factory, and its process is handed the quiet answer, quietOnFailed, so a failed exit logs one debug line in
+   * place of HBPU's error report.
    */
   private async checkHardwareDecoder(): Promise<void> {
 
@@ -502,7 +503,8 @@ export class ProtectTimeshiftSupervisor {
 
       this.log.debug("Checking whether the hardware video decoder can open this camera's %s stream at %sx%s.", identity.codec, identity.width, identity.height);
 
-      await new QuietFfmpegExec(delegate.ffmpegOptions, { args: hardwareDecodeCheckArgs(decoder), signal: this.lifetime.signal, stdin: source.data }).result();
+      await this.protectCamera.platform.execProcessFactory.create(delegate.ffmpegOptions, { args: hardwareDecodeCheckArgs(decoder),
+        onFailed: quietOnFailed(this.log), signal: this.lifetime.signal, stdin: source.data }).result();
     } catch(error) {
 
       this.log.debug("The hardware video decoder check ended without an answer: %s.", formatErrorMessage(error));

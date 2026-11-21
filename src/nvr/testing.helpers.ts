@@ -19,17 +19,18 @@
  * real accessories. The cross-cutting core - the Homebridge runtime, the state store, and the streaming-delegate stub - lives in the root harness this file imports
  * from.
  */
-import { APIEvent, AccessoryPersistence, FeatureOptions, MQTT_AVAILABILITY_OFFLINE, mqttTopic, onAbort, prefixedLog } from "homebridge-plugin-utils";
+import { APIEvent, AccessoryPersistence, FeatureOptions, MQTT_AVAILABILITY_OFFLINE, RtpPortAllocator, mqttTopic, onAbort, prefixedLog } from "homebridge-plugin-utils";
 import type { Camera, Chime, ProtectCameraConfig, ProtectClient, ProtectEventMetadata, ProtectNvrConfig, ProtectNvrLiveviewConfig,
   ProtectRingtoneConfig } from "unifi-protect";
-import type { HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory, RetiredTranslation, createMqttClient } from "homebridge-plugin-utils";
+import type { ExecProcessFactory, HomebridgePluginLogging, LivestreamProcessFactory, Nullable, RecordingProcessFactory, RetiredTranslation, RtpDemuxerFactory,
+  StreamingProcessFactory, createMqttClient } from "homebridge-plugin-utils";
 import type { NvrPhase, ProtectNvr } from "./nvr.ts";
 import { OVERRIDE_ADDRESS_ZONE_WARNING, isDisruptionExpected, resolveOverrideAddress } from "./nvr-policy.ts";
 import { PLATFORM_NAME, PLUGIN_NAME, PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import type { ProtectAccessory, ProtectDevices } from "../types.ts";
 import type { ProtectNvrOptions, ProtectOptions } from "../options.ts";
-import { TestClock, TestLivestreamProcessFactory, TestMqttClient, TestMqttClientFactory, TestRecordingProcessFactory,
-  capturingLog } from "homebridge-plugin-utils/testing";
+import { TestClock, TestExecProcessFactory, TestLivestreamProcessFactory, TestMqttClient, TestMqttClientFactory, TestRecordingProcessFactory, TestRtpDemuxerFactory,
+  TestStreamingProcessFactory, capturingLog } from "homebridge-plugin-utils/testing";
 import type { TestHomebridgeApi, TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectAccessory, TestStateStore } from "../testing.helpers.ts";
 import { TestStreamingDelegateFactory, makeTestAccessory, makeTestApi } from "../testing.helpers.ts";
@@ -57,10 +58,13 @@ import { translateRetiredOptions } from "../options-retired.ts";
 // Homebridge API double, which carries the real HAP namespace, Homebridge's own platform-accessory class, the accessory calls the doorbell's configurePackageCamera
 // and the NVR removal tail drive, and the lifecycle events Homebridge's API emits; the injected test clock (typed as the library's TestClock, so the double and every
 // suite advance it with no cast); the platform's mutable accessories array; a concrete codecSupport (the real platform getter throws before the FFmpeg probe - a
-// concrete object with a non-raspbian hostSystem keeps the recording-default switch on its default branch), the ProtectOptions-shaped config, the REAL FeatureOptions
-// engine, the log sinks, the REAL accessory persistence built over the API double and the test clock, the scoped debug gate every owner's logger asks before it
-// speaks, the livestream-process and recording-process factory interfaces (the RTSP debug adapter and the recording delegate construct their FFmpeg processes through
-// them), the MQTT client factory a real controller root builds its client through, and the streaming-delegate factory interface.
+// concrete object with a non-raspbian hostSystem keeps the recording-default switch on its default branch, and a row that reads a codec hands a real FfmpegCodecs in its
+// place), the ProtectOptions-shaped config, the REAL FeatureOptions engine, the log sinks, the REAL accessory persistence built over the API double and the test clock,
+// the scoped debug gate every owner's logger asks before it speaks, the livestream-process, recording-process and streaming-process factory interfaces (the RTSP debug
+// adapter, the recording delegate and the streaming delegate construct their FFmpeg processes through them), the exec-process factory interface a snapshot's FFmpeg
+// runs and the hardware decoder check go through, the RTP demuxer factory interface a two-way live view builds its demuxer through, the REAL RTP port allocator a live
+// view reserves its ports from, binding over HBPU's probe-socket double for a row that scripts its binds, the MQTT client factory a real controller root builds its
+// client through, and the streaming-delegate factory interface.
 export interface TestProtectPlatform {
 
   readonly accessories: ProtectAccessory[];
@@ -72,6 +76,7 @@ export interface TestProtectPlatform {
   readonly clock: TestClock;
   readonly codecSupport: { hostSystem: string };
   readonly config: ProtectOptions;
+  readonly execProcessFactory: ExecProcessFactory;
   readonly featureOptions: FeatureOptions;
   readonly isAccessoryClaimed: (accessory: ProtectAccessory) => boolean;
   readonly livestreamProcessFactory: LivestreamProcessFactory;
@@ -88,7 +93,10 @@ export interface TestProtectPlatform {
   readonly recordingProcessFactory: RecordingProcessFactory;
   readonly releaseAccessory: (accessory: ProtectAccessory) => void;
   readonly retiredTranslation: RetiredTranslation;
+  readonly rtpDemuxerFactory: RtpDemuxerFactory;
+  readonly rtpPorts: RtpPortAllocator;
   readonly streamingDelegateFactory: TestStreamingDelegateFactory;
+  readonly streamingProcessFactory: StreamingProcessFactory;
   readonly testDebug: (context: { controller?: string; device?: string }) => boolean;
 }
 
@@ -532,38 +540,50 @@ export function makeNvrConfig(options: { doorbellSettings?: ProtectNvrConfig["do
  * @param options - chimes: the HELD chime projection doubles client.chimes exposes (omitted, the empty default), kept as the same instances across every access so the
  *                  doorbell's cross-device setChimeVolume write hits, and a test's updateRejection lever is set on, ONE projection - a per-access rebuild would silently
  *                  break the rejection drive; clock: an optional controllable TestClock installed as the platform double's clock and returned so a test advances
- *                  the virtual time every timer armed on that clock reads (omitted, a fresh TestClock seeded at TEST_CLOCK_EPOCH is created); controllerName:
+ *                  the virtual time every timer armed on that clock reads (omitted, a fresh TestClock seeded at TEST_CLOCK_EPOCH is created); codecSupport: the codec
+ *                  support installed as the platform double's codecSupport, a real FfmpegCodecs built through FfmpegCodecs.fromState for a row whose FFmpeg options
+ *                  read a codec, as an audio encoder's do, in place before a delegate is built over it (omitted, the stub naming a host system alone); controllerName:
  *                  the controller label (defaults to "Test Controller"); controllerPrefix: a prefix the controller's logger writes over the one recorder, as the
  *                  production root's logger carries the controller's name, for a row that tells the controller's lines from the plugin's (omitted, the controller's
  *                  logger is the plugin's); dispatch: an optional event-dispatch factory threaded into the NVR double's events interface
  *                  (omitted, the default builds the real ProtectEventDispatch unchanged; a test injects a recording subclass to assert the device observers' firehose
  *                  routing without arming the real reset timer); doorbellSettings: the raw doorbell settings record forwarded to the store's default NVR config fallback
- *                  (omitted, the fallback carries no doorbell settings); livestreamProcessFactory: an optional test livestream-process factory installed on the platform
- *                  double's livestreamProcessFactory interface (omitted, a fresh default factory is created so the RTSP debug adapter constructs its FFmpeg process
- *                  through the test double); mqtt: pass true to install the recording MQTT double (the default null makes every MQTT wrapper
- *                  a no-op, matching an unconfigured broker); mqttFactory: the MQTT client factory installed on the platform double's mqttFactory interface, the one a
- *                  real controller root built over the double builds its client through (omitted, a fresh TestMqttClientFactory's create, so no suite reaches a real
- *                  broker); overrideAddress: the controller-level address override for rtspHost-chain tests; recordingProcessFactory:
+ *                  (omitted, the fallback carries no doorbell settings); execProcessFactory: an optional exec-process factory installed on the platform double's
+ *                  execProcessFactory interface, which a row holds to read a one-shot FFmpeg run's command and drive its run (omitted, a fresh TestExecProcessFactory is
+ *                  created, so a snapshot's FFmpeg and the hardware decoder check run through the test double); livestreamProcessFactory: an optional test
+ *                  livestream-process factory installed on the platform double's livestreamProcessFactory interface (omitted, a fresh default factory is created so the
+ *                  RTSP debug adapter constructs its FFmpeg process through the test double); mqtt: pass true to install the recording MQTT double (the default null
+ *                  makes every MQTT wrapper a no-op, matching an unconfigured broker); mqttFactory: the MQTT client factory installed on the platform double's
+ *                  mqttFactory interface, the one a real controller root built over the double builds its client through (omitted, a fresh TestMqttClientFactory's
+ *                  create, so no suite reaches a real broker); overrideAddress: the controller-level address override for rtspHost-chain tests; recordingProcessFactory:
  *                  an optional test recording-process factory installed on the platform double's recordingProcessFactory interface (omitted, a fresh default factory is
- *                  created so the recording delegate constructs its FFmpeg process through the test double); sharedPlatform: an optional { accessories, api } pair
- *                  captured from a double built earlier, so a second controller reconciles over the SAME platform accessories array and Homebridge API double as
- *                  the first, mirroring production's one shared ProtectPlatform - the shared state a multi-controller test uses to prove one controller's reconcile
- *                  leaves the other's switches untouched (omitted, each call builds its own fresh accessories array and API double); store: the state-store double
- *                  backing client.state; userOptions: feature-option config strings (the production options array shape, e.g. "Enable.Device.SyncName" or
- *                  "Disable.Nvr.DelayDeviceRemoval") applied to the REAL FeatureOptions engine.
+ *                  created so the recording delegate constructs its FFmpeg process through the test double); rtpDemuxerFactory: an optional RTP demuxer factory
+ *                  installed on the platform double's rtpDemuxerFactory interface, which a row holds to read a two-way live view's demuxer init and drive its demuxer
+ *                  (omitted, a fresh TestRtpDemuxerFactory is created, so a two-way live view binds no demuxer socket); rtpPorts: the RTP port allocator installed on the
+ *                  platform double, an allocator over HBPU's TestProbeSocketFactory for a row that scripts and reads a prepare's reservations (omitted, a real allocator
+ *                  of the double's own, whose probes bind a real UDP socket and close it at once, so a reservation holds no socket open); sharedPlatform: an optional
+ *                  { accessories, api } pair captured from a double built earlier, so a second controller reconciles over the SAME platform accessories array and
+ *                  Homebridge API double as the first, mirroring production's one shared ProtectPlatform - the shared state a multi-controller test uses to prove one
+ *                  controller's reconcile leaves the other's switches untouched (omitted, each call builds its own fresh accessories array and API double); store: the
+ *                  state-store double backing client.state; streamingProcessFactory: an optional test streaming-process factory installed on the platform double's
+ *                  streamingProcessFactory interface, which a row holds to read the live view's command and drive its process (omitted, a fresh default factory is
+ *                  created so the streaming delegate constructs its FFmpeg processes through the test double); userOptions: feature-option config strings (the production
+ *                  options array shape, e.g. "Enable.Device.SyncName" or "Disable.Nvr.DelayDeviceRemoval") applied to the REAL FeatureOptions engine.
  *
  * @returns api: the platform's Homebridge API double, whose calls record every accessory call Homebridge accepted; clock: the controllable TestClock installed on the
  *          platform double (the instance everything built against the double reads through platform.clock, so a test advances it to fire what is due); controller: the
  *          AbortController behind nvr.signal (abort it in suite teardown); factory: the stub streaming-delegate factory; logEntries: every line the construction path
  *          logged; mqtt: the recording MQTT double when requested, else null; nvr: the NVR double.
  */
-export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: TestClock; controllerName?: string; controllerPrefix?: string;
+export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: TestClock; codecSupport?: { hostSystem: string }; controllerName?: string;
+  controllerPrefix?: string;
   dispatch?: (nvr: ProtectNvr) => ProtectEventDispatch;
-  doorbellSettings?: ProtectNvrConfig["doorbellSettings"];
+  doorbellSettings?: ProtectNvrConfig["doorbellSettings"]; execProcessFactory?: ExecProcessFactory;
   livestreamProcessFactory?: LivestreamProcessFactory;
   mqtt?: boolean; mqttFactory?: typeof createMqttClient; overrideAddress?: string;
-  recordingProcessFactory?: RecordingProcessFactory;
-  sharedPlatform?: { accessories: ProtectAccessory[]; api: TestHomebridgeApi }; store: TestStateStore; userOptions?: string[]; }):
+  recordingProcessFactory?: RecordingProcessFactory; rtpDemuxerFactory?: RtpDemuxerFactory; rtpPorts?: RtpPortAllocator;
+  sharedPlatform?: { accessories: ProtectAccessory[]; api: TestHomebridgeApi }; store: TestStateStore; streamingProcessFactory?: StreamingProcessFactory;
+  userOptions?: string[]; }):
 { api: TestHomebridgeApi; clock: TestClock; controller: AbortController; factory: TestStreamingDelegateFactory; logEntries: readonly TestLogEntry[];
   mqtt: Nullable<TestMqttClient>; nvr: TestProtectNvr; } {
 
@@ -589,9 +609,13 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
   // shape the shared testing helpers read and render. A test wanting the line the real Homebridge sink would emit renders the entry; one wanting a structured object
   // argument reads it straight off params.
   const log = capturingLog();
+  const execProcessFactory = options.execProcessFactory ?? new TestExecProcessFactory();
   const livestreamProcessFactory = options.livestreamProcessFactory ?? new TestLivestreamProcessFactory();
   const mqttFactory = options.mqttFactory ?? new TestMqttClientFactory().create;
   const recordingProcessFactory = options.recordingProcessFactory ?? new TestRecordingProcessFactory();
+  const rtpDemuxerFactory = options.rtpDemuxerFactory ?? new TestRtpDemuxerFactory();
+  const rtpPorts = options.rtpPorts ?? new RtpPortAllocator();
+  const streamingProcessFactory = options.streamingProcessFactory ?? new TestStreamingProcessFactory();
 
   // The MQTT double reports through the same capturing logger, so a guarded publish that fails or is cancelled lands in the log's entries alongside every other line
   // the construction path emits. It is built after the log for that reason.
@@ -673,8 +697,9 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       claimAccessory: (accessory: ProtectAccessory, owner: { readonly isAvailable: boolean }): void => void claims.set(accessory.UUID, owner),
       claims: claims,
       clock: clock,
-      codecSupport: { hostSystem: "macOS" },
+      codecSupport: options.codecSupport ?? { hostSystem: "macOS" },
       config: platformConfig,
+      execProcessFactory: execProcessFactory,
       featureOptions: platformFeatureOptions,
       isAccessoryClaimed: (accessory: ProtectAccessory): boolean => claims.has(accessory.UUID),
       livestreamProcessFactory: livestreamProcessFactory,
@@ -685,7 +710,10 @@ export function makeTestNvr(options: { chimes?: TestChimeProjection[]; clock?: T
       recordingProcessFactory: recordingProcessFactory,
       releaseAccessory: (accessory: ProtectAccessory): void => void claims.delete(accessory.UUID),
       retiredTranslation: retiredTranslation,
+      rtpDemuxerFactory: rtpDemuxerFactory,
+      rtpPorts: rtpPorts,
       streamingDelegateFactory: factory,
+      streamingProcessFactory: streamingProcessFactory,
 
       // The production predicate, mirrored exactly: the legacy plugin-wide flag, else a Log.Debug entry resolved at the caller's own device and controller scope. It
       // is the gate alone and emits nothing - the composed loggers own emission, exactly as they do in production.

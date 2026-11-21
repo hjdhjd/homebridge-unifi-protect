@@ -16,10 +16,11 @@ import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.hel
 import type { LivestreamAudioFormat, LivestreamVideoFormat } from "./stream-delegate.ts";
 import { PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_SEGMENT_RESOLUTION, PROTECT_TIMESHIFT_BUFFER_MAXDURATION } from "../settings.ts";
 import { ProtectTimeshiftSupervisor, hardwareDecodeCheckArgs } from "./timeshift-supervisor.ts";
-import { TestClock, assertNoUnhandledRejections, formatLogEntry, logCount, settle } from "homebridge-plugin-utils/testing";
+import { TestClock, TestExecProcessFactory, assertNoUnhandledRejections, expectAt, formatLogEntry, logCount, present, settle } from "homebridge-plugin-utils/testing";
 import { TestStreamingDelegate, makeRecordingDelegateDouble } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
-import { makeChannelProfile, makeControllableLivestreamDouble, makeKeyframeFragment, makeTestCameraHost } from "./testing.helpers.ts";
+import { endPendingProcesses, makeChannelProfile, makeControllableLivestreamDouble, makeKeyframeFragment, makeMediaSegment,
+  makeTestCameraHost } from "./testing.helpers.ts";
 import type { CameraRecordingConfiguration } from "homebridge";
 import type { ChannelProfile } from "./resolution.ts";
 import type { LivestreamDescription } from "unifi-protect";
@@ -29,6 +30,7 @@ import { RECORDING_AUDIO_STAND_IN } from "./stream-delegate.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import type { TestProtectNvr } from "../nvr/testing.helpers.ts";
 import assert from "node:assert/strict";
+import { isHbpuAbortReason } from "homebridge-plugin-utils";
 
 // Every host this suite builds shares the one makeTestNvr AbortController. Aborting them in teardown releases the harness signals so any leaked observer (none here -
 // neither the supervisor nor the recording delegate spawns any at construction) could never outlive the suite.
@@ -1704,12 +1706,13 @@ describe("the supervisor's audio-format narration at a buffer start", () => {
 
 describe("the supervisor's hardware decoder check at a start's first keyframe", () => {
 
-  // The arranged camera and the handles a row drives it through: firstKeyframes counts the buffer's events, so a row can tell a check that declined from an event that
-  // never fired, logEntries carries the check's debug lines, and selection names the channel the next start runs on.
+  // The arranged camera and the handles a row drives it through: exec records each check's FFmpeg run, firstKeyframes counts the buffer's events, so a row can tell
+  // a check that declined from an event that never fired, logEntries carries the check's debug lines, and selection names the channel the next start runs on.
   interface DecoderCheckArrange {
 
     clock: TestClock;
     doubles: ControllableLivestreamDouble[];
+    exec: TestExecProcessFactory;
     firstKeyframes: { count: number };
     host: TestCameraHost;
     logEntries: readonly TestLogEntry[];
@@ -1737,7 +1740,8 @@ describe("the supervisor's hardware decoder check at a start's first keyframe", 
   function arrangeCheck({ clock: startClock, delegate = true, streams }: { clock?: TestClock; delegate?: boolean; streams: (LivestreamVideoFormat | null)[] }):
   DecoderCheckArrange {
 
-    const { clock, controller, host, logEntries } = makeTestCameraHost({ clock: startClock });
+    const exec = new TestExecProcessFactory();
+    const { clock, controller, host, logEntries } = makeTestCameraHost({ clock: startClock, execProcessFactory: exec });
 
     controllers.push(controller);
 
@@ -1757,13 +1761,13 @@ describe("the supervisor's hardware decoder check at a start's first keyframe", 
     host.livestreamSubscriptions = [...doubles];
     supervisor.buffer.on("firstKeyframe", (): void => { firstKeyframes.count++; });
 
-    return { clock, doubles, firstKeyframes, host, logEntries, selection, stream, supervisor };
+    return { clock, doubles, exec, firstKeyframes, host, logEntries, selection, stream, supervisor };
   }
 
   // Deliver one keyframe on a subscription and let the buffer and the check it starts run.
   async function deliverKeyframe(double: ControllableLivestreamDouble | undefined): Promise<void> {
 
-    double?.push({ ...makeKeyframeFragment(), type: "media" });
+    double?.push(makeMediaSegment(makeKeyframeFragment()));
     await settle();
   }
 
@@ -2009,6 +2013,79 @@ describe("the supervisor's hardware decoder check at a start's first keyframe", 
 
     assert.equal(stream.resetHardwareDecoderRefusalCalls, 1, "the declined check recorded no stream, so the same stream is checked once a fresh source is in hand");
 
+    supervisor.shutdown();
+  });
+
+  // The quiet answer's sentence and the line a check that ends without an answer logs, each at debug, transcribed so a sentence that drifts reddens a row, and the
+  // invented decoder arguments the stub answers in the rows that drive the check's run.
+  const QUIET_SENTENCE = "An FFmpeg pipeline whose failure is routine exited without completing, and its caller carries on without its output.";
+  const NO_ANSWER_LINE = "The hardware video decoder check ended without an answer";
+  const DECODER = [ "-hwaccel", "invented" ];
+
+  test("with decoder arguments to check, a first keyframe runs one check over the delegate's options, the fresh keyframe as its input, on the lifetime's signal",
+    async () => {
+
+      const { doubles, exec, stream, supervisor } = arrangeCheck({ streams: [HIGH] });
+
+      stream.videoDecoderArgs = DECODER;
+
+      await supervisor.reconcile();
+      await deliverKeyframe(doubles[0]);
+
+      const source = supervisor.buffer.snapshotSource();
+      const run = expectAt(exec.createCalls, 0, "the check's run");
+      const signal = present(run.init.signal, "the check's signal");
+
+      assert.ok(source.kind === "fresh", "the vacuity guard: the buffer holds the fresh keyframe the check decodes");
+      assert.equal(exec.createCalls.length, 1, "the first keyframe ran one check");
+      assert.equal(run.options, stream.ffmpegOptions, "the check runs over the delegate's own FFmpeg options, the ones its answer marks");
+      assert.deepEqual(run.init.args, hardwareDecodeCheckArgs(DECODER), "the check decodes with the decoder arguments the options answer");
+      assert.ok(run.init.stdin?.equals(source.data), "the fresh keyframe's bytes are the check's input");
+      assert.equal(signal.aborted, false, "the check's signal stands while the supervisor runs");
+
+      run.process.exit({ exitCode: 0, exitSignal: null });
+      await endPendingProcesses([exec]);
+      supervisor.shutdown();
+
+      assert.ok(isHbpuAbortReason(signal.reason, "shutdown"), "the check's signal is the supervisor's lifetime, which shutdown ends");
+    });
+
+  test("a check whose run fails logs the quiet sentence once and no without-an-answer line", async () => {
+
+    const { doubles, exec, logEntries, stream, supervisor } = arrangeCheck({ streams: [HIGH] });
+
+    stream.videoDecoderArgs = DECODER;
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[0]);
+
+    expectAt(exec.createCalls, 0, "the check's run").process.exit({ exitCode: 1, exitSignal: null });
+    await settle();
+
+    assert.equal(logCount(logEntries, "debug", QUIET_SENTENCE), 1, "the failed run is answered with the quiet sentence, once");
+    assert.equal(logCount(logEntries, "debug", NO_ANSWER_LINE), 0, "a run that exited is an answer, so no without-an-answer line is logged");
+
+    await endPendingProcesses([exec]);
+    supervisor.shutdown();
+  });
+
+  test("a check whose run fails to spawn logs the without-an-answer line once and floats no rejection", async () => {
+
+    const { doubles, exec, logEntries, stream, supervisor } = arrangeCheck({ streams: [HIGH] });
+
+    stream.videoDecoderArgs = DECODER;
+
+    await supervisor.reconcile();
+    await deliverKeyframe(doubles[0]);
+    await assertNoUnhandledRejections(async () => {
+
+      expectAt(exec.createCalls, 0, "the check's run").process.failSpawn(new Error("An invented spawn failure."));
+      await settle();
+    });
+
+    assert.equal(logCount(logEntries, "debug", NO_ANSWER_LINE), 1, "the run that never spawned ends the check without an answer, said once at debug");
+
+    await endPendingProcesses([exec]);
     supervisor.shutdown();
   });
 

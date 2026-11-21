@@ -3,15 +3,19 @@
  * testing.helpers.test.ts: Unit tests for the media-subsystem test helpers in testing.helpers.ts.
  *
  * The fragment builders and livestream doubles feed a REAL timeshift buffer, so a defect in one would be read as a parser or recovery bug in the code under test. These
- * rows pin what the doubles actually synthesize: fragments the production keyframe parse accepts and rejects, and a controllable subscription whose segments,
- * establishment, init segment, state, and disposal a recovery test steers.
+ * rows hold the helpers to what they claim: fragments the production keyframe parse accepts and rejects, a controllable subscription whose segments, establishment,
+ * init segment, state, and disposal a recovery test steers, a splitter whose halves are the fragment's own, and a teardown that ends every streaming process and
+ * one-shot run double a row left running.
  */
+import { TestExecProcessFactory, TestStreamingProcessFactory, expectAt, settle } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
-import { makeControllableLivestreamDouble, makeKeyframeFragment, makeLivestreamSubscriptionDouble, makeNonKeyframeFragment } from "./testing.helpers.ts";
+import { endPendingProcesses, makeControllableLivestreamDouble, makeKeyframeFragment, makeLivestreamSubscriptionDouble, makeMediaSegment, makeNonKeyframeFragment,
+  splitFragment } from "./testing.helpers.ts";
+import type { FfmpegProcessExitInfo } from "homebridge-plugin-utils";
 import type { Segment } from "unifi-protect";
+import { TestStreamingDelegate } from "../testing.helpers.ts";
 import assert from "node:assert/strict";
 import { findKeyframe } from "homebridge-plugin-utils";
-import { settle } from "homebridge-plugin-utils/testing";
 
 describe("harness growth: the recording transmit doubles", () => {
 
@@ -93,7 +97,7 @@ describe("harness growth: the timeshift behavior doubles", () => {
   test("makeControllableLivestreamDouble yields a pushed segment", async () => {
 
     const double = makeControllableLivestreamDouble();
-    const segment: Segment = { data: makeKeyframeFragment().data, mdat: makeKeyframeFragment().mdat, moof: makeKeyframeFragment().moof, type: "media" };
+    const segment = makeMediaSegment(makeKeyframeFragment());
 
     double.push(segment);
 
@@ -113,8 +117,8 @@ describe("harness growth: the timeshift behavior doubles", () => {
   test("makeControllableLivestreamDouble does not strand a second segment queued under one wake", async () => {
 
     const double = makeControllableLivestreamDouble();
-    const first: Segment = { data: makeKeyframeFragment().data, mdat: makeKeyframeFragment().mdat, moof: makeKeyframeFragment().moof, type: "media" };
-    const second: Segment = { data: makeNonKeyframeFragment().data, mdat: makeNonKeyframeFragment().mdat, moof: makeNonKeyframeFragment().moof, type: "media" };
+    const first = makeMediaSegment(makeKeyframeFragment());
+    const second = makeMediaSegment(makeNonKeyframeFragment());
     const iterator = double[Symbol.asyncIterator]();
 
     // Kick off the first pull and let the generator run to its park on the empty queue (it has nothing to yield yet).
@@ -198,4 +202,64 @@ describe("harness growth: the timeshift behavior doubles", () => {
 
     assert.equal(double.disposed, true, "dispose records disposed");
   });
+});
+
+describe("harness growth: the fragment splitter", () => {
+
+  // A fragment HBPU's builder makes reaches a suite through the splitter, so a split that put a box on the wrong side, or lost bytes between the halves, would hand a
+  // consumer a segment no pool delivers.
+  test("splitFragment carries a fragment as its moof and mdat halves, which together are the whole fragment", () => {
+
+    const fragment = makeKeyframeFragment();
+    const split = splitFragment(fragment.data);
+
+    assert.equal(split.data, fragment.data, "the whole fragment is carried as it was handed");
+    assert.ok(split.moof.equals(fragment.moof), "the first half is the fragment's moof");
+    assert.ok(split.mdat.equals(fragment.mdat), "the second half is the fragment's mdat");
+    assert.ok(Buffer.concat([ split.moof, split.mdat ]).equals(fragment.data), "the halves together are the whole fragment");
+  });
+});
+
+describe("harness growth: the shared process teardown", () => {
+
+  // A row that starts a streaming process or a one-shot run double ends through this teardown, so a sweep that skipped a factory, left a process running, or read a
+  // process's ending from a stdin its caller had already ended would carry that process into the next row unseen. A process the row ended itself keeps the ending it
+  // had, since the double refuses a second exit.
+  test("endPendingProcesses ends each process its factories left running as a killed child, one whose stdin was ended among them, and leaves an ended one as it ended",
+    async () => {
+
+      const exec = new TestExecProcessFactory();
+      const streaming = new TestStreamingProcessFactory();
+      const { ffmpegOptions } = new TestStreamingDelegate();
+      const endings: { ended?: FfmpegProcessExitInfo; run?: FfmpegProcessExitInfo; running?: FfmpegProcessExitInfo; stdinEnded?: FfmpegProcessExitInfo } = {};
+
+      streaming.create(ffmpegOptions, { args: [] });
+      streaming.create(ffmpegOptions, { args: [] });
+      streaming.create(ffmpegOptions, { args: [] });
+      exec.create(ffmpegOptions, { args: [] });
+
+      const running = expectAt(streaming.createCalls, 0, "the streaming process left running").process;
+      const stdinEnded = expectAt(streaming.createCalls, 1, "the streaming process whose stdin was ended").process;
+      const ended = expectAt(streaming.createCalls, 2, "the streaming process the row ended").process;
+      const run = expectAt(exec.createCalls, 0, "the one-shot run left pending").process;
+
+      void running.exited.then((info): void => { endings.running = info; });
+      void stdinEnded.exited.then((info): void => { endings.stdinEnded = info; });
+      void ended.exited.then((info): void => { endings.ended = info; });
+      void run.result().then(({ exitCode, exitSignal }): void => { endings.run = { exitCode, exitSignal }; });
+
+      stdinEnded.stdin.end("an invented session description");
+      ended.exit({ exitCode: 0, exitSignal: null });
+      await settle();
+
+      assert.equal(stdinEnded.stdin.destroyed, true, "the vacuity guard: the ended stdin is destroyed while its process runs on");
+      assert.deepEqual(endings, { ended: { exitCode: 0, exitSignal: null } }, "the vacuity guard: only the process the row ended has ended");
+
+      await endPendingProcesses([ exec, streaming ]);
+
+      const killed: FfmpegProcessExitInfo = { exitCode: null, exitSignal: "SIGKILL" };
+
+      assert.deepEqual(endings, { ended: { exitCode: 0, exitSignal: null }, run: killed, running: killed, stdinEnded: killed },
+        "each process left running ended as a killed child and the ended one kept its ending, read with no settle after the teardown");
+    });
 });

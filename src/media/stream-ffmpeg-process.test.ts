@@ -1,39 +1,40 @@
 /* Copyright(C) 2017-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * stream-ffmpeg-process.test.ts: A spawn-free truth-table for the live-path failed-teardown policy classifier, the live view's audio-filter arguments, the SRTP
- * destination each live-view sink sends to, the destination two-way audio sends to directly, whether a camera's FFmpeg processes log verbosely, and the live view's
- * bounded wait for its livestream.
+ * stream-ffmpeg-process.test.ts: A spawn-free truth-table for the live-path failed-teardown policy classifier, the live view's answer to a failed FFmpeg process, the
+ * live view's audio-filter arguments, the SRTP destination each live-view sink sends to, the destination two-way audio sends to directly, whether a camera's FFmpeg
+ * processes log verbosely, and the live view's bounded wait for its livestream.
  *
- * classifyTeardownFailure is the pure, exported decision the live-path FFmpeg streaming process delegates to in its logFailedTeardown override: given the accumulated
- * stderr and whether this instance suppresses livestream-API hiccups, it returns one of the protocol verdicts. Lifting that decision out of the spawn-on-construction
- * class is what makes it reachable here at all - the whole media suite is deliberately spawn-free and never builds a real FfmpegOptions, so the override itself cannot be
- * driven directly. This suite exercises the decision densely against the REAL exported function (and, transitively, the REAL module-private
- * LIVESTREAM_API_ERROR_PATTERNS, which we never re-declare): all the verdicts, the suppress-gating that lets a genuine failure still dump, the benign-before-probesize
- * precedence both ways, all the benign patterns pinned live, and the empty / non-matching baselines.
+ * classifyTeardownFailure is the pure, exported decision the live view's answer to a failed FFmpeg process is built on: given the accumulated stderr and whether the
+ * live view suppresses livestream-API hiccups, it returns one of the protocol verdicts. This suite exercises the decision densely against the REAL exported function
+ * (and, transitively, the REAL module-private LIVESTREAM_API_ERROR_PATTERNS, which we never re-declare): all the verdicts, the suppress-gating that lets a genuine
+ * failure still dump, the benign-before-probesize precedence both ways, every benign pattern held live, and the empty / non-matching baselines.
  *
- * Honest scope note: this covers the DECISION, where all the policy risk lives, and the compile-time exhaustiveGuard in the dispatcher closes the "an unhandled verdict
- * slips through" risk (a future verdict is a tsc error, not a silent canonical dump). The one residual we cannot reach is a mis-wired EFFECT inside one of the handled
- * case bodies, because reaching the dispatcher requires constructing the class, which spawns an FFmpeg child and needs a real FfmpegOptions this suite does not build.
- * That dispatch is trivial glue verified by inspection, and homebridge-plugin-utils' own process tests cover the base super.logFailedTeardown dump.
+ * liveViewOnFailed turns each verdict into its effect, and the rows over it read every effect with no process behind it: the answer HBPU reads, the friendly sentence
+ * the live view's log carries in place of HBPU's report, and the probe-size callback. The compile-time exhaustiveGuard in that answer closes the "an unhandled verdict
+ * slips through" risk, since a future verdict is a tsc error rather than a silent report. The live view's wiring of the answer into the process it starts is read by
+ * stream-start.test.ts, through HBPU's streaming process double.
  */
 import { TestCameraProjection, makeCameraConfig } from "../devices/testing.helpers.ts";
-import { TestClock, settle } from "homebridge-plugin-utils/testing";
+import { TestClock, capturingLog, settle } from "homebridge-plugin-utils/testing";
 import { TestStateStore, makeProtectState, makeTestAccessory } from "../testing.helpers.ts";
 import { after, describe, test } from "node:test";
+import { classifyTeardownFailure, liveViewOnFailed } from "./stream-ffmpeg-process.ts";
 import { establishedWithin, isFfmpegVerbose, liveAudioFilterArgs, srtpDestination, talkbackDestination } from "./stream.ts";
 import type { Camera } from "unifi-protect";
+import type { CapturingLog } from "homebridge-plugin-utils/testing";
+import type { FfmpegEndingVerdict } from "homebridge-plugin-utils";
 import { G2_PRO_CHANNELS } from "../camera.fixtures.ts";
+import { HbpuAbortError } from "homebridge-plugin-utils";
 import { ProtectCamera } from "../devices/cameras/camera.ts";
 import type { ProtectNvr } from "../nvr/nvr.ts";
 import assert from "node:assert/strict";
-import { classifyTeardownFailure } from "./stream-ffmpeg-process.ts";
 import { configured } from "../devices/device-base.ts";
 import { makeTestCameraHost } from "./testing.helpers.ts";
 import { makeTestNvr } from "../nvr/testing.helpers.ts";
 
 describe("classifyTeardownFailure - the live-path failed-teardown policy", () => {
 
-  // A benign livestream-API pattern under suppression resolves to the benign-api verdict so the override can substitute the friendly sentence instead of dumping stderr.
+  // A benign livestream-API pattern under suppression resolves to the benign-api verdict so the live view's answer can substitute the friendly sentence for the report.
   test("a benign livestream-API pattern under suppress=true classifies as benign-api", () => {
 
     assert.equal(classifyTeardownFailure(["moov atom not found"], true), "benign-api");
@@ -93,6 +94,75 @@ describe("classifyTeardownFailure - the live-path failed-teardown policy", () =>
 
     assert.equal(classifyTeardownFailure([], true), "canonical");
     assert.equal(classifyTeardownFailure(["Some unrelated FFmpeg diagnostic line"], false), "canonical");
+  });
+});
+
+/* The live view's answer to a failed FFmpeg process, read with no process behind it. Each row hands the answer an ending whose stderr carries the lines under test and
+ * reads its effects together: the verdict HBPU acts on, every line the answer wrote to the live view's log, and how often it called the probe-size callback.
+ */
+describe("liveViewOnFailed - the live view's answer to a failed FFmpeg process", () => {
+
+  // The friendly sentence a known livestream API hiccup is answered with, written out here rather than read from the module, which keeps it private.
+  const FRIENDLY_SENTENCE = "FFmpeg ended unexpectedly due to issues processing the media stream provided by the UniFi Protect livestream API. This error can be " +
+    "safely ignored - it will occur occasionally.";
+
+  // The line FFmpeg writes when it runs out of probe size before it can estimate the stream's rate.
+  const PROBESIZE_LINE = "not enough frames to estimate rate; consider increasing probesize";
+
+  // Answer a failed ending carrying the given stderr lines, and hand back the verdict, the log the answer wrote to, and the probe-size callback's call count.
+  function answer(stderrLog: string[], suppressLivestreamApiErrors: boolean): { log: CapturingLog; probesizeCalls: number; verdict: FfmpegEndingVerdict } {
+
+    const log = capturingLog();
+    const calls = { probesize: 0 };
+    const onFailed = liveViewOnFailed({ log, onProbesizeError: (): void => { calls.probesize++; }, suppressLivestreamApiErrors });
+    const verdict = onFailed({ reason: new HbpuAbortError("failed", { cause: { exitCode: 1, exitSignal: null } }), stderrLog });
+
+    return { log, probesizeCalls: calls.probesize, verdict };
+  }
+
+  test("a known livestream line under suppression is answered with the friendly sentence at error and nothing more", () => {
+
+    const { log, probesizeCalls, verdict } = answer(["moov atom not found"], true);
+
+    assert.equal(verdict, "handled", "HBPU logs no report of its own");
+    assert.deepEqual(log.entries, [{ level: "error", message: FRIENDLY_SENTENCE, params: [] }], "the friendly sentence is the one line, at error");
+    assert.equal(probesizeCalls, 0, "the probe size stands");
+  });
+
+  test("the same line without suppression is left to HBPU's report", () => {
+
+    const { log, probesizeCalls, verdict } = answer(["moov atom not found"], false);
+
+    assert.equal(verdict, "default", "HBPU logs its full report");
+    assert.deepEqual(log.entries, [], "the answer writes nothing of its own");
+    assert.equal(probesizeCalls, 0, "the probe size stands");
+  });
+
+  test("the probe-size line raises the probe size once and leaves no report", () => {
+
+    const { log, probesizeCalls, verdict } = answer([PROBESIZE_LINE], false);
+
+    assert.equal(verdict, "handled", "HBPU logs no report of its own");
+    assert.deepEqual(log.entries, [], "the answer writes nothing of its own, since raising the probe size says so itself");
+    assert.equal(probesizeCalls, 1, "the probe size is raised once");
+  });
+
+  test("a known livestream line beside the probe-size line under suppression is answered with the friendly sentence, and the probe size stands", () => {
+
+    const { log, probesizeCalls, verdict } = answer([ "moov atom not found", PROBESIZE_LINE ], true);
+
+    assert.equal(verdict, "handled", "HBPU logs no report of its own");
+    assert.deepEqual(log.entries, [{ level: "error", message: FRIENDLY_SENTENCE, params: [] }], "the friendly sentence is the one line, at error");
+    assert.equal(probesizeCalls, 0, "the known livestream line wins over the probe-size line");
+  });
+
+  test("a line neither matches is left to HBPU's report, under suppression too", () => {
+
+    const { log, probesizeCalls, verdict } = answer(["Some unrelated FFmpeg diagnostic line"], true);
+
+    assert.equal(verdict, "default", "HBPU logs its full report");
+    assert.deepEqual(log.entries, [], "the answer writes nothing of its own");
+    assert.equal(probesizeCalls, 0, "the probe size stands");
   });
 });
 

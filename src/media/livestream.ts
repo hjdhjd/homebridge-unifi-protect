@@ -55,13 +55,13 @@ interface RtspLivestreamSubscriptionOptions {
 }
 
 /**
- * The RTSP-debug adapter (Debug.Video.Timeshift.UseRtsp). It implements the plugin's LivestreamSubscription interface over a single livestream process that transcodes
- * the camera's RTSP stream into the same fMP4 Segment stream the unifi-protect library's pool produces, feeding the standing timeshift buffer from RTSP rather than the
- * native livestream API. The adapter builds that process through the factory it is handed, which in production is the platform's and builds homebridge-plugin-utils'
- * FFmpeg livestream process, so a test drives the adapter over a process double with no FFmpeg behind it. This is a pure-FFmpeg plugin concern, so it stays the plugin
- * behind the interface, and it is the mechanical seed of a future first-class RTSP-fed-buffer option.
+ * The RTSP-debug adapter (Debug.Video.Timeshift.UseRtsp). It implements the plugin's LivestreamSubscription interface over a single livestream process that repackages
+ * the camera's RTSP stream (its video copied untouched, its audio re-encoded) into the same fMP4 Segment stream the unifi-protect library's pool produces, feeding the
+ * standing timeshift buffer from RTSP rather than the native livestream API. The adapter builds that process through the factory it is handed, which in production is
+ * the platform's and builds homebridge-plugin-utils' FFmpeg livestream process, so a test drives the adapter over a process double with no FFmpeg behind it. This is a
+ * pure-FFmpeg plugin concern, so it stays the plugin behind the interface, and it is the mechanical seed of a future first-class RTSP-fed-buffer option.
  *
- * There is deliberately NO recovery loop here: a failed RTSP transcode simply ends. The lifecycle state is correspondingly simple - "connecting" before the init
+ * There is deliberately NO recovery loop here: a failed RTSP feed simply ends. The lifecycle state is correspondingly simple - "connecting" before the init
  * segment resolves, "live" after, "closed" once its owner ends it by disposal or by aborting its signal, as the pooled subscription does - and it never reports
  * "recovering" (so a consumer's `isRestarting` is always false on this debug path, consistent with there being no recovery here). The underlying process consumes
  * its abort signal itself at the spawn level, so disposing the adapter (or aborting the signal) tears the process down; the adapter adds no separate signal listener.
@@ -135,7 +135,7 @@ export class RtspLivestreamSubscription implements LivestreamSubscription {
     return this.#isEndedByOwner ? "closed" : this.#state;
   }
 
-  // Re-decide an in-flight recovery. A no-op here because the debug path has no recovery loop to re-consult: a failed RTSP transcode simply ends rather than
+  // Re-decide an in-flight recovery. A no-op here because the debug path has no recovery loop to re-consult: a failed RTSP feed simply ends rather than
   // entering a deferred-stall state that an urgency escalation could shorten. The unifi-protect library's subscription implements this against its recovery FSM.
   public reassess(): void { /* No-op: the RTSP-debug path has no recovery loop to re-decide. */ }
 
