@@ -16,8 +16,8 @@
  * and whether it closed from that socket, and reads the session's connect and send through the delegate's own lines. Every request, key, address, port, frame and
  * fragment here is invented.
  */
-import { AudioStreamingCodecType, AudioStreamingSamplerate, FfmpegCodecs, H264Level, H264Profile, HOMEKIT_IDR_INTERVAL, HbpuAbortError, RtpPortAllocator,
-  SRTPCryptoSuites, StreamRequestTypes, VideoCodecType, isHbpuAbortReason, parseFfmpegVersionParts } from "homebridge-plugin-utils";
+import { AudioRecordingCodecType, AudioStreamingCodecType, AudioStreamingSamplerate, FfmpegCodecs, H264Level, H264Profile, HOMEKIT_IDR_INTERVAL, HbpuAbortError,
+  RtpPortAllocator, SRTPCryptoSuites, StreamRequestTypes, VideoCodecType, isHbpuAbortReason, parseFfmpegVersionParts } from "homebridge-plugin-utils";
 import type { ControllableLivestreamDouble, TestCameraHost } from "./testing.helpers.ts";
 import type { LivestreamDescription, ProtectCameraTalkbackConfig } from "unifi-protect";
 import type { Nullable, VideoEncoderOptions } from "homebridge-plugin-utils";
@@ -803,15 +803,15 @@ const STOPPED_LINE = "Stopped video streaming session.";
 const ZONE_LINE = "Unable to start two-way audio: the camera's IPv6 address carries a zone, which a return audio destination cannot include.";
 
 // The exact command a two-way view's return audio hands FFmpeg for the START above: the session description on its input, HomeKit's audio decoded and encoded as
-// ADTS at the camera speaker's rate and channel count, and sent to the camera directly or to FFmpeg's standard output for the controller's talkback channel. The audio
-// codecs are HBPU's renders over the delegate's own FFmpeg options, and everything else is written out.
+// AAC-LC in ADTS at the camera speaker's rate and channel count, with the bitrate left to the encoder, and sent to the camera directly or to FFmpeg's standard output
+// for the controller's talkback channel. The audio codecs are HBPU's renders over the delegate's own FFmpeg options, and everything else is written out.
 function returnAudioArgs(rig: LiveViewRig, route: TwoWayRoute): string[] {
 
   return [
 
     "-hide_banner", "-nostats", "-protocol_whitelist", "crypto,file,pipe,rtp,udp", "-f", "sdp", "-codec:a", rig.delegate.ffmpegOptions.audioDecoder, "-i", "pipe:0",
-    "-map", "0:a:0", ...rig.delegate.ffmpegOptions.audioEncoder(), "-flags", "+global_header", "-ar", "22050", "-b:a", "20k", "-ac", "1", "-f", "adts",
-    (route === "direct") ? "udp://192.168.1.30:48230" : "pipe:1"
+    "-map", "0:a:0", ...rig.delegate.ffmpegOptions.audioEncoder({ codec: AudioRecordingCodecType.AAC_LC }), "-flags", "+global_header", "-ar", "22050", "-ac", "1",
+    "-f", "adts", (route === "direct") ? "udp://192.168.1.30:48230" : "pipe:1"
   ];
 }
 

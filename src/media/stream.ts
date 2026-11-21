@@ -1217,13 +1217,15 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
     // -codec:a               Decode AAC input using the specified decoder.
     // -i pipe:0              Read input from standard input.
     // -map 0:a:0             Select the single incoming audio track from the SDP input before re-encoding it.
-    // -codec:a               Encode to AAC. This format is set by Protect.
+    // -codec:a               Encode to AAC-LC, the format Protect sets, at the encoder's variable bitrate.
     // -flags +global_header  Sets the global header in the bitstream.
     // -ar                    Sets the audio rate to what Protect is expecting.
-    // -b:a                   Bitrate to use for this audio stream based on what HomeKit is providing us.
     // -ac                    Sets the channel layout of the audio stream based on what Protect is expecting.
     // -f adts                Transmit an ADTS stream.
     // pipe:1                 Output the ADTS stream to standard output.
+    //
+    // We leave the bitrate to the encoder rather than handing it HomeKit's maximum. That figure describes the low-delay audio HomeKit sends us...holding AAC-LC to it at
+    // the speaker's rate strips the upper frequencies from the voice, and it plays muffled at the camera.
     const ffmpegReturnAudioCmd = [
 
       "-hide_banner",
@@ -1233,10 +1235,9 @@ export class ProtectStreamingDelegate implements CameraStreamingDelegate, Stream
       "-codec:a", this.ffmpegOptions.audioDecoder,
       "-i", "pipe:0",
       "-map", "0:a:0",
-      ...this.ffmpegOptions.audioEncoder(),
+      ...this.ffmpegOptions.audioEncoder({ codec: AudioRecordingCodecType.AAC_LC }),
       "-flags", "+global_header",
       "-ar", this.protectCamera.ufp.talkbackSettings.samplingRate.toString(),
-      "-b:a", request.audio.max_bit_rate.toString() + "k",
       "-ac", this.protectCamera.ufp.talkbackSettings.channels.toString(),
       "-f", "adts"
     ];
