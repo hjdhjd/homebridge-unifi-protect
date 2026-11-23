@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 8.3.1 (2026-11-23)
+  * Fix: audio smart detections now reach HomeKit. With smart detection on, a smoke or CO alarm, glass breakage, a siren, barking, a baby crying, and the other sounds Protect listens for now trip the camera's motion sensor, any smart detection contact sensors or occupancy sensor you've set up for those sounds, and their MQTT topics.
+  * Fix: loitering detections now reach HomeKit as soon as they begin, as zone and line crossing detections do.
+  * Housekeeping.
+
 ## 8.3.0 (2026-11-20)
   * Improvement: much smoother live views. Apple's Home app plays video exactly as it arrives and does no smoothing of its own, so HBUP now does that work for it...video from every camera reaches your Apple devices at a steady, even pace, and motion looks fluid and natural. Newer Apple Silicon Macs do it with less CPU, too.
   * Improvement: your voice comes through more clearly at the camera when you use two-way audio.
