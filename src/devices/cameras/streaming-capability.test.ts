@@ -346,6 +346,7 @@ describe("the derivation's recording-audio probe", () => {
 
     assert.ok(substrate, "the camera selects a substrate channel");
     assert.deepEqual(call.options.source, { channel: substrate.channel.id, type: "channel" }, "the probe opened the channel the buffer selects");
+    assert.equal(call.options.route, "preferDirect", "the probe reads the stream directly, with the route through UniFi OS behind it");
 
     const created = expectAt(factory.createCalls, 0, "the delegate the derivation built");
 

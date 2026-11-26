@@ -5,8 +5,8 @@
 import type { API, HAP } from "homebridge";
 import { APIEvent, MQTT_AVAILABILITY_OFFLINE, MQTT_AVAILABILITY_ONLINE, debugGatedLog, formatErrorMessage, formatSeconds, loopFaultReporter, membershipDelta,
   mqttConnectionSettings, mqttTopic, prefixedLog, repeatDemotedLog, retry, superviseLoop } from "homebridge-plugin-utils";
-import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
-  ProtectDeviceConfig, ProtectLogging, ProtectNvrConfig, StateStore } from "unifi-protect";
+import type { Camera, ConnectOptions, DeviceCollectionKey, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload, LivestreamRouteFallbackPayload,
+  LivestreamSessionClosedPayload, ProtectDeviceConfig, ProtectLogging, ProtectNvrConfig, StateStore } from "unifi-protect";
 import type { ConnectFailure, ConnectFailureType } from "./nvr-policy.ts";
 import { DEVICE_COLLECTION_KEYS, ProtectClient, maskAddressCredentials, channels as protectChannels } from "unifi-protect";
 import type { HomebridgePluginLogging, MqttAvailabilityPayload, MqttClient, Nullable } from "homebridge-plugin-utils";
@@ -160,6 +160,9 @@ export class ProtectNvr {
   // good-state through #pushRemovalStability; every act it decides on runs through the actions it was constructed with, a removal through the device-removal cascade
   // and the sweep back here.
   public readonly removals: RemovalStabilityGate;
+  // The livestream fallback lines this controller has said. A direct route that stays out of reach is said once, and not again by every stream at every fallback.
+  // Cleared when the controller is seen to reboot: its streams start from scratch then, and what stood in the way before the reboot may not after it.
+  readonly #routeFallbacksSaid = new Set<string>();
   // Lifecycle phase. The SSOT for "what is this NVR doing right now?". Consumed by components that need to distinguish induced from organic disruption.
   // Mutated only through `transition()`, never directly.
   private _phase: NvrPhase;
@@ -423,9 +426,15 @@ export class ProtectNvr {
    *
    * We subscribe each episode-terminal channel the library publishes for this concern. `recovery:started` (a stream was disrupted; the episode begins) opens the
    * narration and latches the episode's quiet-or-loud classification, `recovery:recovered` (it resumed) closes it by consuming that classification, and
-   * `recovery:exhausted` (the policy gave up) is consumed for ledger hygiene alone - it drains the episode's latch entry so the ledger holds only episodes in flight;
-   * the give-up's narration belongs to the buffer's consume loop and its retry to the availability edge and the demand kicks, so that handler logs nothing. The health
-   * symptoms these same episodes feed ride the health bridge's own subscriptions, whose doc carries the channel-choice rationale.
+   * `session:closed` (the stream ended, the policy having given up on it or its owner having let it go) is consumed for ledger hygiene alone - it drains the
+   * episode's latch entry, which keeps the ledger to episodes in flight; a give-up's narration belongs to the buffer's consume loop and its retry to the
+   * availability edge and the demand kicks, which is why that handler logs nothing. The health symptoms these same episodes feed go through the health bridge's
+   * own subscriptions, whose doc carries the channel-choice rationale.
+   *
+   * We also subscribe `route:fallback`, which the library publishes each time a livestream could not be read directly from the controller and is read through UniFi OS
+   * instead. The library says nothing to the user about it, which leaves the line to us: what stands in the way of the direct route stands in the way of every
+   * camera on the controller, and the controller says it once rather than each stream at every fallback. A fallback made while a stream is recovering waits on
+   * that stream's episode, because a line said then would report a route the stream is not on yet, and may never be on.
    *
    * The channels are process-global - shared by every `ProtectNvr` in this process - so each handler filters to this controller's cameras via `getDeviceById(cameraId)`
    * and drops the rest (another controller's camera, or one we do not configure). A package-camera stream carries its PARENT camera's device id, so the lookup resolves
@@ -479,7 +488,7 @@ export class ProtectNvr {
 
       // The current phase is not a reliable classification proxy here (the controller has returned), so the quiet/loud value latched at the interruption edge - not
       // this.phase - decides the level. Consume drains the entry; a never-recovered episode is reclaimed by forgetCamera on the camera's removal.
-      const quiet = this.livestreamEpisodes.consume(payload.key);
+      const { narration, quiet } = this.livestreamEpisodes.consume(payload.key);
       const recoveredAfter = formatSeconds(Math.max(1, payload.downtimeMs / 1000));
 
       // Mirror the interruption edge: the per-camera recovery of a reboot's tail (induced or recently observed) is debug, since the library narrates the controller-level
@@ -491,20 +500,99 @@ export class ProtectNvr {
 
         camera.log.warn("The livestream has recovered after %s.", recoveredAfter);
       }
+
+      // The stream is back. A fallback it made while it was recovering names the route it came back on, and is said now.
+      narration?.();
     };
 
-    // The recovery policy gave up on the episode - the third episode terminal. The buffer's consume loop already narrates the give-up to the user, and the retry
-    // belongs to the availability edge and the demand kicks, so this handler's only duty is draining the episode's latch entry; otherwise an exhausted episode would
-    // linger in the ledger until the camera's removal. Entries are recorded only for our own cameras behind the started-edge ownership guard, so a foreign
-    // controller's key is simply absent here and the consume is a no-op - the drain needs no guard of its own to stay scoped.
-    const onRecoveryExhausted = (message: unknown): void => {
+    // The stream ended - the third episode terminal. The recovery policy gave up on it, or its owner let it go, as the timeshift buffer does when a camera drops
+    // offline. The buffer's consume loop already narrates a give-up to the user, and the retry belongs to the availability edge and the demand kicks, which leaves
+    // this handler one duty: draining the episode's latch entry, and with it any narration the episode held for a recovery that will not come. Entries are recorded
+    // only for our own cameras behind the started-edge ownership guard, which makes a foreign controller's key simply absent here and the consume a no-op - the
+    // drain needs no guard of its own to stay scoped.
+    const onSessionClosed = (message: unknown): void => {
 
-      this.livestreamEpisodes.consume((message as LivestreamRecoveryExhaustedPayload).key);
+      this.livestreamEpisodes.consume((message as LivestreamSessionClosedPayload).key);
+    };
+
+    // Say a controller-wide fallback line, once for each distinct line until the controller is next seen to reboot.
+    const sayOnce = (level: "info" | "warn", line: string): void => {
+
+      if(this.#routeFallbacksSaid.has(line)) {
+
+        return;
+      }
+
+      this.#routeFallbacksSaid.add(line);
+      this.log[level](line);
+    };
+
+    // A livestream fell back from its direct route. A stream that falls back stays on the route through UniFi OS until it next reconnects, and nothing later
+    // reports it, which makes this line the only record of the route it is on: every fallback of a stream that is running is said at info or above. A controller
+    // that offered no direct address and a direct connection that could not be opened are the controller's to say, once for each distinct line. A direct connection
+    // that opened and carried no video is that one camera's, said under the camera each time.
+    const onRouteFallback = (message: unknown): void => {
+
+      const payload = message as LivestreamRouteFallbackPayload;
+      const camera = this.getDeviceById(payload.cameraId);
+
+      if(!camera) {
+
+        return;
+      }
+
+      const port = (payload.port === null) ? "" : " (TCP " + payload.port.toString() + ")";
+      let say: () => void;
+
+      switch(payload.reason) {
+
+        case "noDirectAddress": {
+
+          say = (): void => sayOnce("info", "The Protect controller did not offer a direct livestream connection. Reading livestreams through UniFi OS instead.");
+
+          break;
+        }
+
+        case "noMedia": {
+
+          say = (): void => camera.log.info("The direct livestream connection carried no video. Reading this camera's livestream through UniFi OS until it next " +
+            "reconnects.");
+
+          break;
+        }
+
+        // The direct connection never opened. While a disruption is expected, a restarting controller whose media server is not answering yet is the likely
+        // reason, and advice to check the port would be a false alarm, which is why that fallback is said as the restart's. At any other time the port may be open
+        // and the media server not answering, which is why the line asks the user to check it rather than calling it closed.
+        case "unreachable": {
+
+          if(this.isDisruptionExpected) {
+
+            say = (): void => sayOnce("info", "The Protect controller's livestream port" + port + " was not answering while the controller restarted. Reading " +
+              "livestreams through UniFi OS until they next reconnect.");
+
+            break;
+          }
+
+          say = (): void => sayOnce("warn", "Unable to reach the Protect controller's livestream port" + port + ". Reading livestreams through UniFi OS instead. " +
+            "Check that Homebridge can reach that port on the controller.");
+
+          break;
+        }
+      }
+
+      // A stream that is recovering is on no route yet, which is why its episode holds the line: it is said when the stream is back, and dropped when the stream
+      // ends instead. A stream with no recovery in progress is a new one, and its line is said at once.
+      if(!this.livestreamEpisodes.holdNarration(payload.key, say)) {
+
+        say();
+      }
     };
 
     protectChannels.livestreamRecoveryStarted.subscribe(onRecoveryStarted);
     protectChannels.livestreamRecoveryRecovered.subscribe(onRecoveryRecovered);
-    protectChannels.livestreamRecoveryExhausted.subscribe(onRecoveryExhausted);
+    protectChannels.livestreamSessionClosed.subscribe(onSessionClosed);
+    protectChannels.livestreamRouteFallback.subscribe(onRouteFallback);
 
     // Detach every subscription on the terminal shutdown signal, mirroring the API-health feed. The unifi-protect library's channels are global and outlive any single
     // client, so an explicit unsubscribe on shutdown is what keeps these subscriptions leak-free.
@@ -512,7 +600,8 @@ export class ProtectNvr {
 
       protectChannels.livestreamRecoveryStarted.unsubscribe(onRecoveryStarted);
       protectChannels.livestreamRecoveryRecovered.unsubscribe(onRecoveryRecovered);
-      protectChannels.livestreamRecoveryExhausted.unsubscribe(onRecoveryExhausted);
+      protectChannels.livestreamSessionClosed.unsubscribe(onSessionClosed);
+      protectChannels.livestreamRouteFallback.unsubscribe(onRouteFallback);
     }, { once: true });
   }
 
@@ -840,6 +929,9 @@ export class ProtectNvr {
     this.lastRebootObservedAt = this.platform.clock.now();
 
     this.publishLifecycle("controllerRebooted");
+
+    // What kept livestreams off the direct route before the reboot may not after it, which frees each fallback line to be said again.
+    this.#routeFallbacksSaid.clear();
 
     // Every reboot re-adopts and restarts each camera's stream from scratch, so clear each camera's accumulated probesize self-tuning - a per-camera latch that at its
     // permanent ceiling arms no auto-reset and otherwise persists for the life of the delegate. We accept one baseline re-tune per reboot on a chronically-flaky camera

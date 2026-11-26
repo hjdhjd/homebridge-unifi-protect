@@ -27,7 +27,7 @@ import type { ConnectFailure, ConnectFailureType } from "./nvr-policy.ts";
 import type { ConnectOptions, ProtectCameraConfig, ProtectClient, ProtectLogging, ProtectNvrConfig } from "unifi-protect";
 import { G2_PRO_CHANNELS, G6_PRO_ENTRY_CHANNELS } from "../camera.fixtures.ts";
 import { PROTECT_DEVICE_REMOVAL_DELAY_INTERVAL, PROTECT_NVR_REBOOT_CONFIRM_GRACE_MS, PROTECT_NVR_REBOOT_INTERVAL, PROTECT_NVR_REBOOT_MIN_INTERVAL,
-  PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
+  PROTECT_NVR_REBOOT_RECENCY_MS, PROTECT_NVR_REMOVAL_STABILITY_WINDOW } from "../settings.ts";
 import { PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS,
   PROTECT_RECOVERY_STEADY_INTERVAL_MS, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError,
   ProtectConfigurationError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError, ProtectThrottledError, ProtectTimeoutError,
@@ -698,10 +698,10 @@ describe("livestream disruption gating", () => {
     const latch = createLivestreamEpisodeLatch();
 
     latch.record("key1", "camA", true);
-    assert.equal(latch.consume("key1"), true);
+    assert.equal(latch.consume("key1").quiet, true);
 
     // The first consume drained the slot, so a second consume of the same key sees no entry and defaults to the loud, genuine-drop level.
-    assert.equal(latch.consume("key1"), false);
+    assert.equal(latch.consume("key1").quiet, false);
   });
 
   // An unrecorded key (a recovery with no matching interruption, e.g. a foreign controller's key our guard never recorded) defaults to the loud level, and an explicitly
@@ -710,10 +710,10 @@ describe("livestream disruption gating", () => {
 
     const latch = createLivestreamEpisodeLatch();
 
-    assert.equal(latch.consume("absent"), false);
+    assert.equal(latch.consume("absent").quiet, false);
 
     latch.record("key1", "camA", false);
-    assert.equal(latch.consume("key1"), false);
+    assert.equal(latch.consume("key1").quiet, false);
   });
 
   // A single camera can run concurrent livestream sessions under distinct pool keys (e.g. an HKSV record channel and a Home-app live view on another lens). Per-key
@@ -726,8 +726,8 @@ describe("livestream disruption gating", () => {
     latch.record("camA:0", "camA", true);
     latch.record("camA:1", "camA", false);
 
-    assert.equal(latch.consume("camA:0"), true);
-    assert.equal(latch.consume("camA:1"), false);
+    assert.equal(latch.consume("camA:0").quiet, true);
+    assert.equal(latch.consume("camA:1").quiet, false);
   });
 
   // forgetCamera reclaims every entry for the named camera (the removal-chokepoint cleanup that prevents a started-but-never-recovered episode from leaking) and leaves
@@ -741,8 +741,8 @@ describe("livestream disruption gating", () => {
 
     latch.forgetCamera("camA");
 
-    assert.equal(latch.consume("camA:0"), false);
-    assert.equal(latch.consume("camB:0"), true);
+    assert.equal(latch.consume("camA:0").quiet, false);
+    assert.equal(latch.consume("camB:0").quiet, true);
   });
 
   // A re-used key records over the prior slot, so a recovery reads the current episode's classification, never a stale one from a prior episode sharing the same key.
@@ -753,7 +753,29 @@ describe("livestream disruption gating", () => {
     latch.record("camA:0", "camA", true);
     latch.record("camA:0", "camA", false);
 
-    assert.equal(latch.consume("camA:0"), false);
+    assert.equal(latch.consume("camA:0").quiet, false);
+  });
+
+  // A narration is held on an open episode alone and comes back with that episode's one read. A key with no open episode holds nothing, which is how its caller knows
+  // to say the line at once, and a new episode for the key starts with nothing held.
+  test("the latch holds a narration on an open episode alone, hands it back once, and drops it when the key is recorded again", () => {
+
+    const latch = createLivestreamEpisodeLatch();
+    const say = (): void => { /* A marker the row compares by reference. */ };
+
+    assert.equal(latch.holdNarration("absent", say), false, "nothing is held for a key with no open episode");
+
+    latch.record("key1", "camA", false);
+
+    assert.equal(latch.holdNarration("key1", say), true, "an open episode holds it");
+    assert.equal(latch.consume("key1").narration, say, "the read hands back what was held");
+    assert.equal(latch.consume("key1").narration, null, "and drains it");
+
+    latch.record("key1", "camA", false);
+    latch.holdNarration("key1", say);
+    latch.record("key1", "camA", false);
+
+    assert.equal(latch.consume("key1").narration, null, "a new episode for the key starts with nothing held");
   });
 });
 
@@ -3327,6 +3349,168 @@ describe("the device-removal cascade", () => {
 
       assert.deepEqual(logEntries.slice(recovered).map((entry) => [ entry.level, formatLogEntry(entry) ]),
         [[ "warn", "Porch Camera [Test Camera Model]: The livestream has recovered after 1 s." ]], "the recovery of the reclaimed episode is said at warn");
+    } finally {
+
+      await stop();
+    }
+  });
+});
+
+/* What the root says when a livestream cannot be read directly from the controller and is read through UniFi OS instead. unifi-protect publishes each fallback on a
+ * process-global channel and says nothing to the user itself. Every row publishes on the real channel and reads the root's own log.
+ */
+describe("the controller root's livestream route fallback narration", () => {
+
+  const PREFIX = "Test Controller [UniFi Dream Machine SE]: ";
+  const NO_DIRECT_ADDRESS = PREFIX + "The Protect controller did not offer a direct livestream connection. Reading livestreams through UniFi OS instead.";
+  const NO_VIDEO = "Porch Camera [Test Camera Model]: The direct livestream connection carried no video. Reading this camera's livestream through UniFi OS until " +
+    "it next reconnects.";
+  const RESTARTING = PREFIX + "The Protect controller's livestream port (TCP 7446) was not answering while the controller restarted. Reading livestreams through " +
+    "UniFi OS until they next reconnect.";
+  const UNREACHABLE = PREFIX + "Unable to reach the Protect controller's livestream port (TCP 7446). Reading livestreams through UniFi OS instead. Check that " +
+    "Homebridge can reach that port on the controller.";
+
+  // Every line logged above debug since the mark, each with its level.
+  const said = (logEntries: readonly TestLogEntry[], mark: number): string[][] => logEntries.slice(mark).filter((entry) => entry.level !== "debug").
+    map((entry) => [ entry.level, formatLogEntry(entry) ]);
+
+  test("a direct route that cannot be reached is said once by the controller, naming the port, however many streams fall back", async () => {
+
+    const { logEntries, stop } = await logIn({ cameras: [PORCH] });
+
+    try {
+
+      const mark = logEntries.length;
+
+      protectChannels.livestreamRouteFallback.publish({ cameraId: PORCH.id, key: PORCH.id + ".high", port: 7446, reason: "unreachable" });
+      protectChannels.livestreamRouteFallback.publish({ cameraId: PORCH.id, key: PORCH.id + ".low", port: 7446, reason: "unreachable" });
+
+      assert.deepEqual(said(logEntries, mark), [[ "warn", UNREACHABLE ]], "the second stream's fallback repeats nothing");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a controller that offers no direct address is said once at info, and a direct connection that carried no video is said by its camera each time", async () => {
+
+    const { logEntries, stop } = await logIn({ cameras: [PORCH] });
+
+    try {
+
+      const mark = logEntries.length;
+
+      protectChannels.livestreamRouteFallback.publish({ cameraId: PORCH.id, key: PORCH.id + ".high", port: null, reason: "noDirectAddress" });
+      protectChannels.livestreamRouteFallback.publish({ cameraId: PORCH.id, key: PORCH.id + ".low", port: null, reason: "noDirectAddress" });
+      protectChannels.livestreamRouteFallback.publish({ cameraId: PORCH.id, key: PORCH.id + ".high", port: 7446, reason: "noMedia" });
+      protectChannels.livestreamRouteFallback.publish({ cameraId: PORCH.id, key: PORCH.id + ".high", port: 7446, reason: "noMedia" });
+
+      assert.deepEqual(said(logEntries, mark), [ [ "info", NO_DIRECT_ADDRESS ], [ "info", NO_VIDEO ], [ "info", NO_VIDEO ] ],
+        "one line for the controller, and one from the camera for each fallback of its own");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a fallback for a camera this controller does not hold says nothing", async () => {
+
+    const { logEntries, stop } = await logIn({ cameras: [PORCH] });
+
+    try {
+
+      const mark = logEntries.length;
+
+      protectChannels.livestreamRouteFallback.publish({ cameraId: "camera-elsewhere", key: "camera-elsewhere.high", port: 7446, reason: "unreachable" });
+
+      assert.deepEqual(logEntries.slice(mark).map(formatLogEntry), [], "another controller's fallback is not this controller's to say");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a fallback while a stream is recovering is held, and said once that stream has recovered", async () => {
+
+    const { logEntries, stop } = await logIn({ cameras: [PORCH] });
+    const key = PORCH.id + ".high";
+
+    try {
+
+      protectChannels.livestreamRecoveryStarted.publish({ attempts: 0, cameraId: PORCH.id, key, sinceLastSegmentMs: 0 });
+
+      const recovering = logEntries.length;
+
+      protectChannels.livestreamRouteFallback.publish({ cameraId: PORCH.id, key, port: 7446, reason: "unreachable" });
+
+      assert.deepEqual(said(logEntries, recovering), [], "a stream that has not come back yet is on no route to report");
+
+      protectChannels.livestreamRecoveryRecovered.publish({ cameraId: PORCH.id, downtimeMs: 1000, key });
+
+      assert.deepEqual(said(logEntries, recovering), [ [ "warn", "Porch Camera [Test Camera Model]: The livestream has recovered after 1 s." ],
+        [ "warn", UNREACHABLE ] ], "the recovery is said, then the route the stream came back on");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a fallback held for a recovering stream is dropped when the stream ends, and a new stream's fallback is said at once", async () => {
+
+    const { logEntries, stop } = await logIn({ cameras: [PORCH] });
+    const key = PORCH.id + ".high";
+    const fallBack = (): void => protectChannels.livestreamRouteFallback.publish({ cameraId: PORCH.id, key, port: 7446, reason: "unreachable" });
+
+    try {
+
+      protectChannels.livestreamRecoveryStarted.publish({ attempts: 0, cameraId: PORCH.id, key, sinceLastSegmentMs: 0 });
+
+      const recovering = logEntries.length;
+
+      fallBack();
+      protectChannels.livestreamSessionClosed.publish({ cameraId: PORCH.id, key, reason: "the last subscriber disposed" });
+
+      assert.deepEqual(said(logEntries, recovering), [], "a stream that ended before it came back says nothing of its route");
+
+      fallBack();
+
+      assert.deepEqual(said(logEntries, recovering), [[ "warn", UNREACHABLE ]], "the stream that replaced it has no recovery to wait on");
+    } finally {
+
+      await stop();
+    }
+  });
+
+  test("a fallback while a reboot settles is said once as the restart's, and the port line is said again once the controller has settled", async () => {
+
+    const { clock, connection, logEntries, stop } = await logIn({ cameras: [PORCH] });
+    const fallBack = (): void => protectChannels.livestreamRouteFallback.publish({ cameraId: PORCH.id, key: PORCH.id + ".high", port: 7446, reason: "unreachable" });
+
+    try {
+
+      const first = logEntries.length;
+
+      fallBack();
+
+      assert.deepEqual(said(logEntries, first), [[ "warn", UNREACHABLE ]], "the line is said before the reboot");
+
+      connection.emit("controllerRebooted");
+
+      const settling = logEntries.length;
+
+      fallBack();
+      fallBack();
+
+      assert.deepEqual(said(logEntries, settling), [[ "info", RESTARTING ]], "a fallback inside the reboot's settling window is said once, with no port advice");
+
+      clock.advance(PROTECT_NVR_REBOOT_RECENCY_MS);
+
+      const settled = logEntries.length;
+
+      fallBack();
+      fallBack();
+
+      assert.deepEqual(said(logEntries, settled), [[ "warn", UNREACHABLE ]], "the reboot freed the line to be said once more");
     } finally {
 
       await stop();

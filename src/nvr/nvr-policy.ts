@@ -270,27 +270,32 @@ export function shouldResumeFromInducedReboot(options: { from: ConnectionState; 
  * unifi-protect library events; the recovery edge cannot read the controller phase reliably (the controller has already returned), so it must consult what the
  * interruption edge recorded. What it records is `quiet` - whether the episode should be logged quietly (the reboot-tail-or-induced case) rather than at warn (a
  * genuine single-camera drop). Keyed by the library's livestream pool `key` (one slot per concurrent session, not per camera). The owner records at interruption and
- * consumes at both episode terminals - the recovery, which reads the classification, and the policy's give-up, which drains the slot without reading it - so the
+ * consumes at both episode terminals - the recovery, which reads the classification, and the stream's end, which drains the slot without reading it - so the
  * ledger holds only episodes in flight; `forgetCamera` reclaims any entries a camera removed mid-episode left behind. The Map is owned here, never exposed -
  * mirroring createConnectRetryPolicy's encapsulated state.
+ *
+ * An episode also holds a narration for its recovery. A stream that changes how it reaches the controller while it is recovering has nothing to report until it is
+ * back, and nothing at all when it ends instead, which is why `holdNarration` keeps the line on the open episode and the recovery's read hands it back. A key with
+ * no open episode holds nothing and answers false, and its caller says the line at once.
  */
 export function createLivestreamEpisodeLatch(): {
-  consume: (key: string) => boolean;
+  consume: (key: string) => { narration: Nullable<() => void>; quiet: boolean };
   forgetCamera: (cameraId: string) => void;
+  holdNarration: (key: string, narration: () => void) => boolean;
   record: (key: string, cameraId: string, quiet: boolean) => void;
 } {
 
-  const episodes = new Map<string, { cameraId: string; quiet: boolean }>();
+  const episodes = new Map<string, { cameraId: string; narration: Nullable<() => void>; quiet: boolean }>();
 
   return {
 
-    consume: (key: string): boolean => {
+    consume: (key: string): { narration: Nullable<() => void>; quiet: boolean } => {
 
       const episode = episodes.get(key);
 
       episodes.delete(key);
 
-      return episode?.quiet ?? false;
+      return { narration: episode?.narration ?? null, quiet: episode?.quiet ?? false };
     },
     forgetCamera: (cameraId: string): void => {
 
@@ -302,9 +307,22 @@ export function createLivestreamEpisodeLatch(): {
         }
       }
     },
+    holdNarration: (key: string, narration: () => void): boolean => {
+
+      const episode = episodes.get(key);
+
+      if(!episode) {
+
+        return false;
+      }
+
+      episode.narration = narration;
+
+      return true;
+    },
     record: (key: string, cameraId: string, quiet: boolean): void => {
 
-      episodes.set(key, { cameraId, quiet });
+      episodes.set(key, { cameraId, narration: null, quiet });
     }
   };
 }

@@ -732,9 +732,12 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // (the lens=>channel-0 coercion now lives in the library), default the segment length to our 100 ms resolution (the native pool
   // also floors at 100, but the RTSP adapter would otherwise default to 1000), declare the plugin's livestream defaults (a 16384-byte chunk for lower fragmentation and
   // per-segment timestamps - both enter the pool's sharing key, so they must be passed explicitly or two plugin subscribers would silently fail to share a session),
-  // preserve the friendly controller-side request label (the camera name + channel/lens), and pass the consumer's urgency closure and discardOnDispose preference
-  // straight through to the pool's recovery/detection policy. The RTSP-debug variant is a pure-FFmpeg plugin path that produces the same Segment stream behind the same
-  // interface; it ignores discardOnDispose by construction, since its own FFmpeg-fed subscription has no pooled queue to discard.
+  // read the stream directly from the controller's media server, with the route through UniFi OS behind it (the direct route asks far less of the controller than
+  // relaying every stream through UniFi OS does, the fallback keeps a controller whose media server port we cannot reach streaming, and the route enters the sharing
+  // key as well, so it is declared here for every subscriber), preserve the friendly controller-side request label (the camera name + channel/lens), and pass the
+  // consumer's urgency closure and discardOnDispose preference straight through to the pool's recovery/detection policy. The RTSP-debug variant is a pure-FFmpeg
+  // plugin path that produces the same Segment stream behind the same interface; it ignores discardOnDispose by construction, since its own FFmpeg-fed subscription
+  // has no pooled queue to discard.
   public livestream(channelProfile: ChannelProfile, opts: LivestreamHostOptions = {}): LivestreamSubscription {
 
     const segmentLength = opts.segmentLength ?? PROTECT_SEGMENT_RESOLUTION;
@@ -780,8 +783,8 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
       { channel: channelProfile.channel.id, type: "channel" };
     const requestId = this.name + ":" + ((channelProfile.lens !== undefined) ? "0." + channelProfile.lens.toString() : channelProfile.channel.id.toString());
 
-    return this.device.livestream({ chunkSize: 16384, discardOnDispose: opts.discardOnDispose, requestId: requestId, segmentLength: segmentLength, signal: opts.signal,
-      source: source, timestamps: true, urgency: opts.urgency });
+    return this.device.livestream({ chunkSize: 16384, discardOnDispose: opts.discardOnDispose, requestId: requestId, route: "preferDirect",
+      segmentLength: segmentLength, signal: opts.signal, source: source, timestamps: true, urgency: opts.urgency });
   }
 
   // Reboot this camera through the controller. This is the narrow public interface onto the camera projection's reboot command, mirroring snapshotFromController - the
