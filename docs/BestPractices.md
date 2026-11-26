@@ -32,6 +32,27 @@ These best practices will evolve over time, but I wanted to provide some thought
 
 If you want to optimize performance and responsiveness of this plugin, you should run `homebridge-unifi-protect` as a child bridge within Homebridge. [Read more about child bridges and how to enable it in Homebridge here](https://github.com/homebridge/homebridge/wiki/Child-Bridges).
 
+#### Homebridge on macOS
+**Importance: high**
+
+If you run Homebridge on a Mac, tell macOS to treat it as an interactive process. When Homebridge is set up to start with your Mac, macOS runs it as a service, and by default it applies light limits to the CPU and I/O a service is given. On a quiet Mac you'll never notice. On a busy one...lots of cameras, several HomeKit Secure Video recordings at once, or other work happening on the same machine...those limits show up as live views that are slow to start or never do, choppy video, and HomeKit Secure Video recordings that stall. They apply to everything Homebridge runs, the FFmpeg processes HBUP uses for your video included.
+
+The fix is a small addition to the service file Homebridge installs, `/Library/LaunchDaemons/com.homebridge.server.plist`:
+
+  1. Stop Homebridge: `sudo hb-service stop`
+  2. Add the setting: `sudo /usr/libexec/PlistBuddy -c "Add :ProcessType string Interactive" /Library/LaunchDaemons/com.homebridge.server.plist`
+     * The colon in front of `ProcessType` is intentional...it's part of how that command names the setting, and the command won't work without it.
+  3. Start Homebridge: `sudo hb-service start`
+
+If you'd rather edit the file by hand, that command adds these two lines inside the file's outermost `<dict>`:
+
+```
+<key>ProcessType</key>
+<string>Interactive</string>
+```
+
+That's all there is to it. macOS now gives Homebridge the same access to your Mac's CPU and I/O that it gives the apps you use. One thing to remember: reinstalling the Homebridge service with `hb-service install` writes a fresh copy of that file. Add the setting again if you ever do.
+
 #### User Accounts
 **Importance: high**
 
