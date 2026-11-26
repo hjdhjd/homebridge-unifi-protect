@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## 8.4.0 (2026-11-26)
+  * Improvement: livestreams are now far lighter on your Protect controller. HBUP reads each camera's livestream directly from Protect rather than through UniFi OS, and in my testing that takes as much as 90% of the load off the controller. For most of you there's nothing to do. If there's a firewall between Homebridge and your controller, HBUP needs to be able to reach the controller on TCP port 7446...if it can't, it goes back to reading livestreams through UniFi OS, and the log tells you when it does. Your livestreams are still encrypted, just as before. If you've turned on TLS certificate verification, it applies to the connections HBUP makes through UniFi OS. The direct livestream connection is outside that setting...it uses Protect's own built-in certificate rather than the one you installed.
+  * Housekeeping.
+
 ## 8.3.1 (2026-11-23)
   * Fix: audio smart detections now reach HomeKit. With smart detection on, a smoke or CO alarm, glass breakage, a siren, barking, a baby crying, and the other sounds Protect listens for now trip the camera's motion sensor, any smart detection contact sensors or occupancy sensor you've set up for those sounds, and their MQTT topics.
   * Fix: loitering detections now reach HomeKit as soon as they begin, as zone and line crossing detections do.
