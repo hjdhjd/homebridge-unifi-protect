@@ -34,7 +34,7 @@ Before going further, there are some quick checklist activities you should check
 
 * Are you running in a firewalled environment?
   * It's popular in some circles to have a separate network at home for your IoT devices. Unfortunately, this is also a common source of issues relating to video streaming, almost always related to firewall rules or mDNS issues.
-  * HBUP needs to reach your Protect controller on two ports: the one you use for UniFi OS itself (TCP 443, unless you've configured another), and TCP 7446, which is where HBUP reads your cameras' livestreams directly from Protect. If HBUP can't reach port 7446, it falls back to reading livestreams through UniFi OS and tells you so in the Homebridge log...things will still work, but your controller does more work for every stream, so it's well worth opening that port.
+  * HBUP needs to reach your Protect controller on two ports: the one you use for UniFi OS itself (TCP 443, unless you've configured another), and TCP 7446, which is where HBUP reads your cameras' livestreams directly from Protect. If HBUP can't reach port 7446, it falls back to reading livestreams through UniFi OS and tells you so in the Homebridge log...things will still work, but your controller does more work for every stream. It's well worth opening that port.
 
 * Are you running Homebridge on macOS?
   * By default, macOS limits the CPU and I/O it gives a service like Homebridge, and on a busy Mac that can look exactly like a streaming problem...live views that are slow to start, choppy video, or HomeKit Secure Video recordings that stall. [Set Homebridge to run as an interactive process](https://github.com/hjdhjd/homebridge-unifi-protect/blob/main/docs/BestPractices.md#homebridge-on-macos) before you go any further.

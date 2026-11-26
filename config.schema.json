@@ -48,7 +48,7 @@
               "type": "boolean",
               "title": "Verify TLS Certificates",
               "required": false,
-              "description": "Require this controller to present a TLS certificate that verifies, on every connection the plugin makes to it through UniFi OS, two-way audio included. Livestreams stay encrypted but connect directly to Protect using its own built-in certificate, so this setting doesn't apply to them, nor to streams read over RTSP. Leave this off for a controller presenting the self-signed certificates it ships with. Default: false."
+              "description": "Require this controller to present a TLS certificate that verifies, on every connection the plugin makes to it through UniFi OS, two-way audio included. Livestreams stay encrypted but connect directly to Protect using its own built-in certificate. This setting doesn't apply to them, or to streams read over RTSP. Leave this off for a controller presenting the self-signed certificates it ships with. Default: false."
             }
           }
         }

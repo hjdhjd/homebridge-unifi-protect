@@ -56,7 +56,7 @@ The settings come in two groups: platform-level fields that apply to the whole p
 | address          | Controller | Host or IP address of your UniFi Protect controller.    |                                  | Yes      |
 | username         | Controller | The username of the local UniFi Protect account you use with HBUP. |                       | Yes      |
 | password         | Controller | The password of that local UniFi Protect account.       |                                  | Yes      |
-| verifyTls        | Controller | Require this controller to present a TLS certificate that verifies, on every connection the plugin makes to it through UniFi OS, two-way audio included. Livestreams stay encrypted but connect directly to Protect using its own built-in certificate, so this setting doesn't apply to them, nor to streams read over RTSP. Leave this off for a controller presenting the self-signed certificates it ships with. | false                            | No       |
+| verifyTls        | Controller | Require this controller to present a TLS certificate that verifies, on every connection the plugin makes to it through UniFi OS, two-way audio included. Livestreams stay encrypted but connect directly to Protect using its own built-in certificate. This setting doesn't apply to them, or to streams read over RTSP. Leave this off for a controller presenting the self-signed certificates it ships with. | false                            | No       |
 
 ### Where Your Older Settings Went
 

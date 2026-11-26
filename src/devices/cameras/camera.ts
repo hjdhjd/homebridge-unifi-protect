@@ -734,10 +734,10 @@ export class ProtectCamera extends ProtectDevice<Camera> implements ProtectCamer
   // per-segment timestamps - both enter the pool's sharing key, so they must be passed explicitly or two plugin subscribers would silently fail to share a session),
   // read the stream directly from the controller's media server, with the route through UniFi OS behind it (the direct route asks far less of the controller than
   // relaying every stream through UniFi OS does, the fallback keeps a controller whose media server port we cannot reach streaming, and the route enters the sharing
-  // key as well, so it is declared here for every subscriber), preserve the friendly controller-side request label (the camera name + channel/lens), and pass the
-  // consumer's urgency closure and discardOnDispose preference straight through to the pool's recovery/detection policy. The RTSP-debug variant is a pure-FFmpeg
-  // plugin path that produces the same Segment stream behind the same interface; it ignores discardOnDispose by construction, since its own FFmpeg-fed subscription
-  // has no pooled queue to discard.
+  // key as well, which is why it is declared here for every subscriber), preserve the friendly controller-side request label (the camera name + channel/lens),
+  // and pass the consumer's urgency closure and discardOnDispose preference straight through to the pool's recovery/detection policy. The RTSP-debug variant is a
+  // pure-FFmpeg plugin path that produces the same Segment stream behind the same interface; it ignores discardOnDispose by construction, since its own FFmpeg-fed
+  // subscription has no pooled queue to discard.
   public livestream(channelProfile: ChannelProfile, opts: LivestreamHostOptions = {}): LivestreamSubscription {
 
     const segmentLength = opts.segmentLength ?? PROTECT_SEGMENT_RESOLUTION;
